@@ -22,6 +22,8 @@ final class ProviderRegistry {
 		$provider = sanitize_key( (string) ( $settings['enrichment']['provider'] ?? 'none' ) );
 
 		switch ( $provider ) {
+			case 'ipregistry':
+				return new IpregistryProvider();
 			case 'none':
 			default:
 				return new NullProvider();

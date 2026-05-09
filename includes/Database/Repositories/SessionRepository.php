@@ -129,18 +129,20 @@ final class SessionRepository {
 	public function get_recent_sessions( int $limit = 50 ): array {
 		global $wpdb;
 
-		$sessions = Schema::table_name( 'sessions' );
-		$events   = Schema::table_name( 'events' );
+		$sessions  = Schema::table_name( 'sessions' );
+		$events    = Schema::table_name( 'events' );
+		$companies = Schema::table_name( 'companies' );
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen,
+				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen, c.name AS company_name,
 					COUNT(e.id) AS event_count,
 					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
 					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
 					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
 				FROM {$sessions} s
 				LEFT JOIN {$events} e ON e.session_id = s.id
+				LEFT JOIN {$companies} c ON c.id = s.company_id
 				GROUP BY s.id
 				ORDER BY s.last_seen DESC
 				LIMIT %d",
@@ -161,18 +163,20 @@ final class SessionRepository {
 	public function get_session_detail( int $session_id ): ?array {
 		global $wpdb;
 
-		$sessions = Schema::table_name( 'sessions' );
-		$events   = Schema::table_name( 'events' );
+		$sessions  = Schema::table_name( 'sessions' );
+		$events    = Schema::table_name( 'events' );
+		$companies = Schema::table_name( 'companies' );
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT s.*,
+				"SELECT s.*, c.name AS company_name, c.domain AS company_domain, c.type AS company_type,
 					COUNT(e.id) AS event_count,
 					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
 					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
 					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
 				FROM {$sessions} s
 				LEFT JOIN {$events} e ON e.session_id = s.id
+				LEFT JOIN {$companies} c ON c.id = s.company_id
 				WHERE s.id = %d
 				GROUP BY s.id
 				LIMIT 1",
@@ -182,6 +186,32 @@ final class SessionRepository {
 		);
 
 		return is_array( $row ) ? $row : null;
+	}
+
+	/**
+	 * Assign enrichment data to a session.
+	 *
+	 * @param int                  $session_id Session ID.
+	 * @param array<string, mixed> $data       Enrichment data.
+	 * @return void
+	 */
+	public function update_enrichment( int $session_id, array $data ): void {
+		global $wpdb;
+
+		$wpdb->update(
+			Schema::table_name( 'sessions' ),
+			array(
+				'country_code'       => $data['country_code'],
+				'region'             => $data['region'],
+				'city'               => $data['city'],
+				'asn'                => $data['asn'],
+				'isp'                => $data['isp'],
+				'company_id'         => $data['company_id'],
+				'company_confidence' => $data['company_confidence'],
+				'updated_at'         => current_time( 'mysql', true ),
+			),
+			array( 'id' => $session_id )
+		);
 	}
 
 	/**
@@ -225,5 +255,18 @@ final class SessionRepository {
 			)";
 
 		return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/**
+	 * Count likely or confirmed business visits today.
+	 *
+	 * @return int
+	 */
+	public function count_likely_business_today(): int {
+		global $wpdb;
+
+		return (int) $wpdb->get_var(
+			"SELECT COUNT(*) FROM " . Schema::table_name( 'sessions' ) . " WHERE DATE(first_seen) = UTC_DATE() AND company_confidence IN ('likely', 'confirmed')" // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		);
 	}
 }

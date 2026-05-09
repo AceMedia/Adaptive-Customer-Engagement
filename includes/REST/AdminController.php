@@ -10,6 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\REST;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\LeadScorer;
@@ -64,6 +65,13 @@ final class AdminController {
 	private $lead_scorer;
 
 	/**
+	 * Enrichment service.
+	 *
+	 * @var EnrichmentService
+	 */
+	private $enrichment_service;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionRepository $sessions Session repository.
@@ -71,12 +79,13 @@ final class AdminController {
 	 * @param NumberRepository  $numbers  Number repository.
 	 * @param Privacy           $privacy  Privacy helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, Privacy $privacy ) {
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, Privacy $privacy, EnrichmentService $enrichment_service ) {
 		$this->sessions = $sessions;
 		$this->events   = $events;
 		$this->numbers  = $numbers;
 		$this->privacy  = $privacy;
 		$this->lead_scorer = new LeadScorer();
+		$this->enrichment_service = $enrichment_service;
 	}
 
 	/**
@@ -175,6 +184,16 @@ final class AdminController {
 				'callback'            => array( $this, 'purge_privacy' ),
 			)
 		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/enrichment/test',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'test_enrichment' ),
+			)
+		);
 	}
 
 	/**
@@ -202,7 +221,7 @@ final class AdminController {
 					'click_to_call_events'   => $this->events->count_click_to_call_today(),
 					'download_events'        => $this->events->count_today_by_type( 'download' ),
 					'form_submissions'       => $this->events->count_today_by_type( 'form_submit' ),
-					'likely_business_visits' => 0,
+					'likely_business_visits' => $this->sessions->count_likely_business_today(),
 					'ignored_traffic'        => $this->sessions->count_ignored_today(),
 				),
 				'top_pages'       => $this->events->get_top_pages(),
@@ -316,6 +335,30 @@ final class AdminController {
 	 */
 	public function purge_privacy(): WP_REST_Response {
 		return new WP_REST_Response( $this->privacy->purge_expired_raw_data() );
+	}
+
+	/**
+	 * Run an enrichment test lookup.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function test_enrichment( WP_REST_Request $request ) {
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$ip      = sanitize_text_field( (string) ( $payload['ip'] ?? '' ) );
+
+		if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+			return new WP_Error( 'ace_invalid_ip', __( 'Please provide a valid IP address.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$result = $this->enrichment_service->test_lookup( $ip );
+
+		if ( ! $result ) {
+			return new WP_Error( 'ace_enrichment_unavailable', __( 'Enrichment is not configured.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		return new WP_REST_Response( $result );
 	}
 
 	/**

@@ -8,9 +8,13 @@
 namespace ACE\AdaptiveCustomerEngagement;
 
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
+use ACE\AdaptiveCustomerEngagement\Enrichment\ProviderRegistry;
 use ACE\AdaptiveCustomerEngagement\REST\AdminController;
 use ACE\AdaptiveCustomerEngagement\REST\TrackingController;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
@@ -53,6 +57,13 @@ final class Plugin {
 		$event_repository   = new EventRepository();
 		$number_repository  = new NumberRepository();
 		$privacy            = new Privacy();
+		$enrichment_service = new EnrichmentService(
+			new ProviderRegistry(),
+			new EnrichmentCacheRepository(),
+			new CompanyRepository(),
+			$session_repository,
+			$privacy
+		);
 		$menu               = new Menu();
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
@@ -60,9 +71,10 @@ final class Plugin {
 			new NumberResolver( $number_repository ),
 			new RateLimiter(),
 			$privacy,
-			new BotDetector()
+			new BotDetector(),
+			$enrichment_service
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $privacy );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $privacy, $enrichment_service );
 
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );

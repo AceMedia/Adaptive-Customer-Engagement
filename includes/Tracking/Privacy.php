@@ -87,6 +87,20 @@ final class Privacy {
 	}
 
 	/**
+	 * Determine whether an IP is private or reserved.
+	 *
+	 * @param string $ip IP address.
+	 * @return bool
+	 */
+	public function is_private_ip( string $ip ): bool {
+		if ( '' === $ip ) {
+			return true;
+		}
+
+		return false === filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
+	}
+
+	/**
 	 * Purge expired raw data.
 	 *
 	 * @return array<string, int>

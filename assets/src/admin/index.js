@@ -352,6 +352,8 @@ function SettingsView({ section = 'settings' }) {
 	const [settings, setSettings] = useState(null);
 	const [notice, setNotice] = useState(null);
 	const [busy, setBusy] = useState(false);
+	const [testIp, setTestIp] = useState('');
+	const [testResult, setTestResult] = useState(null);
 
 	useEffect(() => {
 		request('/admin/settings').then(setSettings);
@@ -373,6 +375,24 @@ function SettingsView({ section = 'settings' }) {
 		setBusy(true);
 		await request('/admin/privacy/purge', { method: 'POST' });
 		setNotice(__('Expired raw data purged.', 'adaptive-customer-engagement'));
+		setBusy(false);
+	};
+
+	const runEnrichmentTest = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/enrichment/test', {
+				method: 'POST',
+				data: {
+					ip: testIp,
+				},
+			});
+			setTestResult(response);
+			setNotice(__('Enrichment lookup completed.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setTestResult(null);
+			setNotice(error.message || __('The enrichment test failed.', 'adaptive-customer-engagement'));
+		}
 		setBusy(false);
 	};
 
@@ -403,7 +423,23 @@ function SettingsView({ section = 'settings' }) {
 				onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, provider: next } }),
 			}),
 			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), value: settings.enrichment.api_key, onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, api_key: next } }) }),
-			createElement(Notice, { status: 'warning', isDismissible: false }, __('Provider integration is scaffolded only in this release.', 'adaptive-customer-engagement'))
+			createElement(TextControl, { label: __('Test lookup IP', 'adaptive-customer-engagement'), value: testIp, onChange: setTestIp }),
+			createElement(Button, { variant: 'secondary', onClick: runEnrichmentTest, disabled: busy || !testIp }, __('Run enrichment test', 'adaptive-customer-engagement')),
+			testResult && createElement(
+				Card,
+				{ style: { marginTop: '12px' } },
+				createElement(
+					CardBody,
+					null,
+					createElement('p', null, `${__('Provider', 'adaptive-customer-engagement')}: ${testResult.provider || '—'}`),
+					createElement('p', null, `${__('Company', 'adaptive-customer-engagement')}: ${testResult.company_name || '—'}`),
+					createElement('p', null, `${__('Domain', 'adaptive-customer-engagement')}: ${testResult.company_domain || '—'}`),
+					createElement('p', null, `${__('Type', 'adaptive-customer-engagement')}: ${testResult.company_type || '—'}`),
+					createElement('p', null, `${__('Location', 'adaptive-customer-engagement')}: ${[testResult.city, testResult.region, testResult.country_code].filter(Boolean).join(', ') || '—'}`),
+					createElement('p', null, `${__('Network', 'adaptive-customer-engagement')}: ${testResult.isp || testResult.asn || '—'}`),
+					createElement('p', null, `${__('Confidence', 'adaptive-customer-engagement')}: ${testResult.confidence || 'unknown'}`)
+				)
+			)
 		),
 		'amazon-connect': createElement(Notice, { status: 'info', isDismissible: false }, __('Amazon Connect support is scaffolded ready for a later implementation pass.', 'adaptive-customer-engagement')),
 		'ai-agent': createElement(Notice, { status: 'info', isDismissible: false }, __('The AI agent surface is intentionally placeholder-only in this release.', 'adaptive-customer-engagement')),

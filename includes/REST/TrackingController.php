@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\BotDetector;
@@ -71,6 +72,13 @@ final class TrackingController {
 	private $bot_detector;
 
 	/**
+	 * Enrichment workflow service.
+	 *
+	 * @var EnrichmentService
+	 */
+	private $enrichment_service;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionManager $session_manager Session manager.
@@ -80,13 +88,14 @@ final class TrackingController {
 	 * @param Privacy        $privacy         Privacy helper.
 	 * @param BotDetector    $bot_detector    Bot detector.
 	 */
-	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector ) {
+	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector, EnrichmentService $enrichment_service ) {
 		$this->session_manager = $session_manager;
 		$this->event_logger    = $event_logger;
 		$this->number_resolver = $number_resolver;
 		$this->rate_limiter    = $rate_limiter;
 		$this->privacy         = $privacy;
 		$this->bot_detector    = $bot_detector;
+		$this->enrichment_service = $enrichment_service;
 	}
 
 	/**
@@ -148,6 +157,10 @@ final class TrackingController {
 		$is_bot     = $this->bot_detector->is_bot( $user_agent );
 		$session    = $this->session_manager->touch_session( $payload, $is_bot, $is_bot );
 		$event_id   = $is_bot ? 0 : $this->event_logger->log( (int) $session['id'], $payload );
+
+		if ( ! $is_bot ) {
+			$this->enrichment_service->enrich_session( (int) $session['id'], $this->privacy->get_client_ip(), $is_bot );
+		}
 
 		return new WP_REST_Response(
 			array(
