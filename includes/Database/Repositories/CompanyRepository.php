@@ -141,8 +141,73 @@ final class CompanyRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_companies( int $limit = 100, array $filters = array() ): array {
+	public function get_companies( int $limit = 100, array $filters = array(), int $offset = 0 ): array {
 		global $wpdb;
+		$filter_fragments = $this->build_company_filters( $filters );
+		$params           = $filter_fragments['params'];
+		$params[]         = $limit;
+		$params[]         = $offset;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM ' . Schema::table_name( 'companies' ) . ' ' . $filter_fragments['where'] . ' ORDER BY last_seen DESC, total_sessions DESC, total_events DESC LIMIT %d OFFSET %d',
+				$params
+			),
+			ARRAY_A
+		);
+
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Count companies matching filters.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return int
+	 */
+	public function count_companies( array $filters = array() ): int {
+		global $wpdb;
+
+		$filter_fragments = $this->build_company_filters( $filters );
+		$query            = 'SELECT COUNT(*) FROM ' . Schema::table_name( 'companies' ) . ' ' . $filter_fragments['where'];
+		$total            = empty( $filter_fragments['params'] )
+			? $wpdb->get_var( $query ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			: $wpdb->get_var( $wpdb->prepare( $query, $filter_fragments['params'] ) );
+
+		return (int) $total;
+	}
+
+	/**
+	 * Get distinct provider names.
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_sources(): array {
+		global $wpdb;
+
+		$results = $wpdb->get_col( 'SELECT DISTINCT source_provider FROM ' . Schema::table_name( 'companies' ) . " WHERE source_provider IS NOT NULL AND source_provider != '' ORDER BY source_provider ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( $value ): string {
+						return (string) $value;
+					},
+					is_array( $results ) ? $results : array()
+				)
+			)
+		);
+	}
+
+	/**
+	 * Build common company filter SQL.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return array{where:string,params:array<int,mixed>}
+	 */
+	private function build_company_filters( array $filters ): array {
+		global $wpdb;
+
 		$where  = array( 'ignored = 0' );
 		$params = array();
 
@@ -174,38 +239,9 @@ final class CompanyRepository {
 			$params[]  = $search;
 		}
 
-		$params[] = $limit;
-
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT * FROM ' . Schema::table_name( 'companies' ) . ' WHERE ' . implode( ' AND ', $where ) . ' ORDER BY last_seen DESC, total_sessions DESC, total_events DESC LIMIT %d',
-				$params
-			),
-			ARRAY_A
-		);
-
-		return is_array( $rows ) ? $rows : array();
-	}
-
-	/**
-	 * Get distinct provider names.
-	 *
-	 * @return array<int, string>
-	 */
-	public function get_sources(): array {
-		global $wpdb;
-
-		$results = $wpdb->get_col( 'SELECT DISTINCT source_provider FROM ' . Schema::table_name( 'companies' ) . " WHERE source_provider IS NOT NULL AND source_provider != '' ORDER BY source_provider ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-
-		return array_values(
-			array_filter(
-				array_map(
-					static function ( $value ): string {
-						return (string) $value;
-					},
-					is_array( $results ) ? $results : array()
-				)
-			)
+		return array(
+			'where'  => 'WHERE ' . implode( ' AND ', $where ),
+			'params' => $params,
 		);
 	}
 

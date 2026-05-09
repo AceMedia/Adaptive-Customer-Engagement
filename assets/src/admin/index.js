@@ -149,6 +149,7 @@ function SessionsView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ sources: [], confidences: [] });
+	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
 	const [filters, setFilters] = useState({
 		search: '',
 		confidence: '',
@@ -157,10 +158,11 @@ function SessionsView() {
 		date_to: '',
 	});
 
-	const load = async (nextFilters = filters) => {
-		const response = await request(withQuery('/admin/sessions', nextFilters));
+	const load = async (nextFilters = filters, nextPage = pagination.page) => {
+		const response = await request(withQuery('/admin/sessions', { ...nextFilters, page: nextPage, per_page: pagination.per_page }));
 		setItems(response.items || []);
 		setOptions(response.filters || { sources: [], confidences: [] });
+		setPagination(response.pagination || { page: 1, per_page: 25, total: 0, total_pages: 1 });
 	};
 
 	useEffect(() => {
@@ -177,11 +179,11 @@ function SessionsView() {
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
-			onApply: () => load(filters),
+			onApply: () => load(filters, 1),
 			onReset: () => {
 				const reset = { search: '', confidence: '', source: '', date_from: '', date_to: '' };
 				setFilters(reset);
-				load(reset);
+				load(reset, 1);
 			},
 			selects: [
 				{ key: 'confidence', label: 'Confidence', options: options.confidences || [] },
@@ -194,6 +196,10 @@ function SessionsView() {
 				const response = await request(`/admin/sessions/${id}`);
 				setDetail(response);
 			},
+		}),
+		createElement(PaginationControls, {
+			pagination,
+			onPageChange: (page) => load(filters, page),
 		}),
 		detail && createElement(SessionDetailPanel, { detail, onClose: () => setDetail(null) })
 	);
@@ -361,6 +367,7 @@ function CompaniesView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ providers: [], confidences: [] });
+	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
 	const [filters, setFilters] = useState({
 		search: '',
 		confidence: '',
@@ -369,10 +376,11 @@ function CompaniesView() {
 		date_to: '',
 	});
 
-	const load = async (nextFilters = filters) => {
-		const response = await request(withQuery('/admin/companies', nextFilters));
+	const load = async (nextFilters = filters, nextPage = pagination.page) => {
+		const response = await request(withQuery('/admin/companies', { ...nextFilters, page: nextPage, per_page: pagination.per_page }));
 		setItems(response.items || []);
 		setOptions(response.filters || { providers: [], confidences: [] });
+		setPagination(response.pagination || { page: 1, per_page: 25, total: 0, total_pages: 1 });
 	};
 
 	useEffect(() => {
@@ -389,11 +397,11 @@ function CompaniesView() {
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
-			onApply: () => load(filters),
+			onApply: () => load(filters, 1),
 			onReset: () => {
 				const reset = { search: '', confidence: '', provider: '', date_from: '', date_to: '' };
 				setFilters(reset);
-				load(reset);
+				load(reset, 1);
 			},
 			selects: [
 				{ key: 'confidence', label: 'Confidence', options: options.confidences || [] },
@@ -406,6 +414,10 @@ function CompaniesView() {
 				const response = await request(`/admin/companies/${id}`);
 				setDetail(response);
 			},
+		}),
+		createElement(PaginationControls, {
+			pagination,
+			onPageChange: (page) => load(filters, page),
 		}),
 		detail && createElement(CompanyDetailPanel, { detail, onClose: () => setDetail(null) })
 	);
@@ -455,6 +467,36 @@ function FilterPanel({ filters, onChange, onApply, onReset, selects = [] }) {
 				{ style: { marginTop: '12px', display: 'flex', gap: '8px' } },
 				createElement(Button, { variant: 'primary', onClick: onApply }, __('Apply filters', 'adaptive-customer-engagement')),
 				createElement(Button, { variant: 'secondary', onClick: onReset }, __('Reset filters', 'adaptive-customer-engagement'))
+			)
+		)
+	);
+}
+
+function PaginationControls({ pagination, onPageChange }) {
+	if (!pagination || pagination.total_pages <= 1) {
+		return null;
+	}
+
+	return createElement(
+		'div',
+		{ style: { marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+		createElement(
+			'span',
+			null,
+			`${__('Page', 'adaptive-customer-engagement')} ${pagination.page} ${__('of', 'adaptive-customer-engagement')} ${pagination.total_pages} (${pagination.total} ${__('items', 'adaptive-customer-engagement')})`
+		),
+		createElement(
+			'div',
+			{ style: { display: 'flex', gap: '8px' } },
+			createElement(
+				Button,
+				{ variant: 'secondary', disabled: pagination.page <= 1, onClick: () => onPageChange(pagination.page - 1) },
+				__('Previous', 'adaptive-customer-engagement')
+			),
+			createElement(
+				Button,
+				{ variant: 'secondary', disabled: pagination.page >= pagination.total_pages, onClick: () => onPageChange(pagination.page + 1) },
+				__('Next', 'adaptive-customer-engagement')
 			)
 		)
 	);

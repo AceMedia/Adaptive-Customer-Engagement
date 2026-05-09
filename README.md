@@ -12,7 +12,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - React-based wp-admin screens for dashboard, sessions, session detail timelines, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
 - First live enrichment provider support for **ipregistry**, with cached lookups, company linking, and an admin test lookup tool
 - Working company reporting screens and dashboard hot-company summaries for enriched traffic
-- Session and company filters for confidence, source/provider, search terms, and date range
+- Paginated session and company filters for confidence, source/provider, search terms, and date range
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
 

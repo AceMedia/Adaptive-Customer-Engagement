@@ -126,14 +126,91 @@ final class SessionRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_recent_sessions( int $limit = 50, array $filters = array() ): array {
+	public function get_recent_sessions( int $limit = 50, array $filters = array(), int $offset = 0 ): array {
 		global $wpdb;
 
-		$sessions  = Schema::table_name( 'sessions' );
-		$events    = Schema::table_name( 'events' );
-		$companies = Schema::table_name( 'companies' );
-		$where     = array();
-		$params    = array();
+		$sessions          = Schema::table_name( 'sessions' );
+		$events            = Schema::table_name( 'events' );
+		$companies         = Schema::table_name( 'companies' );
+		$filter_fragments  = $this->build_recent_session_filters( $filters );
+		$where_sql         = $filter_fragments['where'];
+		$params            = $filter_fragments['params'];
+		$params[]          = $limit;
+		$params[]          = $offset;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen, c.name AS company_name,
+					COUNT(e.id) AS event_count,
+					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
+					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
+				FROM {$sessions} s
+				LEFT JOIN {$events} e ON e.session_id = s.id
+				LEFT JOIN {$companies} c ON c.id = s.company_id
+				{$where_sql}
+				GROUP BY s.id
+				ORDER BY s.last_seen DESC
+				LIMIT %d OFFSET %d",
+				$params
+			),
+			ARRAY_A
+		);
+
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Count recent sessions matching filters.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return int
+	 */
+	public function count_recent_sessions( array $filters = array() ): int {
+		global $wpdb;
+
+		$filter_fragments = $this->build_recent_session_filters( $filters );
+		$query            = 'SELECT COUNT(DISTINCT s.id) FROM ' . Schema::table_name( 'sessions' ) . ' s LEFT JOIN ' . Schema::table_name( 'companies' ) . ' c ON c.id = s.company_id ' . $filter_fragments['where'];
+		$total            = empty( $filter_fragments['params'] )
+			? $wpdb->get_var( $query ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			: $wpdb->get_var( $wpdb->prepare( $query, $filter_fragments['params'] ) );
+
+		return (int) $total;
+	}
+
+	/**
+	 * Get distinct session sources.
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_sources(): array {
+		global $wpdb;
+
+		$results = $wpdb->get_col( 'SELECT DISTINCT utm_source FROM ' . Schema::table_name( 'sessions' ) . " WHERE utm_source IS NOT NULL AND utm_source != '' ORDER BY utm_source ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( $value ): string {
+						return (string) $value;
+					},
+					is_array( $results ) ? $results : array()
+				)
+			)
+		);
+	}
+
+	/**
+	 * Build common session filter SQL.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return array{where:string,params:array<int,mixed>}
+	 */
+	private function build_recent_session_filters( array $filters ): array {
+		global $wpdb;
+
+		$where  = array();
+		$params = array();
 
 		if ( ! empty( $filters['confidence'] ) ) {
 			$where[]  = 's.company_confidence = %s';
@@ -164,50 +241,9 @@ final class SessionRepository {
 			$params[]  = $search;
 		}
 
-		$where_sql = $where ? 'WHERE ' . implode( ' AND ', $where ) : '';
-		$params[]  = $limit;
-
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen, c.name AS company_name,
-					COUNT(e.id) AS event_count,
-					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
-					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
-					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
-				FROM {$sessions} s
-				LEFT JOIN {$events} e ON e.session_id = s.id
-				LEFT JOIN {$companies} c ON c.id = s.company_id
-				{$where_sql}
-				GROUP BY s.id
-				ORDER BY s.last_seen DESC
-				LIMIT %d",
-				$params
-			),
-			ARRAY_A
-		);
-
-		return is_array( $rows ) ? $rows : array();
-	}
-
-	/**
-	 * Get distinct session sources.
-	 *
-	 * @return array<int, string>
-	 */
-	public function get_sources(): array {
-		global $wpdb;
-
-		$results = $wpdb->get_col( 'SELECT DISTINCT utm_source FROM ' . Schema::table_name( 'sessions' ) . " WHERE utm_source IS NOT NULL AND utm_source != '' ORDER BY utm_source ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-
-		return array_values(
-			array_filter(
-				array_map(
-					static function ( $value ): string {
-						return (string) $value;
-					},
-					is_array( $results ) ? $results : array()
-				)
-			)
+		return array(
+			'where'  => $where ? 'WHERE ' . implode( ' AND ', $where ) : '',
+			'params' => $params,
 		);
 	}
 

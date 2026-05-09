@@ -267,13 +267,23 @@ final class AdminController {
 	 */
 	public function sessions( WP_REST_Request $request ): WP_REST_Response {
 		$filters = $this->get_list_filters( $request );
+		$page    = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page = min( 100, max( 1, (int) $request->get_param( 'per_page' ) ?: 25 ) );
+		$total   = $this->sessions->count_recent_sessions( $filters );
+		$pages   = max( 1, (int) ceil( $total / $per_page ) );
 
 		return new WP_REST_Response(
 			array(
-				'items'   => array_map( array( $this, 'decorate_session_summary' ), $this->sessions->get_recent_sessions( 100, $filters ) ),
+				'items'   => array_map( array( $this, 'decorate_session_summary' ), $this->sessions->get_recent_sessions( $per_page, $filters, ( $page - 1 ) * $per_page ) ),
 				'filters' => array(
 					'sources'      => $this->sessions->get_sources(),
 					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
+				),
+				'pagination' => array(
+					'page'      => $page,
+					'per_page'  => $per_page,
+					'total'     => $total,
+					'total_pages' => $pages,
 				),
 			)
 		);
@@ -319,13 +329,23 @@ final class AdminController {
 	 */
 	public function companies( WP_REST_Request $request ): WP_REST_Response {
 		$filters = $this->get_list_filters( $request );
+		$page    = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page = min( 100, max( 1, (int) $request->get_param( 'per_page' ) ?: 25 ) );
+		$total   = $this->companies->count_companies( $filters );
+		$pages   = max( 1, (int) ceil( $total / $per_page ) );
 
 		return new WP_REST_Response(
 			array(
-				'items'   => $this->companies->get_companies( 100, $filters ),
+				'items'   => $this->companies->get_companies( $per_page, $filters, ( $page - 1 ) * $per_page ),
 				'filters' => array(
 					'providers'    => $this->companies->get_sources(),
 					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
+				),
+				'pagination' => array(
+					'page'        => $page,
+					'per_page'    => $per_page,
+					'total'       => $total,
+					'total_pages' => $pages,
 				),
 			)
 		);
