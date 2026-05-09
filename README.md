@@ -7,8 +7,9 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - WordPress plugin scaffold with activation, deactivation, uninstall, capabilities, and custom schema management
 - Custom tables for sessions, events, companies, phone numbers, calls, and enrichment cache
 - Public REST tracking endpoint for pageviews, click-to-call events, and downloads
+- Optional native form submission tracking without storing field values
 - Public phone-number resolution endpoint for frontend placeholders
-- React-based wp-admin screens for dashboard, sessions, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
+- React-based wp-admin screens for dashboard, sessions, session detail timelines, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
 
@@ -76,6 +77,7 @@ adaptive-customer-engagement/v1
 
 - `GET /admin/dashboard`
 - `GET /admin/sessions`
+- `GET /admin/sessions/{id}`
 - `GET /admin/numbers`
 - `POST /admin/numbers`
 - `PATCH /admin/numbers/{id}`

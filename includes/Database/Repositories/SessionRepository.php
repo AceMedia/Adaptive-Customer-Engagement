@@ -134,9 +134,11 @@ final class SessionRepository {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT s.id, s.session_uuid, s.landing_path, s.utm_source, s.utm_campaign, s.company_confidence, s.last_seen,
+				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen,
 					COUNT(e.id) AS event_count,
-					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks
+					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
+					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
 				FROM {$sessions} s
 				LEFT JOIN {$events} e ON e.session_id = s.id
 				GROUP BY s.id
@@ -148,6 +150,38 @@ final class SessionRepository {
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Get a detailed session view.
+	 *
+	 * @param int $session_id Session ID.
+	 * @return array<string, mixed>|null
+	 */
+	public function get_session_detail( int $session_id ): ?array {
+		global $wpdb;
+
+		$sessions = Schema::table_name( 'sessions' );
+		$events   = Schema::table_name( 'events' );
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT s.*,
+					COUNT(e.id) AS event_count,
+					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
+					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
+				FROM {$sessions} s
+				LEFT JOIN {$events} e ON e.session_id = s.id
+				WHERE s.id = %d
+				GROUP BY s.id
+				LIMIT 1",
+				$session_id
+			),
+			ARRAY_A
+		);
+
+		return is_array( $row ) ? $row : null;
 	}
 
 	/**

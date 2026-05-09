@@ -12,7 +12,9 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Settings;
+use ACE\AdaptiveCustomerEngagement\Tracking\LeadScorer;
 use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -55,6 +57,13 @@ final class AdminController {
 	private $privacy;
 
 	/**
+	 * Lead scorer.
+	 *
+	 * @var LeadScorer
+	 */
+	private $lead_scorer;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionRepository $sessions Session repository.
@@ -67,6 +76,7 @@ final class AdminController {
 		$this->events   = $events;
 		$this->numbers  = $numbers;
 		$this->privacy  = $privacy;
+		$this->lead_scorer = new LeadScorer();
 	}
 
 	/**
@@ -92,6 +102,16 @@ final class AdminController {
 				'methods'             => 'GET',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'sessions' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/sessions/(?P<id>\d+)',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'session_detail' ),
 			)
 		);
 
@@ -172,17 +192,21 @@ final class AdminController {
 	 * @return WP_REST_Response
 	 */
 	public function dashboard(): WP_REST_Response {
+		$recent_sessions = array_map( array( $this, 'decorate_session_summary' ), array_slice( $this->sessions->get_recent_sessions( 10 ), 0, 10 ) );
+
 		return new WP_REST_Response(
 			array(
 				'metrics'         => array(
-					'sessions_today'       => $this->sessions->count_today(),
-					'returning_sessions'   => $this->sessions->count_returning_today(),
-					'click_to_call_events' => $this->events->count_click_to_call_today(),
+					'sessions_today'         => $this->sessions->count_today(),
+					'returning_sessions'     => $this->sessions->count_returning_today(),
+					'click_to_call_events'   => $this->events->count_click_to_call_today(),
+					'download_events'        => $this->events->count_today_by_type( 'download' ),
+					'form_submissions'       => $this->events->count_today_by_type( 'form_submit' ),
 					'likely_business_visits' => 0,
-					'ignored_traffic'      => $this->sessions->count_ignored_today(),
+					'ignored_traffic'        => $this->sessions->count_ignored_today(),
 				),
 				'top_pages'       => $this->events->get_top_pages(),
-				'recent_sessions' => array_slice( $this->sessions->get_recent_sessions( 10 ), 0, 10 ),
+				'recent_sessions' => $recent_sessions,
 				'hot_companies'   => array(),
 			)
 		);
@@ -194,7 +218,35 @@ final class AdminController {
 	 * @return WP_REST_Response
 	 */
 	public function sessions(): WP_REST_Response {
-		return new WP_REST_Response( array( 'items' => $this->sessions->get_recent_sessions() ) );
+		return new WP_REST_Response(
+			array(
+				'items' => array_map( array( $this, 'decorate_session_summary' ), $this->sessions->get_recent_sessions() ),
+			)
+		);
+	}
+
+	/**
+	 * Session detail data.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function session_detail( WP_REST_Request $request ) {
+		$session_id = absint( $request['id'] );
+		$session    = $this->sessions->get_session_detail( $session_id );
+
+		if ( ! $session ) {
+			return new WP_Error( 'ace_session_not_found', __( 'Session not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		$events = $this->events->get_by_session( $session_id );
+
+		return new WP_REST_Response(
+			array(
+				'session' => $this->decorate_session_summary( $session ),
+				'events'  => $events,
+			)
+		);
 	}
 
 	/**
@@ -290,5 +342,15 @@ final class AdminController {
 			'is_active'                      => rest_sanitize_boolean( $payload['is_active'] ?? true ) ? 1 : 0,
 			'priority'                       => absint( $payload['priority'] ?? 10 ),
 		);
+	}
+
+	/**
+	 * Decorate a session row with score metadata.
+	 *
+	 * @param array<string, mixed> $session Session data.
+	 * @return array<string, mixed>
+	 */
+	private function decorate_session_summary( array $session ): array {
+		return array_merge( $session, $this->lead_scorer->score_session( $session ) );
 	}
 }

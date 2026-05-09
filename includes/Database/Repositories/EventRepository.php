@@ -53,9 +53,24 @@ final class EventRepository {
 	 * @return int
 	 */
 	public function count_click_to_call_today(): int {
+		return $this->count_today_by_type( 'click_to_call' );
+	}
+
+	/**
+	 * Count events of a given type today.
+	 *
+	 * @param string $event_type Event type.
+	 * @return int
+	 */
+	public function count_today_by_type( string $event_type ): int {
 		global $wpdb;
 
-		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Schema::table_name( 'events' ) . " WHERE DATE(occurred_at) = UTC_DATE() AND event_type = 'click_to_call'" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'events' ) . ' WHERE DATE(occurred_at) = UTC_DATE() AND event_type = %s',
+				$event_type
+			)
+		);
 	}
 
 	/**
@@ -76,5 +91,37 @@ final class EventRepository {
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Get all events for a session.
+	 *
+	 * @param int $session_id Session ID.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_by_session( int $session_id ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM ' . Schema::table_name( 'events' ) . ' WHERE session_id = %d ORDER BY occurred_at ASC, id ASC',
+				$session_id
+			),
+			ARRAY_A
+		);
+
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		return array_map(
+			static function ( array $row ): array {
+				$row['metadata'] = json_decode( (string) $row['metadata'], true );
+				$row['metadata'] = is_array( $row['metadata'] ) ? $row['metadata'] : array();
+
+				return $row;
+			},
+			$rows
+		);
 	}
 }

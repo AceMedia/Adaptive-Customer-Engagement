@@ -90,6 +90,47 @@ async function resolvePhoneNumber() {
 	}
 }
 
+function bindFormTracking(sessionUuid, visitorUuid) {
+	document.addEventListener(
+		'submit',
+		(event) => {
+			const form = event.target;
+
+			if (!(form instanceof HTMLFormElement)) {
+				return;
+			}
+
+			const searchInput = form.querySelector('input[type="search"]');
+			const looksLikeSearch = form.getAttribute('role') === 'search' || form.classList.contains('search-form') || !!searchInput;
+
+			if (looksLikeSearch || form.hasAttribute('data-ace-ignore-form')) {
+				return;
+			}
+
+			const actionUrl = new URL(form.getAttribute('action') || window.location.href, window.location.origin);
+			const identifier = form.getAttribute('id') || form.getAttribute('name') || form.dataset.aceForm || form.action || 'form';
+
+			sendTrackingEvent({
+				session_uuid: sessionUuid,
+				visitor_uuid: visitorUuid,
+				event_type: 'form_submit',
+				event_name: identifier,
+				url: window.location.href,
+				path: window.location.pathname,
+				page_title: document.title,
+				referrer: document.referrer,
+				utm: getUtm(),
+				metadata: {
+					form_action: actionUrl.pathname,
+					form_method: (form.getAttribute('method') || 'get').toUpperCase(),
+					field_count: String(form.elements.length),
+				},
+			});
+		},
+		true
+	);
+}
+
 function bindInteractionTracking(sessionUuid, visitorUuid) {
 	document.addEventListener('click', (event) => {
 		const target = event.target.closest('a,button');
@@ -125,33 +166,50 @@ function bindInteractionTracking(sessionUuid, visitorUuid) {
 }
 
 function init() {
-	if (!config.enabled || !config.tracking?.track_pageviews) {
+	if (!config.enabled) {
+		return;
+	}
+
+	const shouldTrackPageviews = !!config.tracking?.track_pageviews;
+	const shouldTrackClicks = !!config.tracking?.track_click_to_call || !!config.tracking?.track_downloads;
+	const shouldTrackForms = !!config.tracking?.track_forms;
+	const shouldResolveNumbers = !!document.querySelector('[data-ace-phone], [data-ace-phone-link]');
+
+	if (!shouldTrackPageviews && !shouldTrackClicks && !shouldTrackForms && !shouldResolveNumbers) {
 		return;
 	}
 
 	const sessionUuid = ensureUuid(config.tracking.cookie_name || 'ace_sid', Number(config.tracking.session_lifetime_minutes || 30));
 	const visitorUuid = ensureUuid(config.tracking.visitor_cookie_name || 'ace_vid', Number(config.tracking.visitor_lifetime_days || 90), true);
 
-	sendTrackingEvent({
-		session_uuid: sessionUuid,
-		visitor_uuid: visitorUuid,
-		event_type: 'pageview',
-		url: window.location.href,
-		path: window.location.pathname,
-		page_title: document.title,
-		referrer: document.referrer,
-		utm: getUtm(),
-		metadata: {
-			screen: `${window.screen.width}x${window.screen.height}`,
-			language: navigator.language || '',
-		},
-	});
+	if (shouldTrackPageviews) {
+		sendTrackingEvent({
+			session_uuid: sessionUuid,
+			visitor_uuid: visitorUuid,
+			event_type: 'pageview',
+			url: window.location.href,
+			path: window.location.pathname,
+			page_title: document.title,
+			referrer: document.referrer,
+			utm: getUtm(),
+			metadata: {
+				screen: `${window.screen.width}x${window.screen.height}`,
+				language: navigator.language || '',
+			},
+		});
+	}
 
-	if (config.tracking?.track_click_to_call || config.tracking?.track_downloads) {
+	if (shouldTrackClicks) {
 		bindInteractionTracking(sessionUuid, visitorUuid);
 	}
 
-	resolvePhoneNumber();
+	if (shouldTrackForms) {
+		bindFormTracking(sessionUuid, visitorUuid);
+	}
+
+	if (shouldResolveNumbers) {
+		resolvePhoneNumber();
+	}
 }
 
 if (document.readyState === 'loading') {

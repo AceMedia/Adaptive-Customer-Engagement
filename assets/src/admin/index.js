@@ -16,7 +16,7 @@ function request(route, options = {}) {
 	});
 }
 
-function SessionsTable({ items }) {
+function SessionsTable({ items, onView }) {
 	if (!items.length) {
 		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
 	}
@@ -30,7 +30,7 @@ function SessionsTable({ items }) {
 			createElement(
 				'tr',
 				null,
-				['Session', 'Landing page', 'Source', 'Campaign', 'Events', 'Call clicks', 'Last seen'].map((label) =>
+				['Session', 'Landing page', 'Source', 'Campaign', 'Events', 'Call clicks', 'Score', 'Last seen', 'Actions'].map((label) =>
 					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
 				)
 			)
@@ -48,7 +48,13 @@ function SessionsTable({ items }) {
 					createElement('td', null, item.utm_campaign || '—'),
 					createElement('td', null, item.event_count),
 					createElement('td', null, item.call_clicks),
-					createElement('td', null, item.last_seen)
+					createElement('td', null, `${item.score || 0} (${item.score_label || 'noise'})`),
+					createElement('td', null, item.last_seen),
+					createElement(
+						'td',
+						null,
+						createElement(Button, { variant: 'secondary', onClick: () => onView && onView(item.id) }, __('View', 'adaptive-customer-engagement'))
+					)
 				)
 			)
 		)
@@ -57,6 +63,7 @@ function SessionsTable({ items }) {
 
 function DashboardView() {
 	const [data, setData] = useState(null);
+	const [selectedSession, setSelectedSession] = useState(null);
 
 	useEffect(() => {
 		request('/admin/dashboard').then(setData);
@@ -70,6 +77,8 @@ function DashboardView() {
 		['Sessions today', data.metrics.sessions_today],
 		['Returning sessions', data.metrics.returning_sessions],
 		['Click-to-call events', data.metrics.click_to_call_events],
+		['Download events', data.metrics.download_events],
+		['Form submissions', data.metrics.form_submissions],
 		['Ignored traffic', data.metrics.ignored_traffic],
 	];
 
@@ -100,12 +109,20 @@ function DashboardView() {
 			)
 		),
 		createElement('h2', null, __('Recent sessions', 'adaptive-customer-engagement')),
-		createElement(SessionsTable, { items: data.recent_sessions || [] })
+		createElement(SessionsTable, {
+			items: data.recent_sessions || [],
+			onView: async (id) => {
+				const detail = await request(`/admin/sessions/${id}`);
+				setSelectedSession(detail);
+			},
+		}),
+		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) })
 	);
 }
 
 function SessionsView() {
 	const [items, setItems] = useState(null);
+	const [detail, setDetail] = useState(null);
 
 	useEffect(() => {
 		request('/admin/sessions').then((response) => setItems(response.items || []));
@@ -115,7 +132,85 @@ function SessionsView() {
 		return createElement(Spinner);
 	}
 
-	return createElement(SessionsTable, { items });
+	return createElement(
+		Fragment,
+		null,
+		createElement(SessionsTable, {
+			items,
+			onView: async (id) => {
+				const response = await request(`/admin/sessions/${id}`);
+				setDetail(response);
+			},
+		}),
+		detail && createElement(SessionDetailPanel, { detail, onClose: () => setDetail(null) })
+	);
+}
+
+function SessionDetailPanel({ detail, onClose }) {
+	const session = detail?.session || {};
+	const events = detail?.events || [];
+
+	return createElement(
+		Card,
+		{ style: { marginTop: '20px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement(
+				'div',
+				{ style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+				createElement('h2', { style: { margin: 0 } }, __('Session detail', 'adaptive-customer-engagement')),
+				createElement(Button, { variant: 'secondary', onClick: onClose }, __('Close', 'adaptive-customer-engagement'))
+			),
+			createElement('p', null, `${__('Score', 'adaptive-customer-engagement')}: ${session.score || 0} (${session.score_label || 'noise'})`),
+			createElement(
+				'table',
+				{ className: 'widefat striped', style: { marginBottom: '16px' } },
+				createElement(
+					'tbody',
+					null,
+					[
+						['Landing page', session.landing_path || '—'],
+						['Referrer', session.referrer || '—'],
+						['Source', session.utm_source || '—'],
+						['Campaign', session.utm_campaign || '—'],
+						['First seen', session.first_seen || '—'],
+						['Last seen', session.last_seen || '—'],
+						['Company confidence', session.company_confidence || 'unknown'],
+					].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+				)
+			),
+			createElement('h3', null, __('Timeline', 'adaptive-customer-engagement')),
+			createElement(
+				'table',
+				{ className: 'widefat striped' },
+				createElement(
+					'thead',
+					null,
+					createElement(
+						'tr',
+						null,
+						['When', 'Type', 'Name', 'Path', 'Metadata'].map((label) => createElement('th', { key: label }, __(label, 'adaptive-customer-engagement')))
+					)
+				),
+				createElement(
+					'tbody',
+					null,
+					events.map((item) =>
+						createElement(
+							'tr',
+							{ key: item.id },
+							createElement('td', null, item.occurred_at),
+							createElement('td', null, item.event_type),
+							createElement('td', null, item.event_name || '—'),
+							createElement('td', null, item.path || '—'),
+							createElement('td', null, Object.entries(item.metadata || {}).map(([key, value]) => `${key}: ${value}`).join(', ') || '—')
+						)
+					)
+				)
+			)
+		)
+	);
 }
 
 function NumberForm({ value, onChange, onSubmit, busy, label }) {
