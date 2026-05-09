@@ -206,6 +206,33 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
+			'/admin/reporting-segments',
+			array(
+				array(
+					'methods'             => 'GET',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'reporting_segments' ),
+				),
+				array(
+					'methods'             => 'POST',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'save_reporting_segment' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/reporting-segments/(?P<id>[a-zA-Z0-9-]+)',
+			array(
+				'methods'             => 'DELETE',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'delete_reporting_segment' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/admin/privacy/purge',
 			array(
 				'methods'             => 'POST',
@@ -279,6 +306,7 @@ final class AdminController {
 					'sources'      => $this->sessions->get_sources(),
 					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
 				),
+				'segments' => Settings::get_reporting_segments( 'sessions' ),
 				'pagination' => array(
 					'page'      => $page,
 					'per_page'  => $per_page,
@@ -341,6 +369,7 @@ final class AdminController {
 					'providers'    => $this->companies->get_sources(),
 					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
 				),
+				'segments' => Settings::get_reporting_segments( 'companies' ),
 				'pagination' => array(
 					'page'        => $page,
 					'per_page'    => $per_page,
@@ -419,6 +448,74 @@ final class AdminController {
 	}
 
 	/**
+	 * Read reporting segments.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function reporting_segments( WP_REST_Request $request ): WP_REST_Response {
+		$view = sanitize_key( (string) $request->get_param( 'view' ) );
+
+		return new WP_REST_Response(
+			array(
+				'items' => Settings::get_reporting_segments( $view ),
+			)
+		);
+	}
+
+	/**
+	 * Save a reporting segment.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function save_reporting_segment( WP_REST_Request $request ) {
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$segment = $this->sanitize_reporting_segment_payload( $payload );
+
+		if ( '' === $segment['name'] ) {
+			return new WP_Error( 'ace_segment_name_required', __( 'Please provide a name for the saved segment.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! in_array( $segment['view'], array( 'sessions', 'companies' ), true ) ) {
+			return new WP_Error( 'ace_segment_view_invalid', __( 'Please provide a valid reporting view.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$saved = Settings::add_reporting_segment( $segment );
+
+		return new WP_REST_Response(
+			array(
+				'item'  => $saved,
+				'items' => Settings::get_reporting_segments( $saved['view'] ),
+			),
+			201
+		);
+	}
+
+	/**
+	 * Delete a reporting segment.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function delete_reporting_segment( WP_REST_Request $request ) {
+		$segment_id = sanitize_text_field( (string) $request['id'] );
+		$deleted    = Settings::delete_reporting_segment( $segment_id );
+
+		if ( ! $deleted ) {
+			return new WP_Error( 'ace_segment_not_found', __( 'Saved segment not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'deleted' => true,
+				'items'   => Settings::get_reporting_segments(),
+			)
+		);
+	}
+
+	/**
 	 * Purge privacy data.
 	 *
 	 * @return WP_REST_Response
@@ -474,6 +571,30 @@ final class AdminController {
 			'is_default'                     => rest_sanitize_boolean( $payload['is_default'] ?? false ) ? 1 : 0,
 			'is_active'                      => rest_sanitize_boolean( $payload['is_active'] ?? true ) ? 1 : 0,
 			'priority'                       => absint( $payload['priority'] ?? 10 ),
+		);
+	}
+
+	/**
+	 * Sanitize reporting segment payloads.
+	 *
+	 * @param mixed $payload Raw payload.
+	 * @return array<string, mixed>
+	 */
+	private function sanitize_reporting_segment_payload( $payload ): array {
+		$payload = is_array( $payload ) ? $payload : array();
+		$filters = isset( $payload['filters'] ) && is_array( $payload['filters'] ) ? $payload['filters'] : array();
+
+		return array(
+			'name'    => sanitize_text_field( (string) ( $payload['name'] ?? '' ) ),
+			'view'    => sanitize_key( (string) ( $payload['view'] ?? '' ) ),
+			'filters' => array(
+				'search'     => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
+				'confidence' => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
+				'source'     => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
+				'provider'   => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
+				'date_from'  => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
+				'date_to'    => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
+			),
 		);
 	}
 

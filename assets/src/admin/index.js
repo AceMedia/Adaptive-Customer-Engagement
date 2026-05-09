@@ -5,6 +5,20 @@ import { __ } from '@wordpress/i18n';
 import { render } from '@wordpress/element';
 
 const config = window.ACEAdminConfig || {};
+const SESSION_FILTER_DEFAULTS = {
+	search: '',
+	confidence: '',
+	source: '',
+	date_from: '',
+	date_to: '',
+};
+const COMPANY_FILTER_DEFAULTS = {
+	search: '',
+	confidence: '',
+	provider: '',
+	date_from: '',
+	date_to: '',
+};
 
 function request(route, options = {}) {
 	return apiFetch({
@@ -28,6 +42,13 @@ function withQuery(route, params = {}) {
 	const query = search.toString();
 
 	return query ? `${route}?${query}` : route;
+}
+
+function normaliseFilters(defaults, filters = {}) {
+	return {
+		...defaults,
+		...(filters || {}),
+	};
 }
 
 function SessionsTable({ items, onView }) {
@@ -149,20 +170,30 @@ function SessionsView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ sources: [], confidences: [] });
+	const [segments, setSegments] = useState([]);
+	const [segmentName, setSegmentName] = useState('');
 	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
-	const [filters, setFilters] = useState({
-		search: '',
-		confidence: '',
-		source: '',
-		date_from: '',
-		date_to: '',
-	});
+	const [filters, setFilters] = useState(SESSION_FILTER_DEFAULTS);
 
 	const load = async (nextFilters = filters, nextPage = pagination.page) => {
 		const response = await request(withQuery('/admin/sessions', { ...nextFilters, page: nextPage, per_page: pagination.per_page }));
 		setItems(response.items || []);
 		setOptions(response.filters || { sources: [], confidences: [] });
+		setSegments(response.segments || []);
 		setPagination(response.pagination || { page: 1, per_page: 25, total: 0, total_pages: 1 });
+	};
+
+	const saveSegment = async () => {
+		const response = await request('/admin/reporting-segments', {
+			method: 'POST',
+			data: {
+				name: segmentName,
+				view: 'sessions',
+				filters,
+			},
+		});
+		setSegments(response.items || []);
+		setSegmentName('');
 	};
 
 	useEffect(() => {
@@ -176,12 +207,27 @@ function SessionsView() {
 	return createElement(
 		Fragment,
 		null,
+		createElement(SavedSegmentsPanel, {
+			segments,
+			segmentName,
+			onSegmentNameChange: setSegmentName,
+			onSave: saveSegment,
+			onApply: (segment) => {
+				const nextFilters = normaliseFilters(SESSION_FILTER_DEFAULTS, segment.filters);
+				setFilters(nextFilters);
+				load(nextFilters, 1);
+			},
+			onDelete: async (segmentId) => {
+				const response = await request(`/admin/reporting-segments/${segmentId}`, { method: 'DELETE' });
+				setSegments((response.items || []).filter((item) => item.view === 'sessions'));
+			},
+		}),
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
 			onApply: () => load(filters, 1),
 			onReset: () => {
-				const reset = { search: '', confidence: '', source: '', date_from: '', date_to: '' };
+				const reset = { ...SESSION_FILTER_DEFAULTS };
 				setFilters(reset);
 				load(reset, 1);
 			},
@@ -367,20 +413,30 @@ function CompaniesView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ providers: [], confidences: [] });
+	const [segments, setSegments] = useState([]);
+	const [segmentName, setSegmentName] = useState('');
 	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
-	const [filters, setFilters] = useState({
-		search: '',
-		confidence: '',
-		provider: '',
-		date_from: '',
-		date_to: '',
-	});
+	const [filters, setFilters] = useState(COMPANY_FILTER_DEFAULTS);
 
 	const load = async (nextFilters = filters, nextPage = pagination.page) => {
 		const response = await request(withQuery('/admin/companies', { ...nextFilters, page: nextPage, per_page: pagination.per_page }));
 		setItems(response.items || []);
 		setOptions(response.filters || { providers: [], confidences: [] });
+		setSegments(response.segments || []);
 		setPagination(response.pagination || { page: 1, per_page: 25, total: 0, total_pages: 1 });
+	};
+
+	const saveSegment = async () => {
+		const response = await request('/admin/reporting-segments', {
+			method: 'POST',
+			data: {
+				name: segmentName,
+				view: 'companies',
+				filters,
+			},
+		});
+		setSegments(response.items || []);
+		setSegmentName('');
 	};
 
 	useEffect(() => {
@@ -394,12 +450,27 @@ function CompaniesView() {
 	return createElement(
 		Fragment,
 		null,
+		createElement(SavedSegmentsPanel, {
+			segments,
+			segmentName,
+			onSegmentNameChange: setSegmentName,
+			onSave: saveSegment,
+			onApply: (segment) => {
+				const nextFilters = normaliseFilters(COMPANY_FILTER_DEFAULTS, segment.filters);
+				setFilters(nextFilters);
+				load(nextFilters, 1);
+			},
+			onDelete: async (segmentId) => {
+				const response = await request(`/admin/reporting-segments/${segmentId}`, { method: 'DELETE' });
+				setSegments((response.items || []).filter((item) => item.view === 'companies'));
+			},
+		}),
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
 			onApply: () => load(filters, 1),
 			onReset: () => {
-				const reset = { search: '', confidence: '', provider: '', date_from: '', date_to: '' };
+				const reset = { ...COMPANY_FILTER_DEFAULTS };
 				setFilters(reset);
 				load(reset, 1);
 			},
@@ -420,6 +491,66 @@ function CompaniesView() {
 			onPageChange: (page) => load(filters, page),
 		}),
 		detail && createElement(CompanyDetailPanel, { detail, onClose: () => setDetail(null) })
+	);
+}
+
+function SavedSegmentsPanel({ segments, segmentName, onSegmentNameChange, onSave, onApply, onDelete }) {
+	return createElement(
+		Card,
+		{ style: { marginBottom: '16px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement('h3', { style: { marginTop: 0 } }, __('Saved segments', 'adaptive-customer-engagement')),
+			createElement(
+				'div',
+				{ style: { display: 'flex', gap: '8px', alignItems: 'end', marginBottom: '12px', flexWrap: 'wrap' } },
+				createElement(TextControl, {
+					label: __('Segment name', 'adaptive-customer-engagement'),
+					value: segmentName,
+					onChange: onSegmentNameChange,
+				}),
+				createElement(
+					Button,
+					{ variant: 'primary', onClick: onSave, disabled: !segmentName.trim() },
+					__('Save current filters', 'adaptive-customer-engagement')
+				)
+			),
+			segments.length
+				? createElement(
+						'div',
+						{ style: { display: 'grid', gap: '8px' } },
+						segments.map((segment) =>
+							createElement(
+								'div',
+								{
+									key: segment.id,
+									style: {
+										display: 'flex',
+										justifyContent: 'space-between',
+										alignItems: 'center',
+										gap: '8px',
+										padding: '8px 0',
+										borderTop: '1px solid #f0f0f0',
+									},
+								},
+								createElement(
+									'div',
+									null,
+									createElement('strong', null, segment.name),
+									createElement('div', { style: { color: '#50575e', fontSize: '12px' } }, segment.created_at || '—')
+								),
+								createElement(
+									'div',
+									{ style: { display: 'flex', gap: '8px' } },
+									createElement(Button, { variant: 'secondary', onClick: () => onApply(segment) }, __('Apply', 'adaptive-customer-engagement')),
+									createElement(Button, { variant: 'tertiary', onClick: () => onDelete(segment.id) }, __('Delete', 'adaptive-customer-engagement'))
+								)
+							)
+						)
+				  )
+				: createElement(Notice, { status: 'info', isDismissible: false }, __('No saved segments yet.', 'adaptive-customer-engagement'))
+		)
 	);
 }
 

@@ -12,6 +12,7 @@ defined( 'ABSPATH' ) || exit;
 final class Settings {
 	public const OPTION_NAME      = 'ace_settings';
 	public const HASH_SALT_OPTION = 'ace_hash_salt';
+	public const REPORTING_SEGMENTS_OPTION = 'ace_reporting_segments';
 
 	/**
 	 * Default settings.
@@ -95,6 +96,73 @@ final class Settings {
 		update_option( self::OPTION_NAME, $sanitized );
 
 		return $sanitized;
+	}
+
+	/**
+	 * Get saved reporting segments.
+	 *
+	 * @param string $view Optional view filter.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function get_reporting_segments( string $view = '' ): array {
+		$segments = get_option( self::REPORTING_SEGMENTS_OPTION, array() );
+		$segments = is_array( $segments ) ? self::sanitize_reporting_segments( $segments ) : array();
+
+		if ( '' === $view ) {
+			return $segments;
+		}
+
+		return array_values(
+			array_filter(
+				$segments,
+				static function ( array $segment ) use ( $view ): bool {
+					return $segment['view'] === $view;
+				}
+			)
+		);
+	}
+
+	/**
+	 * Save a reporting segment.
+	 *
+	 * @param array<string, mixed> $segment Segment payload.
+	 * @return array<string, mixed>
+	 */
+	public static function add_reporting_segment( array $segment ): array {
+		$segments       = self::get_reporting_segments();
+		$sanitized      = self::sanitize_reporting_segment( $segment );
+		array_unshift( $segments, $sanitized );
+		$segments = array_slice( $segments, 0, 50 );
+		update_option( self::REPORTING_SEGMENTS_OPTION, $segments, false );
+
+		return $sanitized;
+	}
+
+	/**
+	 * Delete a reporting segment.
+	 *
+	 * @param string $segment_id Segment ID.
+	 * @return bool
+	 */
+	public static function delete_reporting_segment( string $segment_id ): bool {
+		$segment_id = sanitize_text_field( $segment_id );
+		$segments   = self::get_reporting_segments();
+		$remaining  = array_values(
+			array_filter(
+				$segments,
+				static function ( array $segment ) use ( $segment_id ): bool {
+					return $segment['id'] !== $segment_id;
+				}
+			)
+		);
+
+		if ( count( $remaining ) === count( $segments ) ) {
+			return false;
+		}
+
+		update_option( self::REPORTING_SEGMENTS_OPTION, $remaining, false );
+
+		return true;
 	}
 
 	/**
@@ -224,5 +292,65 @@ final class Settings {
 		}
 
 		return $merged;
+	}
+
+	/**
+	 * Sanitize all reporting segments.
+	 *
+	 * @param array<int, mixed> $segments Raw segments.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function sanitize_reporting_segments( array $segments ): array {
+		$sanitized = array();
+
+		foreach ( $segments as $segment ) {
+			if ( ! is_array( $segment ) ) {
+				continue;
+			}
+
+			$clean = self::sanitize_reporting_segment( $segment );
+
+			if ( '' === $clean['name'] ) {
+				continue;
+			}
+
+			$sanitized[] = $clean;
+		}
+
+		return $sanitized;
+	}
+
+	/**
+	 * Sanitize a reporting segment.
+	 *
+	 * @param array<string, mixed> $segment Raw segment.
+	 * @return array<string, mixed>
+	 */
+	private static function sanitize_reporting_segment( array $segment ): array {
+		$view    = sanitize_key( (string) ( $segment['view'] ?? 'sessions' ) );
+		$filters = isset( $segment['filters'] ) && is_array( $segment['filters'] ) ? $segment['filters'] : array();
+		$view    = in_array( $view, array( 'sessions', 'companies' ), true ) ? $view : 'sessions';
+
+		$sanitized_filters = array(
+			'search'     => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
+			'confidence' => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
+			'source'     => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
+			'provider'   => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
+			'date_from'  => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
+			'date_to'    => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
+		);
+
+		return array(
+			'id'         => sanitize_text_field( (string) ( $segment['id'] ?? wp_generate_uuid4() ) ),
+			'name'       => sanitize_text_field( (string) ( $segment['name'] ?? '' ) ),
+			'view'       => $view,
+			'filters'    => array_filter(
+				$sanitized_filters,
+				static function ( string $value ): bool {
+					return '' !== $value;
+				}
+			),
+			'created_at' => sanitize_text_field( (string) ( $segment['created_at'] ?? current_time( 'mysql', true ) ) ),
+		);
 	}
 }
