@@ -10,7 +10,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Optional native form submission tracking without storing field values
 - Public phone-number resolution endpoint for frontend placeholders
 - React-based wp-admin screens for dashboard, sessions, session detail timelines, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
-- First live enrichment provider support for **ipregistry**, with cached lookups, company linking, and an admin test lookup tool
+- Live enrichment provider support for **ipregistry** and **ipinfo**, with cached lookups, company linking, and an admin test lookup tool
 - Working company reporting screens and dashboard hot-company summaries for enriched traffic
 - Paginated session and company filters for confidence, source/provider, search terms, and date range
 - Saved reporting segments for reusing common session and company filters
@@ -23,7 +23,6 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 
 This repository does **not** yet implement:
 
-- multiple live IP enrichment providers beyond the first **ipregistry** integration
 - Amazon Connect sync, imports, or matching
 - AI chat, handoff, or site tools
 - CRM exports or automated export workflows
@@ -127,8 +126,8 @@ The sessions and companies screens can now export the **current filtered view** 
 
 The next sensible build steps are:
 
-1. broaden enrichment support with another live provider option
-2. stronger admin reporting and exports
+1. strengthen lead scoring and reporting clarity
+2. broader enrichment provider support and reporting polish
 3. Amazon Connect import, matching, and number sync
 4. AI-assisted lead capture and safe content tools
 

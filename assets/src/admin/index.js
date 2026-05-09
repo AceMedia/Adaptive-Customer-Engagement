@@ -1001,7 +1001,7 @@ function SettingsView({ section = 'settings' }) {
 			createElement(SelectControl, {
 				label: __('Provider', 'adaptive-customer-engagement'),
 				value: settings.enrichment.provider,
-				options: ['none', 'ipregistry', 'ipdata', 'ipinfo', 'ipapiis'].map((entry) => ({ label: entry, value: entry })),
+				options: ['none', 'ipregistry', 'ipinfo'].map((entry) => ({ label: entry, value: entry })),
 				onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, provider: next } }),
 			}),
 			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), value: settings.enrichment.api_key, onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, api_key: next } }) }),

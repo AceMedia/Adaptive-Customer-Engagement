@@ -24,6 +24,8 @@ final class ProviderRegistry {
 		switch ( $provider ) {
 			case 'ipregistry':
 				return new IpregistryProvider();
+			case 'ipinfo':
+				return new IpinfoProvider();
 			case 'none':
 			default:
 				return new NullProvider();
