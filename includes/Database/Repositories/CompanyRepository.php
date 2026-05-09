@@ -141,18 +141,72 @@ final class CompanyRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_companies( int $limit = 100 ): array {
+	public function get_companies( int $limit = 100, array $filters = array() ): array {
 		global $wpdb;
+		$where  = array( 'ignored = 0' );
+		$params = array();
+
+		if ( ! empty( $filters['confidence'] ) ) {
+			$where[]  = 'confidence = %s';
+			$params[] = $filters['confidence'];
+		}
+
+		if ( ! empty( $filters['provider'] ) ) {
+			$where[]  = 'source_provider = %s';
+			$params[] = $filters['provider'];
+		}
+
+		if ( ! empty( $filters['date_from'] ) ) {
+			$where[]  = 'DATE(last_seen) >= %s';
+			$params[] = $filters['date_from'];
+		}
+
+		if ( ! empty( $filters['date_to'] ) ) {
+			$where[]  = 'DATE(last_seen) <= %s';
+			$params[] = $filters['date_to'];
+		}
+
+		if ( ! empty( $filters['search'] ) ) {
+			$search    = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
+			$where[]   = '(name LIKE %s OR domain LIKE %s OR type LIKE %s)';
+			$params[]  = $search;
+			$params[]  = $search;
+			$params[]  = $search;
+		}
+
+		$params[] = $limit;
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT * FROM ' . Schema::table_name( 'companies' ) . ' WHERE ignored = 0 ORDER BY last_seen DESC, total_sessions DESC, total_events DESC LIMIT %d',
-				$limit
+				'SELECT * FROM ' . Schema::table_name( 'companies' ) . ' WHERE ' . implode( ' AND ', $where ) . ' ORDER BY last_seen DESC, total_sessions DESC, total_events DESC LIMIT %d',
+				$params
 			),
 			ARRAY_A
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Get distinct provider names.
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_sources(): array {
+		global $wpdb;
+
+		$results = $wpdb->get_col( 'SELECT DISTINCT source_provider FROM ' . Schema::table_name( 'companies' ) . " WHERE source_provider IS NOT NULL AND source_provider != '' ORDER BY source_provider ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( $value ): string {
+						return (string) $value;
+					},
+					is_array( $results ) ? $results : array()
+				)
+			)
+		);
 	}
 
 	/**

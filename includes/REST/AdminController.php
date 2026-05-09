@@ -265,10 +265,16 @@ final class AdminController {
 	 *
 	 * @return WP_REST_Response
 	 */
-	public function sessions(): WP_REST_Response {
+	public function sessions( WP_REST_Request $request ): WP_REST_Response {
+		$filters = $this->get_list_filters( $request );
+
 		return new WP_REST_Response(
 			array(
-				'items' => array_map( array( $this, 'decorate_session_summary' ), $this->sessions->get_recent_sessions() ),
+				'items'   => array_map( array( $this, 'decorate_session_summary' ), $this->sessions->get_recent_sessions( 100, $filters ) ),
+				'filters' => array(
+					'sources'      => $this->sessions->get_sources(),
+					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
+				),
 			)
 		);
 	}
@@ -311,10 +317,16 @@ final class AdminController {
 	 *
 	 * @return WP_REST_Response
 	 */
-	public function companies(): WP_REST_Response {
+	public function companies( WP_REST_Request $request ): WP_REST_Response {
+		$filters = $this->get_list_filters( $request );
+
 		return new WP_REST_Response(
 			array(
-				'items' => $this->companies->get_companies(),
+				'items'   => $this->companies->get_companies( 100, $filters ),
+				'filters' => array(
+					'providers'    => $this->companies->get_sources(),
+					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
+				),
 			)
 		);
 	}
@@ -453,5 +465,21 @@ final class AdminController {
 	 */
 	private function decorate_session_summary( array $session ): array {
 		return array_merge( $session, $this->lead_scorer->score_session( $session ) );
+	}
+
+	/**
+	 * Read common list filters from the request.
+	 *
+	 * @return array<string, string>
+	 */
+	private function get_list_filters( WP_REST_Request $request ): array {
+		return array(
+			'search'     => sanitize_text_field( (string) $request->get_param( 'search' ) ),
+			'confidence' => sanitize_key( (string) $request->get_param( 'confidence' ) ),
+			'source'     => sanitize_text_field( (string) $request->get_param( 'source' ) ),
+			'provider'   => sanitize_text_field( (string) $request->get_param( 'provider' ) ),
+			'date_from'  => sanitize_text_field( (string) $request->get_param( 'date_from' ) ),
+			'date_to'    => sanitize_text_field( (string) $request->get_param( 'date_to' ) ),
+		);
 	}
 }

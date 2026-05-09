@@ -16,6 +16,20 @@ function request(route, options = {}) {
 	});
 }
 
+function withQuery(route, params = {}) {
+	const search = new URLSearchParams();
+
+	Object.entries(params).forEach(([key, value]) => {
+		if (value !== undefined && value !== null && value !== '') {
+			search.set(key, value);
+		}
+	});
+
+	const query = search.toString();
+
+	return query ? `${route}?${query}` : route;
+}
+
 function SessionsTable({ items, onView }) {
 	if (!items.length) {
 		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
@@ -134,9 +148,23 @@ function DashboardView() {
 function SessionsView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
+	const [options, setOptions] = useState({ sources: [], confidences: [] });
+	const [filters, setFilters] = useState({
+		search: '',
+		confidence: '',
+		source: '',
+		date_from: '',
+		date_to: '',
+	});
+
+	const load = async (nextFilters = filters) => {
+		const response = await request(withQuery('/admin/sessions', nextFilters));
+		setItems(response.items || []);
+		setOptions(response.filters || { sources: [], confidences: [] });
+	};
 
 	useEffect(() => {
-		request('/admin/sessions').then((response) => setItems(response.items || []));
+		load(filters);
 	}, []);
 
 	if (!items) {
@@ -146,6 +174,20 @@ function SessionsView() {
 	return createElement(
 		Fragment,
 		null,
+		createElement(FilterPanel, {
+			filters,
+			onChange: setFilters,
+			onApply: () => load(filters),
+			onReset: () => {
+				const reset = { search: '', confidence: '', source: '', date_from: '', date_to: '' };
+				setFilters(reset);
+				load(reset);
+			},
+			selects: [
+				{ key: 'confidence', label: 'Confidence', options: options.confidences || [] },
+				{ key: 'source', label: 'Source', options: options.sources || [] },
+			],
+		}),
 		createElement(SessionsTable, {
 			items,
 			onView: async (id) => {
@@ -318,9 +360,23 @@ function CompanyDetailPanel({ detail, onClose }) {
 function CompaniesView() {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
+	const [options, setOptions] = useState({ providers: [], confidences: [] });
+	const [filters, setFilters] = useState({
+		search: '',
+		confidence: '',
+		provider: '',
+		date_from: '',
+		date_to: '',
+	});
+
+	const load = async (nextFilters = filters) => {
+		const response = await request(withQuery('/admin/companies', nextFilters));
+		setItems(response.items || []);
+		setOptions(response.filters || { providers: [], confidences: [] });
+	};
 
 	useEffect(() => {
-		request('/admin/companies').then((response) => setItems(response.items || []));
+		load(filters);
 	}, []);
 
 	if (!items) {
@@ -330,6 +386,20 @@ function CompaniesView() {
 	return createElement(
 		Fragment,
 		null,
+		createElement(FilterPanel, {
+			filters,
+			onChange: setFilters,
+			onApply: () => load(filters),
+			onReset: () => {
+				const reset = { search: '', confidence: '', provider: '', date_from: '', date_to: '' };
+				setFilters(reset);
+				load(reset);
+			},
+			selects: [
+				{ key: 'confidence', label: 'Confidence', options: options.confidences || [] },
+				{ key: 'provider', label: 'Provider', options: options.providers || [] },
+			],
+		}),
 		createElement(CompaniesTable, {
 			items,
 			onView: async (id) => {
@@ -338,6 +408,55 @@ function CompaniesView() {
 			},
 		}),
 		detail && createElement(CompanyDetailPanel, { detail, onClose: () => setDetail(null) })
+	);
+}
+
+function FilterPanel({ filters, onChange, onApply, onReset, selects = [] }) {
+	return createElement(
+		Card,
+		{ style: { marginBottom: '16px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement(
+				'div',
+				{ style: { display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))' } },
+				createElement(TextControl, {
+					label: __('Search', 'adaptive-customer-engagement'),
+					value: filters.search,
+					onChange: (next) => onChange({ ...filters, search: next }),
+				}),
+				...selects.map((select) =>
+					createElement(SelectControl, {
+						key: select.key,
+						label: __(select.label, 'adaptive-customer-engagement'),
+						value: filters[select.key] || '',
+						options: [{ label: __('All', 'adaptive-customer-engagement'), value: '' }].concat(
+							(select.options || []).map((entry) => ({ label: entry, value: entry }))
+						),
+						onChange: (next) => onChange({ ...filters, [select.key]: next }),
+					})
+				),
+				createElement(TextControl, {
+					label: __('From date', 'adaptive-customer-engagement'),
+					type: 'date',
+					value: filters.date_from,
+					onChange: (next) => onChange({ ...filters, date_from: next }),
+				}),
+				createElement(TextControl, {
+					label: __('To date', 'adaptive-customer-engagement'),
+					type: 'date',
+					value: filters.date_to,
+					onChange: (next) => onChange({ ...filters, date_to: next }),
+				})
+			),
+			createElement(
+				'div',
+				{ style: { marginTop: '12px', display: 'flex', gap: '8px' } },
+				createElement(Button, { variant: 'primary', onClick: onApply }, __('Apply filters', 'adaptive-customer-engagement')),
+				createElement(Button, { variant: 'secondary', onClick: onReset }, __('Reset filters', 'adaptive-customer-engagement'))
+			)
+		)
 	);
 }
 

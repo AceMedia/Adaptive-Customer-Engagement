@@ -126,12 +126,46 @@ final class SessionRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_recent_sessions( int $limit = 50 ): array {
+	public function get_recent_sessions( int $limit = 50, array $filters = array() ): array {
 		global $wpdb;
 
 		$sessions  = Schema::table_name( 'sessions' );
 		$events    = Schema::table_name( 'events' );
 		$companies = Schema::table_name( 'companies' );
+		$where     = array();
+		$params    = array();
+
+		if ( ! empty( $filters['confidence'] ) ) {
+			$where[]  = 's.company_confidence = %s';
+			$params[] = $filters['confidence'];
+		}
+
+		if ( ! empty( $filters['source'] ) ) {
+			$where[]  = 's.utm_source = %s';
+			$params[] = $filters['source'];
+		}
+
+		if ( ! empty( $filters['date_from'] ) ) {
+			$where[]  = 'DATE(s.last_seen) >= %s';
+			$params[] = $filters['date_from'];
+		}
+
+		if ( ! empty( $filters['date_to'] ) ) {
+			$where[]  = 'DATE(s.last_seen) <= %s';
+			$params[] = $filters['date_to'];
+		}
+
+		if ( ! empty( $filters['search'] ) ) {
+			$search    = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
+			$where[]   = '(s.session_uuid LIKE %s OR s.landing_path LIKE %s OR s.referrer LIKE %s OR c.name LIKE %s)';
+			$params[]  = $search;
+			$params[]  = $search;
+			$params[]  = $search;
+			$params[]  = $search;
+		}
+
+		$where_sql = $where ? 'WHERE ' . implode( ' AND ', $where ) : '';
+		$params[]  = $limit;
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
@@ -143,15 +177,38 @@ final class SessionRepository {
 				FROM {$sessions} s
 				LEFT JOIN {$events} e ON e.session_id = s.id
 				LEFT JOIN {$companies} c ON c.id = s.company_id
+				{$where_sql}
 				GROUP BY s.id
 				ORDER BY s.last_seen DESC
 				LIMIT %d",
-				$limit
+				$params
 			),
 			ARRAY_A
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Get distinct session sources.
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_sources(): array {
+		global $wpdb;
+
+		$results = $wpdb->get_col( 'SELECT DISTINCT utm_source FROM ' . Schema::table_name( 'sessions' ) . " WHERE utm_source IS NOT NULL AND utm_source != '' ORDER BY utm_source ASC" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( $value ): string {
+						return (string) $value;
+					},
+					is_array( $results ) ? $results : array()
+				)
+			)
+		);
 	}
 
 	/**
