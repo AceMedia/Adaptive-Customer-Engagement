@@ -1,0 +1,359 @@
+import apiFetch from '@wordpress/api-fetch';
+import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, ToggleControl } from '@wordpress/components';
+import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
+import { __ } from '@wordpress/i18n';
+import { render } from '@wordpress/element';
+
+const config = window.ACEAdminConfig || {};
+
+function request(route, options = {}) {
+	return apiFetch({
+		url: `${config.root}${config.namespace}${route}`,
+		headers: {
+			'X-WP-Nonce': config.nonce,
+		},
+		...options,
+	});
+}
+
+function SessionsTable({ items }) {
+	if (!items.length) {
+		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
+	}
+
+	return createElement(
+		'table',
+		{ className: 'widefat striped' },
+		createElement(
+			'thead',
+			null,
+			createElement(
+				'tr',
+				null,
+				['Session', 'Landing page', 'Source', 'Campaign', 'Events', 'Call clicks', 'Last seen'].map((label) =>
+					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
+				)
+			)
+		),
+		createElement(
+			'tbody',
+			null,
+			items.map((item) =>
+				createElement(
+					'tr',
+					{ key: item.id },
+					createElement('td', null, item.session_uuid),
+					createElement('td', null, item.landing_path || '—'),
+					createElement('td', null, item.utm_source || '—'),
+					createElement('td', null, item.utm_campaign || '—'),
+					createElement('td', null, item.event_count),
+					createElement('td', null, item.call_clicks),
+					createElement('td', null, item.last_seen)
+				)
+			)
+		)
+	);
+}
+
+function DashboardView() {
+	const [data, setData] = useState(null);
+
+	useEffect(() => {
+		request('/admin/dashboard').then(setData);
+	}, []);
+
+	if (!data) {
+		return createElement(Spinner);
+	}
+
+	const cards = [
+		['Sessions today', data.metrics.sessions_today],
+		['Returning sessions', data.metrics.returning_sessions],
+		['Click-to-call events', data.metrics.click_to_call_events],
+		['Ignored traffic', data.metrics.ignored_traffic],
+	];
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(
+			'div',
+			{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px', marginBottom: '16px' } },
+			cards.map(([label, value]) =>
+				createElement(
+					Card,
+					{ key: label },
+					createElement(CardBody, null, createElement('strong', null, __(label, 'adaptive-customer-engagement')), createElement('div', { style: { fontSize: '24px', marginTop: '8px' } }, value))
+				)
+			)
+		),
+		createElement('h2', null, __('Top pages', 'adaptive-customer-engagement')),
+		createElement(
+			'table',
+			{ className: 'widefat striped', style: { marginBottom: '20px' } },
+			createElement(
+				'tbody',
+				null,
+				(data.top_pages || []).map((page) =>
+					createElement('tr', { key: page.path }, createElement('td', null, page.path || '/'), createElement('td', null, page.total))
+				)
+			)
+		),
+		createElement('h2', null, __('Recent sessions', 'adaptive-customer-engagement')),
+		createElement(SessionsTable, { items: data.recent_sessions || [] })
+	);
+}
+
+function SessionsView() {
+	const [items, setItems] = useState(null);
+
+	useEffect(() => {
+		request('/admin/sessions').then((response) => setItems(response.items || []));
+	}, []);
+
+	if (!items) {
+		return createElement(Spinner);
+	}
+
+	return createElement(SessionsTable, { items });
+}
+
+function NumberForm({ value, onChange, onSubmit, busy, label }) {
+	return createElement(
+		'div',
+		{ style: { display: 'grid', gap: '8px', marginBottom: '16px', maxWidth: '640px' } },
+		createElement(TextControl, { label: __('Label', 'adaptive-customer-engagement'), value: value.label, onChange: (next) => onChange({ ...value, label: next }) }),
+		createElement(TextControl, { label: __('Display number', 'adaptive-customer-engagement'), value: value.display_number, onChange: (next) => onChange({ ...value, display_number: next }) }),
+		createElement(TextControl, { label: __('E.164 number', 'adaptive-customer-engagement'), value: value.e164_number, onChange: (next) => onChange({ ...value, e164_number: next }) }),
+		createElement(SelectControl, {
+			label: __('Source type', 'adaptive-customer-engagement'),
+			value: value.source_type,
+			options: ['default', 'website', 'campaign', 'google_business_profile', 'bing', 'social', 'product_page', 'brand_page', 'brochure_qr'].map((entry) => ({ label: entry, value: entry })),
+			onChange: (next) => onChange({ ...value, source_type: next }),
+		}),
+		createElement(TextControl, { label: __('Source value', 'adaptive-customer-engagement'), value: value.source_value, onChange: (next) => onChange({ ...value, source_value: next }) }),
+		createElement(SelectControl, {
+			label: __('Page match type', 'adaptive-customer-engagement'),
+			value: value.page_match_type,
+			options: ['contains', 'exact', 'prefix', 'regex'].map((entry) => ({ label: entry, value: entry })),
+			onChange: (next) => onChange({ ...value, page_match_type: next }),
+		}),
+		createElement(TextControl, { label: __('Page match value', 'adaptive-customer-engagement'), value: value.page_match_value, onChange: (next) => onChange({ ...value, page_match_value: next }) }),
+		createElement(TextControl, { label: __('Campaign match', 'adaptive-customer-engagement'), value: value.campaign_match, onChange: (next) => onChange({ ...value, campaign_match: next }) }),
+		createElement(TextControl, { label: __('Priority', 'adaptive-customer-engagement'), type: 'number', value: value.priority, onChange: (next) => onChange({ ...value, priority: Number(next || 0) }) }),
+		createElement(ToggleControl, { label: __('Default number', 'adaptive-customer-engagement'), checked: !!value.is_default, onChange: (next) => onChange({ ...value, is_default: next }) }),
+		createElement(ToggleControl, { label: __('Active', 'adaptive-customer-engagement'), checked: !!value.is_active, onChange: (next) => onChange({ ...value, is_active: next }) }),
+		createElement(Button, { variant: 'primary', onClick: onSubmit, disabled: busy }, label)
+	);
+}
+
+function NumbersView() {
+	const empty = useMemo(
+		() => ({
+			label: '',
+			display_number: '',
+			e164_number: '',
+			source_type: 'default',
+			source_value: '',
+			page_match_type: 'contains',
+			page_match_value: '',
+			campaign_match: '',
+			priority: 10,
+			is_default: false,
+			is_active: true,
+			amazon_connect_phone_number_id: '',
+			amazon_connect_contact_flow_id: '',
+		}),
+		[]
+	);
+	const [items, setItems] = useState(null);
+	const [current, setCurrent] = useState(empty);
+	const [busy, setBusy] = useState(false);
+
+	const load = () => request('/admin/numbers').then((response) => setItems(response.items || []));
+
+	useEffect(() => {
+		load();
+	}, []);
+
+	const save = async () => {
+		setBusy(true);
+		await request(current.id ? `/admin/numbers/${current.id}` : '/admin/numbers', {
+			method: current.id ? 'PATCH' : 'POST',
+			data: current,
+		});
+		setCurrent(empty);
+		await load();
+		setBusy(false);
+	};
+
+	const remove = async (id) => {
+		setBusy(true);
+		await request(`/admin/numbers/${id}`, { method: 'DELETE' });
+		if (current.id === id) {
+			setCurrent(empty);
+		}
+		await load();
+		setBusy(false);
+	};
+
+	if (!items) {
+		return createElement(Spinner);
+	}
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(NumberForm, {
+			value: current,
+			onChange: setCurrent,
+			onSubmit: save,
+			busy,
+			label: current.id ? __('Update number', 'adaptive-customer-engagement') : __('Add number', 'adaptive-customer-engagement'),
+		}),
+		createElement(
+			'table',
+			{ className: 'widefat striped' },
+			createElement(
+				'thead',
+				null,
+				createElement(
+					'tr',
+					null,
+					['Label', 'Display', 'E.164', 'Source', 'Path rule', 'Priority', 'Status', 'Actions'].map((label) =>
+						createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
+					)
+				)
+			),
+			createElement(
+				'tbody',
+				null,
+				items.map((item) =>
+					createElement(
+						'tr',
+						{ key: item.id },
+						createElement('td', null, item.label),
+						createElement('td', null, item.display_number),
+						createElement('td', null, item.e164_number),
+						createElement('td', null, item.source_type),
+						createElement('td', null, item.page_match_value || '—'),
+						createElement('td', null, item.priority),
+						createElement('td', null, item.is_active ? __('Active', 'adaptive-customer-engagement') : __('Inactive', 'adaptive-customer-engagement')),
+						createElement(
+							'td',
+							null,
+							createElement(Button, { onClick: () => setCurrent({ ...item, priority: Number(item.priority) }) }, __('Edit', 'adaptive-customer-engagement')),
+							' ',
+							createElement(Button, { isDestructive: true, onClick: () => remove(item.id), disabled: busy }, __('Delete', 'adaptive-customer-engagement'))
+						)
+					)
+				)
+			)
+		)
+	);
+}
+
+function SettingsView({ section = 'settings' }) {
+	const [settings, setSettings] = useState(null);
+	const [notice, setNotice] = useState(null);
+	const [busy, setBusy] = useState(false);
+
+	useEffect(() => {
+		request('/admin/settings').then(setSettings);
+	}, []);
+
+	if (!settings) {
+		return createElement(Spinner);
+	}
+
+	const save = async () => {
+		setBusy(true);
+		const response = await request('/admin/settings', { method: 'POST', data: settings });
+		setSettings(response);
+		setNotice(__('Settings saved.', 'adaptive-customer-engagement'));
+		setBusy(false);
+	};
+
+	const purge = async () => {
+		setBusy(true);
+		await request('/admin/privacy/purge', { method: 'POST' });
+		setNotice(__('Expired raw data purged.', 'adaptive-customer-engagement'));
+		setBusy(false);
+	};
+
+	const sections = {
+		settings: createElement(
+			Fragment,
+			null,
+			createElement(ToggleControl, { label: __('Enable tracking', 'adaptive-customer-engagement'), checked: !!settings.enabled, onChange: (next) => setSettings({ ...settings, enabled: next }) }),
+			createElement(ToggleControl, { label: __('Ignore logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.tracking.ignore_logged_in_admins, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, ignore_logged_in_admins: next } }) }),
+			createElement(ToggleControl, { label: __('Respect Do Not Track', 'adaptive-customer-engagement'), checked: !!settings.tracking.respect_dnt, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, respect_dnt: next } }) }),
+			createElement(TextControl, { label: __('Session cookie name', 'adaptive-customer-engagement'), value: settings.tracking.cookie_name, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, cookie_name: next } }) }),
+			createElement(TextControl, { label: __('Visitor cookie name', 'adaptive-customer-engagement'), value: settings.tracking.visitor_cookie_name, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, visitor_cookie_name: next } }) })
+		),
+		privacy: createElement(
+			Fragment,
+			null,
+			createElement(TextControl, { label: __('Raw IP retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_ip_retention_days, onChange: (next) => setSettings({ ...settings, privacy: { ...settings.privacy, raw_ip_retention_days: Number(next || 1) } }) }),
+			createElement(TextControl, { label: __('Raw phone retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_phone_retention_days, onChange: (next) => setSettings({ ...settings, privacy: { ...settings.privacy, raw_phone_retention_days: Number(next || 1) } }) }),
+			createElement(Button, { variant: 'secondary', onClick: purge, disabled: busy }, __('Run privacy purge now', 'adaptive-customer-engagement'))
+		),
+		enrichment: createElement(
+			Fragment,
+			null,
+			createElement(SelectControl, {
+				label: __('Provider', 'adaptive-customer-engagement'),
+				value: settings.enrichment.provider,
+				options: ['none', 'ipregistry', 'ipdata', 'ipinfo', 'ipapiis'].map((entry) => ({ label: entry, value: entry })),
+				onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, provider: next } }),
+			}),
+			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), value: settings.enrichment.api_key, onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, api_key: next } }) }),
+			createElement(Notice, { status: 'warning', isDismissible: false }, __('Provider integration is scaffolded only in this release.', 'adaptive-customer-engagement'))
+		),
+		'amazon-connect': createElement(Notice, { status: 'info', isDismissible: false }, __('Amazon Connect support is scaffolded ready for a later implementation pass.', 'adaptive-customer-engagement')),
+		'ai-agent': createElement(Notice, { status: 'info', isDismissible: false }, __('The AI agent surface is intentionally placeholder-only in this release.', 'adaptive-customer-engagement')),
+	};
+
+	return createElement(
+		Fragment,
+		null,
+		notice && createElement(Notice, { status: 'success', isDismissible: true, onRemove: () => setNotice(null) }, notice),
+		sections[section] || sections.settings,
+		createElement('div', { style: { marginTop: '16px' } }, createElement(Button, { variant: 'primary', onClick: save, disabled: busy }, __('Save settings', 'adaptive-customer-engagement')))
+	);
+}
+
+function PlaceholderView({ title, message }) {
+	return createElement(Notice, { status: 'info', isDismissible: false }, `${title}: ${message}`);
+}
+
+function App() {
+	const page = (config.page || 'dashboard').replace(/^ace-/, '');
+
+	switch (page) {
+		case 'dashboard':
+			return createElement(DashboardView);
+		case 'sessions':
+			return createElement(SessionsView);
+		case 'numbers':
+			return createElement(NumbersView);
+		case 'settings':
+		case 'privacy':
+		case 'enrichment':
+		case 'amazon-connect':
+		case 'ai-agent':
+			return createElement(SettingsView, { section: page });
+		case 'companies':
+			return createElement(PlaceholderView, { title: __('Companies', 'adaptive-customer-engagement'), message: __('Company views will fill out once enrichment providers are implemented.', 'adaptive-customer-engagement') });
+		case 'calls':
+			return createElement(PlaceholderView, { title: __('Calls', 'adaptive-customer-engagement'), message: __('Call import and matching sit on the next implementation phase.', 'adaptive-customer-engagement') });
+		default:
+			return createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') });
+	}
+}
+
+const root = document.getElementById('ace-admin-root');
+
+if (root) {
+	render(createElement(App), root);
+}

@@ -1,0 +1,19 @@
+{
+  "name": "adaptive-customer-engagement",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build tooling for the Adaptive Customer Engagement WordPress plugin.",
+  "author": "Shane Rounce <hello@acemedia.ninja>",
+  "license": "GPL-2.0-or-later",
+  "scripts": {
+    "build": "wp-scripts build",
+    "start": "wp-scripts start"
+  },
+  "devDependencies": {
+    "@wordpress/api-fetch": "^7.0.0",
+    "@wordpress/components": "^28.0.0",
+    "@wordpress/element": "^6.0.0",
+    "@wordpress/i18n": "^5.0.0",
+    "@wordpress/scripts": "^30.0.0"
+  }
+}
