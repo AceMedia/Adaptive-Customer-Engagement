@@ -209,6 +209,71 @@ function DashboardView() {
 	);
 }
 
+function CallsView() {
+	const [data, setData] = useState(null);
+	const [selectedSession, setSelectedSession] = useState(null);
+
+	useEffect(() => {
+		request('/admin/calls').then(setData);
+	}, []);
+
+	if (!data) {
+		return createElement(Spinner);
+	}
+
+	const cards = [
+		['Click-to-call today', data.metrics.click_to_call_today],
+		['Stored calls today', data.metrics.stored_calls_today],
+		['Matched calls today', data.metrics.matched_calls_today],
+		['Stored calls total', data.metrics.stored_calls_total],
+		['Matched calls total', data.metrics.matched_calls_total],
+		['Unmatched calls', data.metrics.unmatched_calls],
+	];
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(
+			'div',
+			{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px', marginBottom: '16px' } },
+			cards.map(([label, value]) =>
+				createElement(
+					Card,
+					{ key: label },
+					createElement(CardBody, null, createElement('strong', null, __(label, 'adaptive-customer-engagement')), createElement('div', { style: { fontSize: '24px', marginTop: '8px' } }, value))
+				)
+			)
+		),
+		createElement('h2', null, __('Top call-intent pages', 'adaptive-customer-engagement')),
+		createElement(
+			'table',
+			{ className: 'widefat striped', style: { marginBottom: '20px' } },
+			createElement(
+				'tbody',
+				null,
+				(data.top_call_paths || []).length
+					? data.top_call_paths.map((page) =>
+						createElement('tr', { key: page.path }, createElement('td', null, page.path || '/'), createElement('td', null, page.total))
+					  )
+					: createElement('tr', null, createElement('td', { colSpan: 2 }, __('No call-intent paths recorded yet.', 'adaptive-customer-engagement')))
+			)
+		),
+		createElement('h2', null, __('Recent call-intent sessions', 'adaptive-customer-engagement')),
+		createElement(SessionsTable, {
+			items: data.call_intent_sessions || [],
+			onView: async (id) => {
+				const detail = await request(`/admin/sessions/${id}`);
+				setSelectedSession(detail);
+			},
+		}),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Recent stored calls', 'adaptive-customer-engagement')),
+		createElement(CallsTable, {
+			items: data.recent_calls || [],
+		}),
+		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) })
+	);
+}
+
 function DashboardSegmentsPanel({ shortcuts }) {
 	const sessionSegments = shortcuts.sessions || [];
 	const companySegments = shortcuts.companies || [];
@@ -570,6 +635,46 @@ function CompanyDetailPanel({ detail, onClose }) {
 				: null,
 			createElement('h3', null, __('Recent sessions', 'adaptive-customer-engagement')),
 			createElement(SessionsTable, { items: sessions })
+		)
+	);
+}
+
+function CallsTable({ items }) {
+	if (!items.length) {
+		return createElement(Notice, { status: 'info', isDismissible: false }, __('No stored call records are available yet.', 'adaptive-customer-engagement'));
+	}
+
+	return createElement(
+		'table',
+		{ className: 'widefat striped' },
+		createElement(
+			'thead',
+			null,
+			createElement(
+				'tr',
+				null,
+				['When', 'Status', 'Called number', 'Tracking number', 'Company', 'Session', 'Duration', 'Match confidence'].map((label) =>
+					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
+				)
+			)
+		),
+		createElement(
+			'tbody',
+			null,
+			items.map((item) =>
+				createElement(
+					'tr',
+					{ key: item.id },
+					createElement('td', null, item.started_at || '—'),
+					createElement('td', null, item.status || '—'),
+					createElement('td', null, item.called_number || '—'),
+					createElement('td', null, item.number_label || '—'),
+					createElement('td', null, item.company_name || '—'),
+					createElement('td', null, item.session_uuid || '—'),
+					createElement('td', null, item.duration_seconds ?? '—'),
+					createElement('td', null, item.match_confidence || 'unknown')
+				)
+			)
 		)
 	);
 }
@@ -1093,7 +1198,7 @@ function App() {
 		case 'companies':
 			return createElement(CompaniesView);
 		case 'calls':
-			return createElement(PlaceholderView, { title: __('Calls', 'adaptive-customer-engagement'), message: __('Call import and matching sit on the next implementation phase.', 'adaptive-customer-engagement') });
+			return createElement(CallsView);
 		default:
 			return createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') });
 	}

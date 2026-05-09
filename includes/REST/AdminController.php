@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
@@ -59,6 +60,13 @@ final class AdminController {
 	private $companies;
 
 	/**
+	 * Call repository.
+	 *
+	 * @var CallRepository
+	 */
+	private $calls;
+
+	/**
 	 * Privacy helper.
 	 *
 	 * @var Privacy
@@ -87,13 +95,14 @@ final class AdminController {
 	 * @param NumberRepository  $numbers  Number repository.
 	 * @param Privacy           $privacy  Privacy helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, Privacy $privacy, EnrichmentService $enrichment_service ) {
-		$this->sessions = $sessions;
-		$this->events   = $events;
-		$this->numbers  = $numbers;
-		$this->companies = $companies;
-		$this->privacy  = $privacy;
-		$this->lead_scorer = new LeadScorer();
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, Privacy $privacy, EnrichmentService $enrichment_service ) {
+		$this->sessions     = $sessions;
+		$this->events       = $events;
+		$this->numbers      = $numbers;
+		$this->companies    = $companies;
+		$this->calls        = $calls;
+		$this->privacy      = $privacy;
+		$this->lead_scorer  = new LeadScorer();
 		$this->enrichment_service = $enrichment_service;
 	}
 
@@ -167,6 +176,16 @@ final class AdminController {
 				'methods'             => 'GET',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'company_detail' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/calls',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'calls' ),
 			)
 		);
 
@@ -402,6 +421,32 @@ final class AdminController {
 		}
 
 		return new WP_REST_Response( $this->decorate_company_summary( $company ) );
+	}
+
+	/**
+	 * Calls data.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function calls(): WP_REST_Response {
+		$total_calls   = $this->calls->count_all();
+		$matched_calls = $this->calls->count_matched();
+
+		return new WP_REST_Response(
+			array(
+				'metrics'              => array(
+					'click_to_call_today' => $this->events->count_click_to_call_today(),
+					'stored_calls_today'  => $this->calls->count_today(),
+					'matched_calls_today' => $this->calls->count_matched( true ),
+					'stored_calls_total'  => $total_calls,
+					'matched_calls_total' => $matched_calls,
+					'unmatched_calls'     => max( 0, $total_calls - $matched_calls ),
+				),
+				'top_call_paths'       => $this->events->get_top_call_paths(),
+				'call_intent_sessions' => array_map( array( $this, 'decorate_session_summary' ), $this->events->get_recent_call_intent_sessions() ),
+				'recent_calls'         => $this->calls->get_recent_calls(),
+			)
+		);
 	}
 
 	/**

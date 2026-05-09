@@ -8,6 +8,7 @@
 namespace ACE\AdaptiveCustomerEngagement;
 
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
@@ -57,6 +58,7 @@ final class Plugin {
 		$event_repository   = new EventRepository();
 		$number_repository  = new NumberRepository();
 		$company_repository = new CompanyRepository();
+		$call_repository    = new CallRepository();
 		$privacy            = new Privacy();
 		$enrichment_service = new EnrichmentService(
 			new ProviderRegistry(),
@@ -75,8 +77,8 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $privacy, $enrichment_service );
-
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service );
+		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );
 		add_action( 'rest_api_init', array( $admin, 'register_routes' ) );

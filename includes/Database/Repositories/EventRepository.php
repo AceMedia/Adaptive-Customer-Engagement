@@ -124,4 +124,58 @@ final class EventRepository {
 			$rows
 		);
 	}
+
+	/**
+	 * Get top paths that drove call intent.
+	 *
+	 * @param int $limit Row limit.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_top_call_paths( int $limit = 8 ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT path, COUNT(*) AS total FROM ' . Schema::table_name( 'events' ) . " WHERE event_type = 'click_to_call' AND path IS NOT NULL AND path != '' GROUP BY path ORDER BY total DESC LIMIT %d",
+				$limit
+			),
+			ARRAY_A
+		);
+
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Get recent sessions with call intent.
+	 *
+	 * @param int $limit Row limit.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_recent_call_intent_sessions( int $limit = 20 ): array {
+		global $wpdb;
+
+		$events    = Schema::table_name( 'events' );
+		$sessions  = Schema::table_name( 'sessions' );
+		$companies = Schema::table_name( 'companies' );
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT s.id, s.session_uuid, s.visitor_uuid, s.landing_path, s.referrer, s.utm_source, s.utm_campaign, s.company_confidence, s.is_bot, s.ignored, s.last_seen, c.name AS company_name,
+					COUNT(e.id) AS event_count,
+					SUM(CASE WHEN e.event_type = 'click_to_call' THEN 1 ELSE 0 END) AS call_clicks,
+					SUM(CASE WHEN e.event_type = 'download' THEN 1 ELSE 0 END) AS download_count,
+					SUM(CASE WHEN e.event_type = 'form_submit' THEN 1 ELSE 0 END) AS form_count
+				FROM {$sessions} s
+				INNER JOIN {$events} e ON e.session_id = s.id AND e.event_type = 'click_to_call'
+				LEFT JOIN {$companies} c ON c.id = s.company_id
+				GROUP BY s.id
+				ORDER BY MAX(e.occurred_at) DESC, s.last_seen DESC
+				LIMIT %d",
+				$limit
+			),
+			ARRAY_A
+		);
+
+		return is_array( $rows ) ? $rows : array();
+	}
 }
