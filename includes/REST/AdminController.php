@@ -282,7 +282,7 @@ final class AdminController {
 				),
 				'top_pages'          => $this->events->get_top_pages(),
 				'recent_sessions'    => $recent_sessions,
-				'hot_companies'      => $this->companies->get_hot_companies(),
+				'hot_companies'      => array_map( array( $this, 'decorate_company_summary' ), $this->companies->get_hot_companies() ),
 				'segment_shortcuts'  => array(
 					'sessions'  => Settings::get_reporting_segments( 'sessions' ),
 					'companies' => Settings::get_reporting_segments( 'companies' ),
@@ -368,7 +368,7 @@ final class AdminController {
 
 		return new WP_REST_Response(
 			array(
-				'items'   => $this->companies->get_companies( $per_page, $filters, ( $page - 1 ) * $per_page ),
+				'items'   => array_map( array( $this, 'decorate_company_summary' ), $this->companies->get_companies( $per_page, $filters, ( $page - 1 ) * $per_page ) ),
 				'filters' => array(
 					'providers'    => $this->companies->get_sources(),
 					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
@@ -397,7 +397,11 @@ final class AdminController {
 			return new WP_Error( 'ace_company_not_found', __( 'Company not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
 		}
 
-		return new WP_REST_Response( $company );
+		if ( ! empty( $company['recent_sessions'] ) && is_array( $company['recent_sessions'] ) ) {
+			$company['recent_sessions'] = array_map( array( $this, 'decorate_session_summary' ), $company['recent_sessions'] );
+		}
+
+		return new WP_REST_Response( $this->decorate_company_summary( $company ) );
 	}
 
 	/**
@@ -481,6 +485,7 @@ final class AdminController {
 				'form_count'         => 'Form submissions',
 				'score'              => 'Score',
 				'score_label'        => 'Score label',
+				'score_summary'      => 'Score summary',
 				'last_seen'          => 'Last seen',
 			),
 			$items
@@ -511,10 +516,13 @@ final class AdminController {
 				'total_sessions'  => 'Sessions',
 				'total_events'    => 'Events',
 				'total_calls'     => 'Calls',
+				'priority_score'  => 'Priority score',
+				'priority_label'  => 'Priority label',
+				'priority_summary'=> 'Priority summary',
 				'first_seen'      => 'First seen',
 				'last_seen'       => 'Last seen',
 			),
-			$items
+			array_map( array( $this, 'decorate_company_summary' ), $items )
 		);
 	}
 
@@ -690,6 +698,16 @@ final class AdminController {
 	 */
 	private function decorate_session_summary( array $session ): array {
 		return array_merge( $session, $this->lead_scorer->score_session( $session ) );
+	}
+
+	/**
+	 * Decorate a company row with priority metadata.
+	 *
+	 * @param array<string, mixed> $company Company data.
+	 * @return array<string, mixed>
+	 */
+	private function decorate_company_summary( array $company ): array {
+		return array_merge( $company, $this->lead_scorer->score_company( $company ) );
 	}
 
 	/**

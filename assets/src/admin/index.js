@@ -106,7 +106,7 @@ function SessionsTable({ items, onView }) {
 			createElement(
 				'tr',
 				null,
-				['Session', 'Landing page', 'Source', 'Campaign', 'Events', 'Call clicks', 'Score', 'Last seen', 'Actions'].map((label) =>
+				['Session', 'Landing page', 'Source', 'Campaign', 'Events', 'Call clicks', 'Score', 'Why it scored', 'Last seen', 'Actions'].map((label) =>
 					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
 				)
 			)
@@ -125,6 +125,7 @@ function SessionsTable({ items, onView }) {
 					createElement('td', null, item.event_count),
 					createElement('td', null, item.call_clicks),
 					createElement('td', null, `${item.score || 0} (${item.score_label || 'noise'})`),
+					createElement('td', null, item.score_summary || '—'),
 					createElement('td', null, item.last_seen),
 					createElement(
 						'td',
@@ -399,6 +400,7 @@ function SessionDetailPanel({ detail, onClose }) {
 				createElement(Button, { variant: 'secondary', onClick: onClose }, __('Close', 'adaptive-customer-engagement'))
 			),
 			createElement('p', null, `${__('Score', 'adaptive-customer-engagement')}: ${session.score || 0} (${session.score_label || 'noise'})`),
+			createElement('p', null, `${__('Why it scored', 'adaptive-customer-engagement')}: ${session.score_summary || '—'}`),
 			createElement(
 				'table',
 				{ className: 'widefat striped', style: { marginBottom: '16px' } },
@@ -418,6 +420,20 @@ function SessionDetailPanel({ detail, onClose }) {
 					].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
 				)
 			),
+			session.score_breakdown?.length
+				? createElement(
+						Fragment,
+						null,
+						createElement('h3', null, __('Score breakdown', 'adaptive-customer-engagement')),
+						createElement(
+							'ul',
+							null,
+							session.score_breakdown.map((item, index) =>
+								createElement('li', { key: `${item.label}-${index}` }, `${item.label}: ${item.points > 0 ? '+' : ''}${item.points}`)
+							)
+						)
+				  )
+				: null,
 			createElement('h3', null, __('Timeline', 'adaptive-customer-engagement')),
 			createElement(
 				'table',
@@ -457,8 +473,8 @@ function CompaniesTable({ items, onView, compact = false }) {
 	}
 
 	const columns = compact
-		? ['Company', 'Domain', 'Confidence', 'Sessions', 'Events', 'Last seen', 'Actions']
-		: ['Company', 'Type', 'Domain', 'Confidence', 'Sessions', 'Events', 'Calls', 'Last seen', 'Actions'];
+		? ['Company', 'Domain', 'Confidence', 'Priority', 'Sessions', 'Events', 'Last seen', 'Actions']
+		: ['Company', 'Type', 'Domain', 'Confidence', 'Priority', 'Why it scored', 'Sessions', 'Events', 'Calls', 'Last seen', 'Actions'];
 
 	return createElement(
 		'table',
@@ -483,6 +499,8 @@ function CompaniesTable({ items, onView, compact = false }) {
 					!compact && createElement('td', null, item.type || '—'),
 					createElement('td', null, item.domain || '—'),
 					createElement('td', null, item.confidence || 'unknown'),
+					createElement('td', null, `${item.priority_score ?? 0} (${item.priority_label || 'noise'})`),
+					!compact && createElement('td', null, item.priority_summary || '—'),
 					createElement('td', null, item.total_sessions ?? item.session_count ?? 0),
 					createElement('td', null, item.total_events ?? item.page_views ?? 0),
 					!compact && createElement('td', null, item.total_calls ?? 0),
@@ -525,6 +543,8 @@ function CompanyDetailPanel({ detail, onClose }) {
 						['Type', detail.type || '—'],
 						['Confidence', detail.confidence || 'unknown'],
 						['Provider', detail.source_provider || '—'],
+						['Priority', `${detail.priority_score || 0} (${detail.priority_label || 'noise'})`],
+						['Why it scored', detail.priority_summary || '—'],
 						['Country', detail.country_code || '—'],
 						['Sessions', detail.total_sessions || 0],
 						['Events', detail.total_events || 0],
@@ -534,6 +554,20 @@ function CompanyDetailPanel({ detail, onClose }) {
 					].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
 				)
 			),
+			detail.priority_breakdown?.length
+				? createElement(
+						Fragment,
+						null,
+						createElement('h3', null, __('Priority breakdown', 'adaptive-customer-engagement')),
+						createElement(
+							'ul',
+							null,
+							detail.priority_breakdown.map((item, index) =>
+								createElement('li', { key: `${item.label}-${index}` }, `${item.label}: ${item.points > 0 ? '+' : ''}${item.points}`)
+							)
+						)
+				  )
+				: null,
 			createElement('h3', null, __('Recent sessions', 'adaptive-customer-engagement')),
 			createElement(SessionsTable, { items: sessions })
 		)
