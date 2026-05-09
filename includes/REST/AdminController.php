@@ -280,9 +280,13 @@ final class AdminController {
 					'likely_business_visits' => $this->sessions->count_likely_business_today(),
 					'ignored_traffic'        => $this->sessions->count_ignored_today(),
 				),
-				'top_pages'       => $this->events->get_top_pages(),
-				'recent_sessions' => $recent_sessions,
-				'hot_companies'   => $this->companies->get_hot_companies(),
+				'top_pages'          => $this->events->get_top_pages(),
+				'recent_sessions'    => $recent_sessions,
+				'hot_companies'      => $this->companies->get_hot_companies(),
+				'segment_shortcuts'  => array(
+					'sessions'  => Settings::get_reporting_segments( 'sessions' ),
+					'companies' => Settings::get_reporting_segments( 'companies' ),
+				),
 			)
 		);
 	}

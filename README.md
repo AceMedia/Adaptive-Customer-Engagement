@@ -14,6 +14,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Working company reporting screens and dashboard hot-company summaries for enriched traffic
 - Paginated session and company filters for confidence, source/provider, search terms, and date range
 - Saved reporting segments for reusing common session and company filters
+- Dashboard shortcuts into saved session and company segments
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
 
@@ -121,7 +122,7 @@ The plugin creates these tables with the WordPress table prefix:
 
 The next sensible build steps are:
 
-1. broaden enrichment support and add dashboard shortcuts and export-friendly reporting
+1. broaden enrichment support and add export-friendly reporting
 2. stronger admin reporting and exports
 3. Amazon Connect import, matching, and number sync
 4. AI-assisted lead capture and safe content tools

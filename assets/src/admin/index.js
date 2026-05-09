@@ -51,6 +51,31 @@ function normaliseFilters(defaults, filters = {}) {
 	};
 }
 
+function getQueryParam(key) {
+	return new URLSearchParams(window.location.search).get(key) || '';
+}
+
+function clearQueryParam(key) {
+	const url = new URL(window.location.href);
+	url.searchParams.delete(key);
+	window.history.replaceState({}, '', url.toString());
+}
+
+function getAdminPageUrl(page, params = {}) {
+	const base = config.adminUrl || 'admin.php';
+	const url = new URL(base, window.location.origin);
+
+	url.searchParams.set('page', page === 'dashboard' ? 'ace-dashboard' : `ace-${page}`);
+
+	Object.entries(params).forEach(([key, value]) => {
+		if (value !== undefined && value !== null && value !== '') {
+			url.searchParams.set(key, value);
+		}
+	});
+
+	return url.toString();
+}
+
 function SessionsTable({ items, onView }) {
 	if (!items.length) {
 		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
@@ -144,6 +169,7 @@ function DashboardView() {
 				)
 			)
 		),
+		createElement(DashboardSegmentsPanel, { shortcuts: data.segment_shortcuts || {} }),
 		createElement('h2', null, __('Recent sessions', 'adaptive-customer-engagement')),
 		createElement(SessionsTable, {
 			items: data.recent_sessions || [],
@@ -163,6 +189,72 @@ function DashboardView() {
 		}),
 		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) }),
 		selectedCompany && createElement(CompanyDetailPanel, { detail: selectedCompany, onClose: () => setSelectedCompany(null) })
+	);
+}
+
+function DashboardSegmentsPanel({ shortcuts }) {
+	const sessionSegments = shortcuts.sessions || [];
+	const companySegments = shortcuts.companies || [];
+
+	if (!sessionSegments.length && !companySegments.length) {
+		return null;
+	}
+
+	return createElement(
+		Fragment,
+		null,
+		createElement('h2', { style: { marginTop: '20px' } }, __('Saved segments', 'adaptive-customer-engagement')),
+		createElement(
+			'div',
+			{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: '12px', marginBottom: '20px' } },
+			createElement(DashboardSegmentCard, {
+				title: __('Session segments', 'adaptive-customer-engagement'),
+				segments: sessionSegments,
+				page: 'sessions',
+			}),
+			createElement(DashboardSegmentCard, {
+				title: __('Company segments', 'adaptive-customer-engagement'),
+				segments: companySegments,
+				page: 'companies',
+			})
+		)
+	);
+}
+
+function DashboardSegmentCard({ title, segments, page }) {
+	return createElement(
+		Card,
+		null,
+		createElement(
+			CardBody,
+			null,
+			createElement('h3', { style: { marginTop: 0 } }, title),
+			segments.length
+				? createElement(
+						'div',
+						{ style: { display: 'grid', gap: '8px' } },
+						segments.map((segment) =>
+							createElement(
+								'a',
+								{
+									key: segment.id,
+									href: getAdminPageUrl(page, { ace_segment: segment.id }),
+									style: {
+										display: 'flex',
+										justifyContent: 'space-between',
+										alignItems: 'center',
+										padding: '8px 0',
+										borderTop: '1px solid #f0f0f0',
+										textDecoration: 'none',
+									},
+								},
+								createElement('strong', null, segment.name),
+								createElement('span', { style: { color: '#3858e9' } }, __('Open', 'adaptive-customer-engagement'))
+							)
+						)
+				  )
+				: createElement(Notice, { status: 'info', isDismissible: false }, __('No saved segments yet.', 'adaptive-customer-engagement'))
+		)
 	);
 }
 
@@ -199,6 +291,25 @@ function SessionsView() {
 	useEffect(() => {
 		load(filters);
 	}, []);
+
+	useEffect(() => {
+		const segmentId = getQueryParam('ace_segment');
+
+		if (!segmentId || !segments.length) {
+			return;
+		}
+
+		const segment = segments.find((item) => item.id === segmentId);
+
+		if (!segment) {
+			return;
+		}
+
+		const nextFilters = normaliseFilters(SESSION_FILTER_DEFAULTS, segment.filters);
+		setFilters(nextFilters);
+		load(nextFilters, 1);
+		clearQueryParam('ace_segment');
+	}, [segments]);
 
 	if (!items) {
 		return createElement(Spinner);
@@ -442,6 +553,25 @@ function CompaniesView() {
 	useEffect(() => {
 		load(filters);
 	}, []);
+
+	useEffect(() => {
+		const segmentId = getQueryParam('ace_segment');
+
+		if (!segmentId || !segments.length) {
+			return;
+		}
+
+		const segment = segments.find((item) => item.id === segmentId);
+
+		if (!segment) {
+			return;
+		}
+
+		const nextFilters = normaliseFilters(COMPANY_FILTER_DEFAULTS, segment.filters);
+		setFilters(nextFilters);
+		load(nextFilters, 1);
+		clearQueryParam('ace_segment');
+	}, [segments]);
 
 	if (!items) {
 		return createElement(Spinner);

@@ -102,6 +102,7 @@ final class Menu {
 					'root'      => esc_url_raw( rest_url() ),
 					'namespace' => 'adaptive-customer-engagement/v1',
 					'nonce'     => wp_create_nonce( 'wp_rest' ),
+					'adminUrl'  => esc_url_raw( admin_url( 'admin.php' ) ),
 					'page'      => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
 				)
 			),
