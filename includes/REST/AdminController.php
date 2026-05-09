@@ -452,6 +452,73 @@ final class AdminController {
 	}
 
 	/**
+	 * Export filtered sessions as CSV.
+	 *
+	 * @return void
+	 */
+	public function export_sessions(): void {
+		$this->assert_export_access();
+
+		$filters = $this->get_list_filters_from_array( $_GET ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$total   = $this->sessions->count_recent_sessions( $filters );
+		$items   = $total > 0 ? $this->sessions->get_recent_sessions( $total, $filters, 0 ) : array();
+		$items   = array_map( array( $this, 'decorate_session_summary' ), $items );
+
+		$this->stream_csv(
+			'ace-sessions-export-' . gmdate( 'Ymd-His' ) . '.csv',
+			array(
+				'session_uuid'       => 'Session UUID',
+				'visitor_uuid'       => 'Visitor UUID',
+				'landing_path'       => 'Landing page',
+				'referrer'           => 'Referrer',
+				'utm_source'         => 'Source',
+				'utm_campaign'       => 'Campaign',
+				'company_name'       => 'Company',
+				'company_confidence' => 'Confidence',
+				'event_count'        => 'Events',
+				'call_clicks'        => 'Call clicks',
+				'download_count'     => 'Downloads',
+				'form_count'         => 'Form submissions',
+				'score'              => 'Score',
+				'score_label'        => 'Score label',
+				'last_seen'          => 'Last seen',
+			),
+			$items
+		);
+	}
+
+	/**
+	 * Export filtered companies as CSV.
+	 *
+	 * @return void
+	 */
+	public function export_companies(): void {
+		$this->assert_export_access();
+
+		$filters = $this->get_list_filters_from_array( $_GET ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$total   = $this->companies->count_companies( $filters );
+		$items   = $total > 0 ? $this->companies->get_companies( $total, $filters, 0 ) : array();
+
+		$this->stream_csv(
+			'ace-companies-export-' . gmdate( 'Ymd-His' ) . '.csv',
+			array(
+				'name'            => 'Company',
+				'domain'          => 'Domain',
+				'type'            => 'Type',
+				'country_code'    => 'Country',
+				'source_provider' => 'Provider',
+				'confidence'      => 'Confidence',
+				'total_sessions'  => 'Sessions',
+				'total_events'    => 'Events',
+				'total_calls'     => 'Calls',
+				'first_seen'      => 'First seen',
+				'last_seen'       => 'Last seen',
+			),
+			$items
+		);
+	}
+
+	/**
 	 * Read reporting segments.
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -603,6 +670,19 @@ final class AdminController {
 	}
 
 	/**
+	 * Verify export access and nonce.
+	 *
+	 * @return void
+	 */
+	private function assert_export_access(): void {
+		if ( ! $this->can_manage() ) {
+			wp_die( esc_html__( 'You are not allowed to export this data.', 'adaptive-customer-engagement' ), 403 );
+		}
+
+		check_admin_referer( 'ace_export_report' );
+	}
+
+	/**
 	 * Decorate a session row with score metadata.
 	 *
 	 * @param array<string, mixed> $session Session data.
@@ -618,13 +698,72 @@ final class AdminController {
 	 * @return array<string, string>
 	 */
 	private function get_list_filters( WP_REST_Request $request ): array {
-		return array(
-			'search'     => sanitize_text_field( (string) $request->get_param( 'search' ) ),
-			'confidence' => sanitize_key( (string) $request->get_param( 'confidence' ) ),
-			'source'     => sanitize_text_field( (string) $request->get_param( 'source' ) ),
-			'provider'   => sanitize_text_field( (string) $request->get_param( 'provider' ) ),
-			'date_from'  => sanitize_text_field( (string) $request->get_param( 'date_from' ) ),
-			'date_to'    => sanitize_text_field( (string) $request->get_param( 'date_to' ) ),
+		return $this->get_list_filters_from_array(
+			array(
+				'search'     => $request->get_param( 'search' ),
+				'confidence' => $request->get_param( 'confidence' ),
+				'source'     => $request->get_param( 'source' ),
+				'provider'   => $request->get_param( 'provider' ),
+				'date_from'  => $request->get_param( 'date_from' ),
+				'date_to'    => $request->get_param( 'date_to' ),
+			)
 		);
+	}
+
+	/**
+	 * Sanitize common list filters from a raw array.
+	 *
+	 * @param array<string, mixed> $values Raw values.
+	 * @return array<string, string>
+	 */
+	private function get_list_filters_from_array( array $values ): array {
+		return array(
+			'search'     => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
+			'confidence' => sanitize_key( (string) ( $values['confidence'] ?? '' ) ),
+			'source'     => sanitize_text_field( (string) ( $values['source'] ?? '' ) ),
+			'provider'   => sanitize_text_field( (string) ( $values['provider'] ?? '' ) ),
+			'date_from'  => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
+			'date_to'    => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Stream CSV output and end the request.
+	 *
+	 * @param string                              $filename Output filename.
+	 * @param array<string, string>               $columns  Column map.
+	 * @param array<int, array<string, mixed>>    $rows     Row data.
+	 * @return void
+	 */
+	private function stream_csv( string $filename, array $columns, array $rows ): void {
+		$stream = fopen( 'php://temp', 'r+' );
+
+		if ( false === $stream ) {
+			wp_die( esc_html__( 'The export file could not be created.', 'adaptive-customer-engagement' ), 500 );
+		}
+
+		fputcsv( $stream, array_values( $columns ) );
+
+		foreach ( $rows as $row ) {
+			$line = array();
+
+			foreach ( array_keys( $columns ) as $key ) {
+				$value  = $row[ $key ] ?? '';
+				$line[] = is_scalar( $value ) ? (string) $value : wp_json_encode( $value );
+			}
+
+			fputcsv( $stream, $line );
+		}
+
+		rewind( $stream );
+		$csv = stream_get_contents( $stream );
+		fclose( $stream );
+
+		nocache_headers();
+		header( 'Content-Type: text/csv; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename=' . sanitize_file_name( $filename ) );
+
+		echo is_string( $csv ) ? $csv : '';
+		exit;
 	}
 }

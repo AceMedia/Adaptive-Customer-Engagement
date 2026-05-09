@@ -80,6 +80,8 @@ final class Plugin {
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );
 		add_action( 'rest_api_init', array( $admin, 'register_routes' ) );
+		add_action( 'admin_post_ace_export_sessions', array( $admin, 'export_sessions' ) );
+		add_action( 'admin_post_ace_export_companies', array( $admin, 'export_companies' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
 

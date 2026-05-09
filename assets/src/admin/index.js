@@ -76,6 +76,22 @@ function getAdminPageUrl(page, params = {}) {
 	return url.toString();
 }
 
+function getExportUrl(action, params = {}) {
+	const base = config.adminPostUrl || config.adminUrl || 'admin-post.php';
+	const url = new URL(base, window.location.origin);
+
+	url.searchParams.set('action', action);
+	url.searchParams.set('_wpnonce', config.exportNonce || '');
+
+	Object.entries(params).forEach(([key, value]) => {
+		if (value !== undefined && value !== null && value !== '') {
+			url.searchParams.set(key, value);
+		}
+	});
+
+	return url.toString();
+}
+
 function SessionsTable({ items, onView }) {
 	if (!items.length) {
 		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
@@ -347,6 +363,10 @@ function SessionsView() {
 				{ key: 'source', label: 'Source', options: options.sources || [] },
 			],
 		}),
+		createElement(ExportPanel, {
+			label: __('Export current sessions', 'adaptive-customer-engagement'),
+			href: getExportUrl('ace_export_sessions', filters),
+		}),
 		createElement(SessionsTable, {
 			items,
 			onView: async (id) => {
@@ -609,6 +629,10 @@ function CompaniesView() {
 				{ key: 'provider', label: 'Provider', options: options.providers || [] },
 			],
 		}),
+		createElement(ExportPanel, {
+			label: __('Export current companies', 'adaptive-customer-engagement'),
+			href: getExportUrl('ace_export_companies', filters),
+		}),
 		createElement(CompaniesTable, {
 			items,
 			onView: async (id) => {
@@ -681,6 +705,14 @@ function SavedSegmentsPanel({ segments, segmentName, onSegmentNameChange, onSave
 				  )
 				: createElement(Notice, { status: 'info', isDismissible: false }, __('No saved segments yet.', 'adaptive-customer-engagement'))
 		)
+	);
+}
+
+function ExportPanel({ href, label }) {
+	return createElement(
+		'div',
+		{ style: { marginBottom: '16px', display: 'flex', justifyContent: 'flex-end' } },
+		createElement(Button, { variant: 'secondary', href }, label)
 	);
 }
 

@@ -15,6 +15,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Paginated session and company filters for confidence, source/provider, search terms, and date range
 - Saved reporting segments for reusing common session and company filters
 - Dashboard shortcuts into saved session and company segments
+- CSV exports for the current filtered session and company views
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
 
@@ -25,7 +26,7 @@ This repository does **not** yet implement:
 - multiple live IP enrichment providers beyond the first **ipregistry** integration
 - Amazon Connect sync, imports, or matching
 - AI chat, handoff, or site tools
-- CRM exports or CSV workflows
+- CRM exports or automated export workflows
 
 The database shape and settings surface are ready for those next phases.
 
@@ -108,6 +109,10 @@ The plugin creates these tables with the WordPress table prefix:
 - `ace_calls`
 - `ace_enrichment_cache`
 
+## Reporting downloads
+
+The sessions and companies screens can now export the **current filtered view** as a CSV download, so I can pass the data into follow-up sales or reporting work without rebuilding it by hand elsewhere.
+
 ## Privacy approach
 
 - first-party session and visitor IDs
@@ -122,7 +127,7 @@ The plugin creates these tables with the WordPress table prefix:
 
 The next sensible build steps are:
 
-1. broaden enrichment support and add export-friendly reporting
+1. broaden enrichment support with another live provider option
 2. stronger admin reporting and exports
 3. Amazon Connect import, matching, and number sync
 4. AI-assisted lead capture and safe content tools
