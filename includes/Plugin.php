@@ -56,11 +56,12 @@ final class Plugin {
 		$session_repository = new SessionRepository();
 		$event_repository   = new EventRepository();
 		$number_repository  = new NumberRepository();
+		$company_repository = new CompanyRepository();
 		$privacy            = new Privacy();
 		$enrichment_service = new EnrichmentService(
 			new ProviderRegistry(),
 			new EnrichmentCacheRepository(),
-			new CompanyRepository(),
+			$company_repository,
 			$session_repository,
 			$privacy
 		);
@@ -74,7 +75,7 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $privacy, $enrichment_service );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $privacy, $enrichment_service );
 
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );

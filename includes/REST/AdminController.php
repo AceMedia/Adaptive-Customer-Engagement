@@ -10,6 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\REST;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Settings;
@@ -51,6 +52,13 @@ final class AdminController {
 	private $numbers;
 
 	/**
+	 * Company repository.
+	 *
+	 * @var CompanyRepository
+	 */
+	private $companies;
+
+	/**
 	 * Privacy helper.
 	 *
 	 * @var Privacy
@@ -79,10 +87,11 @@ final class AdminController {
 	 * @param NumberRepository  $numbers  Number repository.
 	 * @param Privacy           $privacy  Privacy helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, Privacy $privacy, EnrichmentService $enrichment_service ) {
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, Privacy $privacy, EnrichmentService $enrichment_service ) {
 		$this->sessions = $sessions;
 		$this->events   = $events;
 		$this->numbers  = $numbers;
+		$this->companies = $companies;
 		$this->privacy  = $privacy;
 		$this->lead_scorer = new LeadScorer();
 		$this->enrichment_service = $enrichment_service;
@@ -138,6 +147,26 @@ final class AdminController {
 					'permission_callback' => array( $this, 'can_manage' ),
 					'callback'            => array( $this, 'create_number' ),
 				),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/companies',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'companies' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/companies/(?P<id>\d+)',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'company_detail' ),
 			)
 		);
 
@@ -226,7 +255,7 @@ final class AdminController {
 				),
 				'top_pages'       => $this->events->get_top_pages(),
 				'recent_sessions' => $recent_sessions,
-				'hot_companies'   => array(),
+				'hot_companies'   => $this->companies->get_hot_companies(),
 			)
 		);
 	}
@@ -275,6 +304,35 @@ final class AdminController {
 	 */
 	public function numbers(): WP_REST_Response {
 		return new WP_REST_Response( array( 'items' => $this->numbers->all() ) );
+	}
+
+	/**
+	 * Companies data.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function companies(): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'items' => $this->companies->get_companies(),
+			)
+		);
+	}
+
+	/**
+	 * Company detail data.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function company_detail( WP_REST_Request $request ) {
+		$company = $this->companies->get_company_detail( absint( $request['id'] ) );
+
+		if ( ! $company ) {
+			return new WP_Error( 'ace_company_not_found', __( 'Company not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response( $company );
 	}
 
 	/**

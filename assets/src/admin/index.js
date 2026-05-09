@@ -64,6 +64,7 @@ function SessionsTable({ items, onView }) {
 function DashboardView() {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
+	const [selectedCompany, setSelectedCompany] = useState(null);
 
 	useEffect(() => {
 		request('/admin/dashboard').then(setData);
@@ -116,7 +117,17 @@ function DashboardView() {
 				setSelectedSession(detail);
 			},
 		}),
-		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) })
+		createElement('h2', { style: { marginTop: '20px' } }, __('Hot companies', 'adaptive-customer-engagement')),
+		createElement(CompaniesTable, {
+			items: data.hot_companies || [],
+			onView: async (id) => {
+				const detail = await request(`/admin/companies/${id}`);
+				setSelectedCompany(detail);
+			},
+			compact: true,
+		}),
+		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) }),
+		selectedCompany && createElement(CompanyDetailPanel, { detail: selectedCompany, onClose: () => setSelectedCompany(null) })
 	);
 }
 
@@ -174,6 +185,8 @@ function SessionDetailPanel({ detail, onClose }) {
 						['Referrer', session.referrer || '—'],
 						['Source', session.utm_source || '—'],
 						['Campaign', session.utm_campaign || '—'],
+						['Company', session.company_name || '—'],
+						['Company domain', session.company_domain || '—'],
 						['First seen', session.first_seen || '—'],
 						['Last seen', session.last_seen || '—'],
 						['Company confidence', session.company_confidence || 'unknown'],
@@ -210,6 +223,121 @@ function SessionDetailPanel({ detail, onClose }) {
 				)
 			)
 		)
+	);
+}
+
+function CompaniesTable({ items, onView, compact = false }) {
+	if (!items.length) {
+		return createElement(Notice, { status: 'info', isDismissible: false }, __('No enriched companies are available yet.', 'adaptive-customer-engagement'));
+	}
+
+	const columns = compact
+		? ['Company', 'Domain', 'Confidence', 'Sessions', 'Events', 'Last seen', 'Actions']
+		: ['Company', 'Type', 'Domain', 'Confidence', 'Sessions', 'Events', 'Calls', 'Last seen', 'Actions'];
+
+	return createElement(
+		'table',
+		{ className: 'widefat striped' },
+		createElement(
+			'thead',
+			null,
+			createElement(
+				'tr',
+				null,
+				columns.map((label) => createElement('th', { key: label }, __(label, 'adaptive-customer-engagement')))
+			)
+		),
+		createElement(
+			'tbody',
+			null,
+			items.map((item) =>
+				createElement(
+					'tr',
+					{ key: item.id },
+					createElement('td', null, item.name || '—'),
+					!compact && createElement('td', null, item.type || '—'),
+					createElement('td', null, item.domain || '—'),
+					createElement('td', null, item.confidence || 'unknown'),
+					createElement('td', null, item.total_sessions ?? item.session_count ?? 0),
+					createElement('td', null, item.total_events ?? item.page_views ?? 0),
+					!compact && createElement('td', null, item.total_calls ?? 0),
+					createElement('td', null, item.last_seen || '—'),
+					createElement(
+						'td',
+						null,
+						createElement(Button, { variant: 'secondary', onClick: () => onView && onView(item.id) }, __('View', 'adaptive-customer-engagement'))
+					)
+				)
+			)
+		)
+	);
+}
+
+function CompanyDetailPanel({ detail, onClose }) {
+	const sessions = detail?.recent_sessions || [];
+
+	return createElement(
+		Card,
+		{ style: { marginTop: '20px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement(
+				'div',
+				{ style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+				createElement('h2', { style: { margin: 0 } }, __('Company detail', 'adaptive-customer-engagement')),
+				createElement(Button, { variant: 'secondary', onClick: onClose }, __('Close', 'adaptive-customer-engagement'))
+			),
+			createElement(
+				'table',
+				{ className: 'widefat striped', style: { marginBottom: '16px' } },
+				createElement(
+					'tbody',
+					null,
+					[
+						['Company', detail.name || '—'],
+						['Domain', detail.domain || '—'],
+						['Type', detail.type || '—'],
+						['Confidence', detail.confidence || 'unknown'],
+						['Provider', detail.source_provider || '—'],
+						['Country', detail.country_code || '—'],
+						['Sessions', detail.total_sessions || 0],
+						['Events', detail.total_events || 0],
+						['Calls', detail.total_calls || 0],
+						['First seen', detail.first_seen || '—'],
+						['Last seen', detail.last_seen || '—'],
+					].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+				)
+			),
+			createElement('h3', null, __('Recent sessions', 'adaptive-customer-engagement')),
+			createElement(SessionsTable, { items: sessions })
+		)
+	);
+}
+
+function CompaniesView() {
+	const [items, setItems] = useState(null);
+	const [detail, setDetail] = useState(null);
+
+	useEffect(() => {
+		request('/admin/companies').then((response) => setItems(response.items || []));
+	}, []);
+
+	if (!items) {
+		return createElement(Spinner);
+	}
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(CompaniesTable, {
+			items,
+			onView: async (id) => {
+				const response = await request(`/admin/companies/${id}`);
+				setDetail(response);
+			},
+		}),
+		detail && createElement(CompanyDetailPanel, { detail, onClose: () => setDetail(null) })
 	);
 }
 
@@ -475,7 +603,7 @@ function App() {
 		case 'ai-agent':
 			return createElement(SettingsView, { section: page });
 		case 'companies':
-			return createElement(PlaceholderView, { title: __('Companies', 'adaptive-customer-engagement'), message: __('Company views will fill out once enrichment providers are implemented.', 'adaptive-customer-engagement') });
+			return createElement(CompaniesView);
 		case 'calls':
 			return createElement(PlaceholderView, { title: __('Calls', 'adaptive-customer-engagement'), message: __('Call import and matching sit on the next implementation phase.', 'adaptive-customer-engagement') });
 		default:
