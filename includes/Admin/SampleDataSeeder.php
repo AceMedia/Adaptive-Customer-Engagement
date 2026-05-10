@@ -63,6 +63,12 @@ final class SampleDataSeeder {
 				self::NUMBER_MARKER
 			)
 		);
+		$live_number_count = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$numbers_table} WHERE source_value != %s",
+				self::NUMBER_MARKER
+			)
+		);
 		$date_range    = $wpdb->get_row(
 			$wpdb->prepare(
 				"SELECT MIN(first_seen) AS first_seen, MAX(last_seen) AS last_seen
@@ -80,9 +86,10 @@ final class SampleDataSeeder {
 			'events'      => $event_count,
 			'calls'       => $call_count,
 			'numbers'     => $number_count,
+			'live_numbers'=> $live_number_count,
 			'first_seen'  => is_array( $date_range ) ? (string) ( $date_range['first_seen'] ?? '' ) : '',
 			'last_seen'   => is_array( $date_range ) ? (string) ( $date_range['last_seen'] ?? '' ) : '',
-			'description' => __( 'Local-only seeded demo activity for UK businesses and councils across roughly the last three months.', 'adaptive-customer-engagement' ),
+			'description' => __( 'Local-only seeded demo activity for UK businesses and councils across roughly the last three months, using fictional reserved phone numbers so it stays separate from real telephony.', 'adaptive-customer-engagement' ),
 		);
 	}
 
@@ -109,14 +116,14 @@ final class SampleDataSeeder {
 				},
 				range( 1, wp_rand( 3, 7 ) )
 			);
-			$session_total = wp_rand( 6, 14 );
+			$session_total = wp_rand( 9, 18 );
+			$timestamps    = $this->build_session_timestamps( $session_total, $now );
 			$event_total   = 0;
 			$call_total    = 0;
 			$first_seen    = '';
 			$last_seen     = '';
 
-			for ( $index = 0; $index < $session_total; $index++ ) {
-				$session_timestamp = $now - wp_rand( 0, 89 ) * DAY_IN_SECONDS - wp_rand( 0, DAY_IN_SECONDS - 1 );
+			foreach ( $timestamps as $index => $session_timestamp ) {
 				$visitor_uuid      = $visitors[ array_rand( $visitors ) ];
 				$landing_path      = $profile['paths'][ array_rand( $profile['paths'] ) ];
 				$utm_source        = $profile['sources'][ array_rand( $profile['sources'] ) ];
@@ -148,11 +155,19 @@ final class SampleDataSeeder {
 				);
 
 				$session_events = $this->build_session_events( $profile, $catalog, $numbers, $landing_path, $session_timestamp );
+				$session_last_seen = $session_timestamp;
 
 				foreach ( $session_events as $event_offset => $event ) {
-					$occurred_at = gmdate( 'Y-m-d H:i:s', $session_timestamp + min( $event_offset * wp_rand( 60, 480 ), 7200 ) );
+					$occurred_timestamp = min( $session_timestamp + min( $event_offset * wp_rand( 60, 480 ), 7200 ), $now );
+
+					if ( $occurred_timestamp < $session_last_seen ) {
+						$occurred_timestamp = $session_last_seen;
+					}
+
+					$occurred_at = gmdate( 'Y-m-d H:i:s', $occurred_timestamp );
 					$this->insert_event( $session_id, $event, $occurred_at );
 					++$event_total;
+					$session_last_seen = $occurred_timestamp;
 					$last_seen = $occurred_at;
 				}
 
@@ -160,8 +175,8 @@ final class SampleDataSeeder {
 					$wpdb->update(
 						Schema::table_name( 'sessions' ),
 						array(
-							'last_seen'   => $last_seen,
-							'updated_at'  => $last_seen,
+							'last_seen'   => gmdate( 'Y-m-d H:i:s', $session_last_seen ),
+							'updated_at'  => gmdate( 'Y-m-d H:i:s', $session_last_seen ),
 						),
 						array( 'id' => $session_id )
 					);
@@ -172,16 +187,22 @@ final class SampleDataSeeder {
 				}
 
 				if ( wp_rand( 1, 100 ) <= ( 'council' === $profile['kind'] ? 22 : 36 ) ) {
-					$call_started_at = $session_timestamp + wp_rand( 600, 5400 );
-					$call_duration   = wp_rand( 64, 960 );
+					$call_started_at = min( $session_timestamp + wp_rand( 600, 5400 ), max( $session_timestamp, $now - 300 ) );
+					$call_duration   = min( wp_rand( 64, 960 ), max( 30, $now - $call_started_at ) );
+
+					if ( $call_duration < 30 ) {
+						continue;
+					}
+
+					$call_ended_at = min( $call_started_at + $call_duration, $now );
 
 					$this->insert_call(
 						array(
 							'number_id'           => $numbers[ array_rand( $numbers ) ]['id'],
 							'called_number'       => $profile['main_phone'],
 							'started_at'          => gmdate( 'Y-m-d H:i:s', $call_started_at ),
-							'ended_at'            => gmdate( 'Y-m-d H:i:s', $call_started_at + $call_duration ),
-							'duration_seconds'    => $call_duration,
+							'ended_at'            => gmdate( 'Y-m-d H:i:s', $call_ended_at ),
+							'duration_seconds'    => max( 30, $call_ended_at - $call_started_at ),
 							'status'              => $profile['call_statuses'][ array_rand( $profile['call_statuses'] ) ],
 							'queue_name'          => $profile['queue'],
 							'agent_name'          => $profile['agents'][ array_rand( $profile['agents'] ) ],
@@ -209,6 +230,44 @@ final class SampleDataSeeder {
 		}
 
 		return $this->get_status();
+	}
+
+	/**
+	 * Build a session timeline that always includes activity through today.
+	 *
+	 * @param int $session_total Total sessions to create.
+	 * @param int $now           Current timestamp.
+	 * @return array<int, int>
+	 */
+	private function build_session_timestamps( int $session_total, int $now ): array {
+		$today_start      = strtotime( gmdate( 'Y-m-d 00:00:00', $now ) . ' UTC' );
+		$oldest_start     = $today_start - ( 89 * DAY_IN_SECONDS );
+		$recent_start     = max( $oldest_start, $today_start - ( 6 * DAY_IN_SECONDS ) );
+		$today_sessions   = min( 4, max( 2, (int) ceil( $session_total * 0.28 ) ) );
+		$recent_sessions  = min( max( 2, (int) ceil( $session_total * 0.32 ) ), max( 0, $session_total - $today_sessions ) );
+		$historic_sessions = max( 0, $session_total - $today_sessions - $recent_sessions );
+		$timestamps       = array();
+
+		for ( $index = 0; $index < $historic_sessions; $index++ ) {
+			$timestamps[] = wp_rand( $oldest_start, max( $oldest_start, $recent_start - 1 ) );
+		}
+
+		for ( $index = 0; $index < $recent_sessions; $index++ ) {
+			$timestamps[] = wp_rand( $recent_start, max( $recent_start, $today_start - 1 ) );
+		}
+
+		$today_window = max( 1, $now - $today_start );
+
+		for ( $index = 0; $index < $today_sessions; $index++ ) {
+			$offset       = wp_rand( 0, $today_window );
+			$timestamps[] = min( $today_start + $offset, $now );
+		}
+
+		$timestamps[] = max( $today_start, $now - wp_rand( 120, 3600 ) );
+
+		sort( $timestamps );
+
+		return array_slice( $timestamps, -1 * $session_total, $session_total );
 	}
 
 	/**
@@ -262,42 +321,42 @@ final class SampleDataSeeder {
 		$now     = current_time( 'mysql', true );
 		$rows    = array(
 			array(
-				'label'            => 'Main tracking line',
-				'display_number'   => '0114 700 4100',
-				'e164_number'      => '+441147004100',
+				'label'            => 'Demo main tracking line',
+				'display_number'   => '01632 960 100',
+				'e164_number'      => '+441632960100',
 				'source_type'      => 'default',
 				'source_value'     => self::NUMBER_MARKER,
 				'page_match_type'  => 'contains',
 				'page_match_value' => '',
 				'campaign_match'   => '',
-				'is_default'       => 1,
-				'is_active'        => 1,
+				'is_default'       => 0,
+				'is_active'        => 0,
 				'priority'         => 1,
 			),
 			array(
-				'label'            => 'Campaign tracking line',
-				'display_number'   => '0114 700 4200',
-				'e164_number'      => '+441147004200',
+				'label'            => 'Demo campaign tracking line',
+				'display_number'   => '01632 960 200',
+				'e164_number'      => '+441632960200',
 				'source_type'      => 'campaign',
 				'source_value'     => self::NUMBER_MARKER,
 				'page_match_type'  => 'contains',
 				'page_match_value' => '/contact',
 				'campaign_match'   => self::CAMPAIGN_MARKER,
 				'is_default'       => 0,
-				'is_active'        => 1,
+				'is_active'        => 0,
 				'priority'         => 5,
 			),
 			array(
-				'label'            => 'Product tracking line',
-				'display_number'   => '0114 700 4300',
-				'e164_number'      => '+441147004300',
+				'label'            => 'Demo product tracking line',
+				'display_number'   => '01632 960 300',
+				'e164_number'      => '+441632960300',
 				'source_type'      => 'product_page',
 				'source_value'     => self::NUMBER_MARKER,
 				'page_match_type'  => 'contains',
 				'page_match_value' => '/products/',
 				'campaign_match'   => '',
 				'is_default'       => 0,
-				'is_active'        => 1,
+				'is_active'        => 0,
 				'priority'         => 10,
 			),
 		);

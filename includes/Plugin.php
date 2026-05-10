@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement;
 
+use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
@@ -19,6 +20,7 @@ use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\ProviderRegistry;
 use ACE\AdaptiveCustomerEngagement\REST\AdminController;
 use ACE\AdaptiveCustomerEngagement\REST\TrackingController;
+use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
 use ACE\AdaptiveCustomerEngagement\Tracking\BotDetector;
 use ACE\AdaptiveCustomerEngagement\Tracking\EventLogger;
@@ -71,6 +73,7 @@ final class Plugin {
 		);
 		$menu               = new Menu();
 		$sample_data        = new SampleDataSeeder();
+		$connect_client     = new AmazonConnectClient();
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
 			new EventLogger( $event_repository ),
@@ -80,7 +83,7 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data, $connect_client );
 		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );
@@ -112,8 +115,9 @@ final class Plugin {
 	public function enqueue_frontend_assets(): void {
 		$settings = Settings::get();
 		$woo_context = new WooCommerceContext();
+		$connect_chat = $this->get_frontend_connect_chat_config( $settings );
 
-		if ( empty( $settings['enabled'] ) ) {
+		if ( empty( $settings['enabled'] ) && empty( $connect_chat['enabled'] ) ) {
 			return;
 		}
 
@@ -134,9 +138,38 @@ final class Plugin {
 					'enabled'   => (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
 					'page'      => $woo_context->get_frontend_context(),
+					'connectChat' => $connect_chat,
 				)
 			),
 			'before'
+		);
+	}
+
+	/**
+	 * Build frontend Connect chat test-widget config.
+	 *
+	 * @param array<string, mixed> $settings Plugin settings.
+	 * @return array<string, mixed>
+	 */
+	private function get_frontend_connect_chat_config( array $settings ): array {
+		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$admin_only     = ! empty( $ai_agent['frontend_test_admin_only'] );
+		$can_view       = ! $admin_only || current_user_can( Capabilities::MANAGE );
+		$enabled        = ! empty( $ai_agent['enabled'] )
+			&& ! empty( $ai_agent['frontend_test_enabled'] )
+			&& ! empty( $amazon_connect['chat_widget_script_url'] )
+			&& ! empty( $amazon_connect['chat_widget_snippet_id'] )
+			&& $can_view;
+
+		return array(
+			'enabled'     => $enabled,
+			'adminOnly'   => $admin_only,
+			'scriptUrl'   => esc_url_raw( (string) ( $amazon_connect['chat_widget_script_url'] ?? '' ) ),
+			'widgetId'    => sanitize_text_field( (string) ( $amazon_connect['chat_widget_id'] ?? '' ) ),
+			'snippetId'   => sanitize_text_field( (string) ( $amazon_connect['chat_widget_snippet_id'] ?? '' ) ),
+			'securityEnabled' => ! empty( $amazon_connect['chat_widget_security_key'] ),
+			'region'      => sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) ),
 		);
 	}
 }

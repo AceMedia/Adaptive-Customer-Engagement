@@ -39,15 +39,32 @@ function getUtm() {
 }
 
 async function sendTrackingEvent(payload) {
+	const endpoint = `${config.root}${config.namespace}/track`;
+	const body = JSON.stringify(payload);
+
 	try {
-		await fetch(`${config.root}${config.namespace}/track`, {
-			method: 'POST',
-			credentials: 'same-origin',
-			headers: {
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
+		if (navigator.sendBeacon) {
+			const blob = new Blob([body], { type: 'application/json' });
+			navigator.sendBeacon(endpoint, blob);
+			return;
+		}
+
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(() => controller.abort(), 250);
+
+		try {
+			await fetch(endpoint, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body,
+				signal: controller.signal,
+			});
+		} finally {
+			window.clearTimeout(timeoutId);
+		}
 	} catch (error) {
 		// Frontend tracking must not disrupt the page.
 	}
@@ -327,17 +344,117 @@ function bindInteractionTracking(sessionUuid, visitorUuid, pageContext) {
 	});
 }
 
-function init() {
-	if (!config.enabled) {
+function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
+	const chatConfig = config.connectChat || {};
+
+	if (!chatConfig.enabled || !chatConfig.scriptUrl || !chatConfig.snippetId) {
 		return;
 	}
 
-	const shouldTrackPageviews = !!config.tracking?.track_pageviews;
-	const shouldTrackClicks = !!config.tracking?.track_click_to_call || !!config.tracking?.track_downloads;
-	const shouldTrackForms = !!config.tracking?.track_forms;
-	const shouldResolveNumbers = !!document.querySelector('[data-ace-phone], [data-ace-phone-link]');
+	if (window.__aceConnectChatConfigured) {
+		return;
+	}
 
-	if (!shouldTrackPageviews && !shouldTrackClicks && !shouldTrackForms && !shouldResolveNumbers) {
+	window.__aceConnectChatConfigured = true;
+
+	if (!document.querySelector('#ace-connect-chat-position')) {
+		const style = document.createElement('style');
+		style.id = 'ace-connect-chat-position';
+		style.textContent = `
+			#amazon-connect-open-widget-button,
+			#amazon-connect-close-widget-button,
+			#amazon-connect-widget-frame {
+				left: 24px !important;
+				right: auto !important;
+				bottom: 24px !important;
+			}
+		`;
+		document.head.appendChild(style);
+	}
+
+	if (typeof window.amazon_connect !== 'function') {
+		window.amazon_connect = function amazonConnectProxy() {
+			(window.amazon_connect.ac = window.amazon_connect.ac || []).push(arguments);
+		};
+	}
+
+	const scriptElementId = chatConfig.widgetId || 'ace-connect-chat-script';
+
+	if (!document.querySelector(`#${scriptElementId}`)) {
+		const script = document.createElement('script');
+		script.id = scriptElementId;
+		script.src = chatConfig.scriptUrl;
+		script.async = true;
+		document.head.appendChild(script);
+	}
+
+	if (chatConfig.securityEnabled) {
+		window.amazon_connect('authenticate', (callback) => {
+			window.fetch(`${config.root}${config.namespace}/chat-widget/token`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					session_uuid: sessionUuid || '',
+					visitor_uuid: visitorUuid || '',
+					page_url: window.location.href,
+					page_title: document.title || '',
+				}),
+			})
+				.then((response) => response.json())
+				.then((data) => {
+					if (data?.token) {
+						callback(data.token);
+					}
+				});
+		});
+	}
+
+	window.amazon_connect('snippetId', chatConfig.snippetId);
+	window.amazon_connect('styles', {
+		openChat: {
+			color: '#ffffff',
+			backgroundColor: '#2563eb',
+		},
+		closeChat: {
+			color: '#ffffff',
+			backgroundColor: '#2563eb',
+		},
+	});
+	window.amazon_connect('supportedMessagingContentTypes', ['text/plain', 'text/markdown', 'application/vnd.amazonaws.connect.message.interactive', 'application/vnd.amazonaws.connect.message.interactive.response']);
+	window.amazon_connect('customLaunchBehavior', {
+		skipIconButtonAndAutoLaunch: true,
+	});
+	window.amazon_connect('contactAttributes', {
+		aceSessionId: sessionUuid || '',
+		aceVisitorId: visitorUuid || '',
+		acePageUrl: window.location.href,
+		acePageTitle: document.title || '',
+	});
+	window.amazon_connect('customizationObject', {
+		header: {
+			dropdown: true,
+			minimizeChatHeaderButton: true,
+		},
+	});
+}
+
+function init() {
+	const trackingEnabled = !!config.enabled;
+	const shouldEmbedChat = !!config.connectChat?.enabled;
+
+	if (!trackingEnabled && !shouldEmbedChat) {
+		return;
+	}
+
+	const shouldTrackPageviews = trackingEnabled && !!config.tracking?.track_pageviews;
+	const shouldTrackClicks = trackingEnabled && (!!config.tracking?.track_click_to_call || !!config.tracking?.track_downloads);
+	const shouldTrackForms = trackingEnabled && !!config.tracking?.track_forms;
+	const shouldResolveNumbers = trackingEnabled && !!document.querySelector('[data-ace-phone], [data-ace-phone-link]');
+
+	if (!shouldTrackPageviews && !shouldTrackClicks && !shouldTrackForms && !shouldResolveNumbers && !shouldEmbedChat) {
 		return;
 	}
 
@@ -370,6 +487,10 @@ function init() {
 
 	if (shouldResolveNumbers) {
 		resolvePhoneNumber();
+	}
+
+	if (shouldEmbedChat) {
+		embedConnectChatTestWidget(sessionUuid, visitorUuid);
 	}
 }
 
