@@ -27,6 +27,7 @@ final class Menu {
 	public function register(): void {
 		add_action( 'admin_menu', array( $this, 'register_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_filter( 'admin_body_class', array( $this, 'admin_body_class' ) );
 	}
 
 	/**
@@ -99,6 +100,15 @@ final class Menu {
 
 		if ( file_exists( $style_file ) ) {
 			wp_enqueue_style( 'ace-admin', $style_src, array( 'wp-components' ), $asset['version'] );
+			wp_add_inline_style(
+				'ace-admin',
+				'body.ace-admin-screen #wpbody-content > .notice,
+				body.ace-admin-screen #wpbody-content > .updated,
+				body.ace-admin-screen #wpbody-content > .error,
+				body.ace-admin-screen #wpbody-content > .update-nag,
+				body.ace-admin-screen #wpbody-content > .is-dismissible,
+				body.ace-admin-screen #wpbody-content > div[class*="notice"] { display: none !important; }'
+			);
 		}
 
 		wp_enqueue_script( 'ace-admin', $script_src, $asset['dependencies'], $asset['version'], true );
@@ -132,5 +142,21 @@ final class Menu {
 			<div id="ace-admin-root" data-page="<?php echo esc_attr( $page ); ?>"></div>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Add a page-specific body class for the plugin UI.
+	 *
+	 * @param string $classes Existing admin body classes.
+	 * @return string
+	 */
+	public function admin_body_class( string $classes ): string {
+		$hook_suffix = function_exists( 'get_current_screen' ) && get_current_screen() ? get_current_screen()->id : '';
+
+		if ( ! in_array( $hook_suffix, $this->hooks, true ) ) {
+			return $classes;
+		}
+
+		return trim( $classes . ' ace-admin-screen' );
 	}
 }
