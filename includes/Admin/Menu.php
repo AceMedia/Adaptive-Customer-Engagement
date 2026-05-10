@@ -107,7 +107,17 @@ final class Menu {
 				body.ace-admin-screen #wpbody-content > .error,
 				body.ace-admin-screen #wpbody-content > .update-nag,
 				body.ace-admin-screen #wpbody-content > .is-dismissible,
-				body.ace-admin-screen #wpbody-content > div[class*="notice"] { display: none !important; }'
+				body.ace-admin-screen #wpbody-content > div[class*="notice"],
+				body.ace-admin-screen #wpbody-content > .fs-notice,
+				body.ace-admin-screen #wpbody-content > .woocommerce-message,
+				body.ace-admin-screen #wpbody-content > .woocommerce-error,
+				body.ace-admin-screen #wpbody-content > .woocommerce-info,
+				body.ace-admin-screen #wpbody-content > .notice-wrapper,
+				body.ace-admin-screen #wpbody-content > .wrap > .notice:not(.components-notice),
+				body.ace-admin-screen #wpbody-content > .wrap > .updated,
+				body.ace-admin-screen #wpbody-content > .wrap > .error,
+				body.ace-admin-screen #wpbody-content > .wrap > .update-nag,
+				body.ace-admin-screen #wpbody-content > .wrap > div[class*="notice"]:not(.components-notice) { display: none !important; }'
 			);
 		}
 
@@ -127,6 +137,66 @@ final class Menu {
 				)
 			),
 			'before'
+		);
+		wp_add_inline_script(
+			'ace-admin',
+			"(function(){
+				if (!document.body.classList.contains('ace-admin-screen')) {
+					return;
+				}
+
+				const selectors = [
+					'#wpbody-content > .notice',
+					'#wpbody-content > .updated',
+					'#wpbody-content > .error',
+					'#wpbody-content > .update-nag',
+					'#wpbody-content > .is-dismissible',
+					'#wpbody-content > .fs-notice',
+					'#wpbody-content > .woocommerce-message',
+					'#wpbody-content > .woocommerce-error',
+					'#wpbody-content > .woocommerce-info',
+					'#wpbody-content > .notice-wrapper',
+					'#wpbody-content > div[class*=\"notice\"]',
+					'#wpbody-content > .wrap > .notice:not(.components-notice)',
+					'#wpbody-content > .wrap > .updated',
+					'#wpbody-content > .wrap > .error',
+					'#wpbody-content > .wrap > .update-nag',
+					'#wpbody-content > .wrap > div[class*=\"notice\"]:not(.components-notice)'
+				];
+
+				const hideNoticeNode = (node) => {
+					if (!node || !(node instanceof HTMLElement)) {
+						return;
+					}
+
+					if (node.closest('#ace-admin-root')) {
+						return;
+					}
+
+					node.style.setProperty('display', 'none', 'important');
+					node.setAttribute('aria-hidden', 'true');
+				};
+
+				const hideNotices = () => {
+					selectors.forEach((selector) => {
+						document.querySelectorAll(selector).forEach(hideNoticeNode);
+					});
+				};
+
+				hideNotices();
+
+				const target = document.getElementById('wpbody-content');
+
+				if (!target || typeof MutationObserver === 'undefined') {
+					return;
+				}
+
+				new MutationObserver(() => hideNotices()).observe(target, {
+					childList: true,
+					subtree: true
+				});
+			})();",
+			'after'
 		);
 	}
 
