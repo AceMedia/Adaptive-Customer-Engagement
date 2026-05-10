@@ -125,27 +125,48 @@ function normaliseFilters(defaults, filters = {}) {
 	};
 }
 
+function getHashRoute() {
+	const rawHash = (window.location.hash || '').replace(/^#/, '');
+	const [section = '', query = ''] = rawHash.split('?');
+	const fallback = (config.page || 'dashboard').replace(/^ace-/, '');
+	const current = section && PAGE_META[section] ? section : fallback || 'dashboard';
+
+	return {
+		section: current,
+		params: new URLSearchParams(query),
+	};
+}
+
 function getQueryParam(key) {
-	return new URLSearchParams(window.location.search).get(key) || '';
+	const route = getHashRoute();
+
+	return route.params.get(key) || new URLSearchParams(window.location.search).get(key) || '';
 }
 
 function clearQueryParam(key) {
 	const url = new URL(window.location.href);
+	const route = getHashRoute();
+
+	route.params.delete(key);
 	url.searchParams.delete(key);
+	url.hash = route.params.toString() ? `${route.section}?${route.params.toString()}` : route.section;
 	window.history.replaceState({}, '', url.toString());
 }
 
 function getAdminPageUrl(page, params = {}) {
 	const base = config.adminUrl || 'admin.php';
 	const url = new URL(base, window.location.origin);
+	const hashParams = new URLSearchParams();
 
-	url.searchParams.set('page', page === 'dashboard' ? 'ace-dashboard' : `ace-${page}`);
+	url.searchParams.set('page', 'ace-dashboard');
 
 	Object.entries(params).forEach(([key, value]) => {
 		if (value !== undefined && value !== null && value !== '') {
-			url.searchParams.set(key, value);
+			hashParams.set(key, value);
 		}
 	});
+
+	url.hash = hashParams.toString() ? `${page}?${hashParams.toString()}` : page;
 
 	return url.toString();
 }
@@ -328,7 +349,7 @@ function SessionsTable({ items, onView }) {
 	);
 }
 
-function DashboardView() {
+function DashboardView({ active }) {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [selectedCompany, setSelectedCompany] = useState(null);
@@ -337,8 +358,10 @@ function DashboardView() {
 	const load = () => request('/admin/dashboard').then(setData);
 
 	useEffect(() => {
-		load();
-	}, []);
+		if (active && !data) {
+			load();
+		}
+	}, [active, data]);
 
 	if (!data) {
 		return createElement(Spinner);
@@ -418,7 +441,7 @@ function DashboardView() {
 	);
 }
 
-function CallsView() {
+function CallsView({ active }) {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [filters, setFilters] = useState(CALL_FILTER_DEFAULTS);
@@ -446,8 +469,10 @@ function CallsView() {
 	};
 
 	useEffect(() => {
-		load(filters);
-	}, []);
+		if (active && !data) {
+			load(filters);
+		}
+	}, [active, data]);
 
 	useEffect(() => {
 		const segmentId = getQueryParam('ace_segment');
@@ -656,7 +681,7 @@ function InterestSummaryPanel({ title, commerce }) {
 	);
 }
 
-function CommerceView() {
+function CommerceView({ active }) {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [selectedCompany, setSelectedCompany] = useState(null);
@@ -685,8 +710,10 @@ function CommerceView() {
 	};
 
 	useEffect(() => {
-		load(filters);
-	}, []);
+		if (active && !data) {
+			load(filters);
+		}
+	}, [active, data]);
 
 	useEffect(() => {
 		const segmentId = getQueryParam('ace_segment');
@@ -884,7 +911,7 @@ function DashboardSegmentCard({ title, segments, page }) {
 	);
 }
 
-function SessionsView() {
+function SessionsView({ active }) {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ sources: [], confidences: [] });
@@ -915,8 +942,10 @@ function SessionsView() {
 	};
 
 	useEffect(() => {
-		load(filters);
-	}, []);
+		if (active && !items) {
+			load(filters);
+		}
+	}, [active, items]);
 
 	useEffect(() => {
 		const segmentId = getQueryParam('ace_segment');
@@ -1225,7 +1254,7 @@ function CallsTable({ items }) {
 	);
 }
 
-function CompaniesView() {
+function CompaniesView({ active }) {
 	const [items, setItems] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [options, setOptions] = useState({ providers: [], confidences: [] });
@@ -1256,8 +1285,10 @@ function CompaniesView() {
 	};
 
 	useEffect(() => {
-		load(filters);
-	}, []);
+		if (active && !items) {
+			load(filters);
+		}
+	}, [active, items]);
 
 	useEffect(() => {
 		const segmentId = getQueryParam('ace_segment');
@@ -1553,7 +1584,7 @@ function NumberForm({ value, onChange, onSubmit, busy, label }) {
 	);
 }
 
-function NumbersView() {
+function NumbersView({ active }) {
 	const empty = useMemo(
 		() => ({
 			label: '',
@@ -1579,8 +1610,10 @@ function NumbersView() {
 	const load = () => request('/admin/numbers').then((response) => setItems(response.items || []));
 
 	useEffect(() => {
-		load();
-	}, []);
+		if (active && !items) {
+			load();
+		}
+	}, [active, items]);
 
 	const save = async () => {
 		setBusy(true);
@@ -1659,7 +1692,7 @@ function NumbersView() {
 	);
 }
 
-function SettingsView({ section = 'settings' }) {
+function SettingsView({ section = 'settings', active }) {
 	const [settings, setSettings] = useState(null);
 	const [notice, setNotice] = useState(null);
 	const [busy, setBusy] = useState(false);
@@ -1667,8 +1700,10 @@ function SettingsView({ section = 'settings' }) {
 	const [testResult, setTestResult] = useState(null);
 
 	useEffect(() => {
-		request('/admin/settings').then(setSettings);
-	}, []);
+		if (active && !settings) {
+			request('/admin/settings').then(setSettings);
+		}
+	}, [active, settings]);
 
 	if (!settings) {
 		return createElement(Spinner);
@@ -1885,42 +1920,71 @@ function PlaceholderView({ title, message }) {
 	return createElement(Notice, { status: 'info', isDismissible: false }, `${title}: ${message}`);
 }
 
+function ScreenMount({ active, children }) {
+	return createElement(
+		'div',
+		{
+			className: `ace-admin-screen-mount${active ? ' is-active' : ''}`,
+			hidden: !active,
+			'aria-hidden': !active,
+		},
+		children
+	);
+}
+
 function App() {
-	const page = (config.page || 'dashboard').replace(/^ace-/, '');
-	let view = null;
+	const initialSection = getHashRoute().section;
+	const [page, setPage] = useState(initialSection);
+	const [visited, setVisited] = useState([initialSection]);
 
-	switch (page) {
-		case 'dashboard':
-			view = createElement(DashboardView);
-			break;
-		case 'sessions':
-			view = createElement(SessionsView);
-			break;
-		case 'numbers':
-			view = createElement(NumbersView);
-			break;
-		case 'settings':
-		case 'privacy':
-		case 'enrichment':
-		case 'amazon-connect':
-		case 'ai-agent':
-			view = createElement(SettingsView, { section: page });
-			break;
-		case 'companies':
-			view = createElement(CompaniesView);
-			break;
-		case 'commerce':
-			view = createElement(CommerceView);
-			break;
-		case 'calls':
-			view = createElement(CallsView);
-			break;
-		default:
-			view = createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') });
-			break;
-	}
+	useEffect(() => {
+		const currentPage = (config.page || 'dashboard').replace(/^ace-/, '');
 
-	return createElement(AdminShell, { page }, view);
+		if (currentPage !== 'dashboard' || !window.location.hash) {
+			window.history.replaceState({}, '', getAdminPageUrl(currentPage || 'dashboard'));
+		}
+
+		const syncRoute = () => {
+			const nextPage = getHashRoute().section;
+			setPage(nextPage);
+			setVisited((currentVisited) => (currentVisited.includes(nextPage) ? currentVisited : currentVisited.concat(nextPage)));
+		};
+
+		syncRoute();
+		window.addEventListener('hashchange', syncRoute);
+		window.addEventListener('popstate', syncRoute);
+
+		return () => {
+			window.removeEventListener('hashchange', syncRoute);
+			window.removeEventListener('popstate', syncRoute);
+		};
+	}, []);
+
+	const screenOrder = ['dashboard', 'sessions', 'companies', 'commerce', 'calls', 'numbers', 'settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent'];
+	const screenMap = {
+		dashboard: createElement(DashboardView, { active: page === 'dashboard' }),
+		sessions: createElement(SessionsView, { active: page === 'sessions' }),
+		companies: createElement(CompaniesView, { active: page === 'companies' }),
+		commerce: createElement(CommerceView, { active: page === 'commerce' }),
+		calls: createElement(CallsView, { active: page === 'calls' }),
+		numbers: createElement(NumbersView, { active: page === 'numbers' }),
+		settings: createElement(SettingsView, { section: 'settings', active: page === 'settings' }),
+		privacy: createElement(SettingsView, { section: 'privacy', active: page === 'privacy' }),
+		enrichment: createElement(SettingsView, { section: 'enrichment', active: page === 'enrichment' }),
+		'amazon-connect': createElement(SettingsView, { section: 'amazon-connect', active: page === 'amazon-connect' }),
+		'ai-agent': createElement(SettingsView, { section: 'ai-agent', active: page === 'ai-agent' }),
+	};
+
+	return createElement(
+		AdminShell,
+		{ page },
+		screenOrder.map((section) =>
+			visited.includes(section)
+				? createElement(ScreenMount, { key: section, active: page === section }, screenMap[section])
+				: null
+		),
+		!screenMap[page] && createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') })
+	);
 }
 
 const root = document.getElementById('ace-admin-root');

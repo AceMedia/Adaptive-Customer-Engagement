@@ -137,6 +137,11 @@ final class Menu {
 	 * @return void
 	 */
 	private function render_page( string $page ): void {
+		if ( 'dashboard' !== $page ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) );
+			exit;
+		}
+
 		?>
 		<div class="wrap ace-admin-wrap">
 			<div id="ace-admin-root" data-page="<?php echo esc_attr( $page ); ?>"></div>
