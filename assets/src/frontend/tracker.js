@@ -1,4 +1,5 @@
 const config = window.ACEFrontendConfig || {};
+const WOO_INTEREST_STORAGE_KEY = 'ace_wc_interest_v1';
 
 function setCookie(name, value, duration, useDays = false) {
 	const maxAge = useDays ? duration * 24 * 60 * 60 : duration * 60;
@@ -52,6 +53,171 @@ async function sendTrackingEvent(payload) {
 	}
 }
 
+function readWooInterestStore() {
+	try {
+		const raw = window.localStorage?.getItem(WOO_INTEREST_STORAGE_KEY);
+		const parsed = raw ? JSON.parse(raw) : {};
+
+		return {
+			products: parsed?.products && typeof parsed.products === 'object' ? parsed.products : {},
+			categories: parsed?.categories && typeof parsed.categories === 'object' ? parsed.categories : {},
+		};
+	} catch (error) {
+		return {
+			products: {},
+			categories: {},
+		};
+	}
+}
+
+function writeWooInterestStore(store) {
+	try {
+		window.localStorage?.setItem(WOO_INTEREST_STORAGE_KEY, JSON.stringify(store));
+	} catch (error) {
+		// Storage is optional and must not break tracking.
+	}
+}
+
+function trimInterestEntries(entries, limit = 50) {
+	return Object.fromEntries(
+		Object.entries(entries)
+			.sort(([, left], [, right]) => (right?.last_seen || 0) - (left?.last_seen || 0))
+			.slice(0, limit)
+	);
+}
+
+function recordInterest(entries, key, details) {
+	if (!key) {
+		return 0;
+	}
+
+	const existing = entries[key] || {};
+	const count = Number(existing.count || 0) + 1;
+
+	entries[key] = {
+		...existing,
+		...details,
+		count,
+		last_seen: Date.now(),
+	};
+
+	return count;
+}
+
+function buildWooCommerceContext() {
+	const page = config.page || {};
+
+	if (!page?.is_woocommerce) {
+		return {
+			post_id: 0,
+			post_type: '',
+			taxonomy_context: '',
+			product_area: '',
+			brand_context: '',
+			metadata: {},
+		};
+	}
+
+	const store = readWooInterestStore();
+	const metadata = {
+		woo_context: page.context_type || '',
+	};
+	const categories = Array.isArray(page.categories) ? page.categories.filter(Boolean) : [];
+	const categorySlugs = categories.map((item) => item.slug).filter(Boolean);
+	const categoryNames = categories.map((item) => item.name).filter(Boolean);
+	const product = page.product || null;
+	const category = page.category || null;
+	let productArea = '';
+
+	if (product?.id) {
+		const productKey = String(product.id);
+		const productViews = recordInterest(store.products, productKey, {
+			id: Number(product.id),
+			slug: product.slug || '',
+			name: product.name || '',
+		});
+
+		metadata.product_id = String(product.id);
+		metadata.product_slug = product.slug || '';
+		metadata.product_name = product.name || '';
+		metadata.product_view_count = String(productViews);
+		metadata.repeat_product_interest = productViews > 1 ? '1' : '0';
+		productArea = product.slug || `product-${product.id}`;
+	}
+
+	categories.forEach((item) => {
+		const categoryKey = item?.slug || (item?.id ? String(item.id) : '');
+
+		if (!categoryKey) {
+			return;
+		}
+
+		recordInterest(store.categories, categoryKey, {
+			id: Number(item.id || 0),
+			slug: item.slug || '',
+			name: item.name || '',
+		});
+	});
+
+	if (category?.id || categories.length) {
+		const primaryCategory = category || categories[0];
+		const categoryKey = primaryCategory?.slug || (primaryCategory?.id ? String(primaryCategory.id) : '');
+		const storedCategory = categoryKey ? store.categories[categoryKey] || {} : {};
+
+		metadata.category_id = primaryCategory?.id ? String(primaryCategory.id) : '';
+		metadata.category_slug = primaryCategory?.slug || '';
+		metadata.category_name = primaryCategory?.name || '';
+		metadata.category_view_count = storedCategory?.count ? String(storedCategory.count) : '0';
+		metadata.repeat_category_interest = Number(storedCategory?.count || 0) > 1 ? '1' : '0';
+		if (!productArea) {
+			productArea = primaryCategory?.slug || `category-${primaryCategory?.id || 'unknown'}`;
+		}
+	}
+
+	if (categorySlugs.length) {
+		metadata.product_categories = categorySlugs.join(', ');
+	}
+
+	if (categoryNames.length) {
+		metadata.product_category_names = categoryNames.join(', ');
+	}
+
+	if (page.brand?.slug) {
+		metadata.brand_slug = page.brand.slug;
+		metadata.brand_name = page.brand.name || '';
+	}
+
+	store.products = trimInterestEntries(store.products);
+	store.categories = trimInterestEntries(store.categories);
+	writeWooInterestStore(store);
+
+	return {
+		post_id: Number(page.post_id || 0),
+		post_type: page.post_type || '',
+		taxonomy_context: categorySlugs.join(', '),
+		product_area: productArea,
+		brand_context: page.brand?.slug || '',
+		metadata,
+	};
+}
+
+function buildEventPayload(sessionUuid, visitorUuid, values = {}, pageContext = {}) {
+	return {
+		session_uuid: sessionUuid,
+		visitor_uuid: visitorUuid,
+		post_id: pageContext.post_id || 0,
+		post_type: pageContext.post_type || '',
+		taxonomy_context: pageContext.taxonomy_context || '',
+		product_area: pageContext.product_area || '',
+		brand_context: pageContext.brand_context || '',
+		...values,
+		metadata: {
+			...(pageContext.metadata || {}),
+			...(values.metadata || {}),
+		},
+	};
+}
+
 async function resolvePhoneNumber() {
 	const nodes = document.querySelectorAll('[data-ace-phone], [data-ace-phone-link]');
 
@@ -90,7 +256,7 @@ async function resolvePhoneNumber() {
 	}
 }
 
-function bindFormTracking(sessionUuid, visitorUuid) {
+function bindFormTracking(sessionUuid, visitorUuid, pageContext) {
 	document.addEventListener(
 		'submit',
 		(event) => {
@@ -110,9 +276,7 @@ function bindFormTracking(sessionUuid, visitorUuid) {
 			const actionUrl = new URL(form.getAttribute('action') || window.location.href, window.location.origin);
 			const identifier = form.getAttribute('id') || form.getAttribute('name') || form.dataset.aceForm || form.action || 'form';
 
-			sendTrackingEvent({
-				session_uuid: sessionUuid,
-				visitor_uuid: visitorUuid,
+			sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
 				event_type: 'form_submit',
 				event_name: identifier,
 				url: window.location.href,
@@ -125,13 +289,13 @@ function bindFormTracking(sessionUuid, visitorUuid) {
 					form_method: (form.getAttribute('method') || 'get').toUpperCase(),
 					field_count: String(form.elements.length),
 				},
-			});
+			}, pageContext));
 		},
 		true
 	);
 }
 
-function bindInteractionTracking(sessionUuid, visitorUuid) {
+function bindInteractionTracking(sessionUuid, visitorUuid, pageContext) {
 	document.addEventListener('click', (event) => {
 		const target = event.target.closest('a,button');
 
@@ -147,9 +311,7 @@ function bindInteractionTracking(sessionUuid, visitorUuid) {
 			return;
 		}
 
-		sendTrackingEvent({
-			session_uuid: sessionUuid,
-			visitor_uuid: visitorUuid,
+		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
 			event_type: isCall ? 'click_to_call' : 'download',
 			event_name: target.textContent?.trim() || '',
 			url: window.location.href,
@@ -161,7 +323,7 @@ function bindInteractionTracking(sessionUuid, visitorUuid) {
 			metadata: {
 				link: href,
 			},
-		});
+		}, pageContext));
 	});
 }
 
@@ -181,11 +343,10 @@ function init() {
 
 	const sessionUuid = ensureUuid(config.tracking.cookie_name || 'ace_sid', Number(config.tracking.session_lifetime_minutes || 30));
 	const visitorUuid = ensureUuid(config.tracking.visitor_cookie_name || 'ace_vid', Number(config.tracking.visitor_lifetime_days || 90), true);
+	const pageContext = buildWooCommerceContext();
 
 	if (shouldTrackPageviews) {
-		sendTrackingEvent({
-			session_uuid: sessionUuid,
-			visitor_uuid: visitorUuid,
+		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
 			event_type: 'pageview',
 			url: window.location.href,
 			path: window.location.pathname,
@@ -196,15 +357,15 @@ function init() {
 				screen: `${window.screen.width}x${window.screen.height}`,
 				language: navigator.language || '',
 			},
-		});
+		}, pageContext));
 	}
 
 	if (shouldTrackClicks) {
-		bindInteractionTracking(sessionUuid, visitorUuid);
+		bindInteractionTracking(sessionUuid, visitorUuid, pageContext);
 	}
 
 	if (shouldTrackForms) {
-		bindFormTracking(sessionUuid, visitorUuid);
+		bindFormTracking(sessionUuid, visitorUuid, pageContext);
 	}
 
 	if (shouldResolveNumbers) {

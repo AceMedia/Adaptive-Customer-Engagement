@@ -24,6 +24,7 @@ use ACE\AdaptiveCustomerEngagement\Tracking\EventLogger;
 use ACE\AdaptiveCustomerEngagement\Tracking\NumberResolver;
 use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
 use ACE\AdaptiveCustomerEngagement\Tracking\SessionManager;
+use ACE\AdaptiveCustomerEngagement\Tracking\WooCommerceContext;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -106,6 +107,7 @@ final class Plugin {
 	 */
 	public function enqueue_frontend_assets(): void {
 		$settings = Settings::get();
+		$woo_context = new WooCommerceContext();
 
 		if ( empty( $settings['enabled'] ) ) {
 			return;
@@ -127,6 +129,7 @@ final class Plugin {
 					'namespace' => 'adaptive-customer-engagement/v1',
 					'enabled'   => (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
+					'page'      => $woo_context->get_frontend_context(),
 				)
 			),
 			'before'
