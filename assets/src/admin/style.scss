@@ -64,10 +64,10 @@
 	line-height: 1.1;
 }
 
-.ace-admin-brand__title {
+.ace-admin-sidebar .ace-admin-brand__title {
 	font-size: 28px;
-	font-weight: 900;
-	line-height: 1.2;
+	font-weight: 900 !important;
+	line-height: 1.2 !important;
 	letter-spacing: -0.02em;
 	color: #fff;
 }
