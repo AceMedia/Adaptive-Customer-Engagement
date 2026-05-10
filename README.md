@@ -18,6 +18,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - CSV exports for the current filtered session and company views
 - Expanded lead and company priority scoring with visible breakdowns in the admin reporting views
 - Calls screen with call-intent summaries, top call-driving pages, and stored-call reporting foundations
+- Calls screen filters and CSV exports for stored-call investigation and reuse outside WordPress
 - WooCommerce-aware tracking for product and category pages, including repeat-interest counts carried in event metadata
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
@@ -116,6 +117,8 @@ The plugin creates these tables with the WordPress table prefix:
 ## Reporting downloads
 
 The sessions and companies screens can now export the **current filtered view** as a CSV download, so I can pass the data into follow-up sales or reporting work without rebuilding it by hand elsewhere.
+
+The calls screen can now export the **current filtered stored-call view** as a CSV too, which makes it much easier to analyse call outcomes or hand them into follow-up work.
 
 ## WooCommerce reporting
 

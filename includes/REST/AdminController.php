@@ -470,9 +470,11 @@ final class AdminController {
 	 *
 	 * @return WP_REST_Response
 	 */
-	public function calls(): WP_REST_Response {
+	public function calls( WP_REST_Request $request ): WP_REST_Response {
+		$filters       = $this->get_call_filters( $request );
 		$total_calls   = $this->calls->count_all();
 		$matched_calls = $this->calls->count_matched();
+		$filtered_total = $this->calls->count_calls( $filters );
 
 		return new WP_REST_Response(
 			array(
@@ -483,10 +485,15 @@ final class AdminController {
 					'stored_calls_total'  => $total_calls,
 					'matched_calls_total' => $matched_calls,
 					'unmatched_calls'     => max( 0, $total_calls - $matched_calls ),
+					'filtered_calls'      => $filtered_total,
 				),
-				'top_call_paths'       => $this->events->get_top_call_paths(),
-				'call_intent_sessions' => array_map( array( $this, 'decorate_session_summary' ), $this->events->get_recent_call_intent_sessions() ),
-				'recent_calls'         => $this->calls->get_recent_calls(),
+				'filters'              => array(
+					'statuses' => $this->calls->get_statuses(),
+					'active'   => $filters,
+				),
+				'top_call_paths'       => $this->events->get_top_call_paths( 8, $filters ),
+				'call_intent_sessions' => array_map( array( $this, 'decorate_session_summary' ), $this->events->get_recent_call_intent_sessions( 20, $filters ) ),
+				'recent_calls'         => $this->calls->get_calls( 50, $filters ),
 			)
 		);
 	}
@@ -610,6 +617,36 @@ final class AdminController {
 				'last_seen'       => 'Last seen',
 			),
 			array_map( array( $this, 'decorate_company_summary' ), $items )
+		);
+	}
+
+	/**
+	 * Export filtered stored calls as CSV.
+	 *
+	 * @return void
+	 */
+	public function export_calls(): void {
+		$this->assert_export_access();
+
+		$filters = $this->get_call_filters_from_array( $_GET ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$total   = $this->calls->count_calls( $filters );
+		$items   = $total > 0 ? $this->calls->get_calls( $total, $filters, 0 ) : array();
+
+		$this->stream_csv(
+			'ace-calls-export-' . gmdate( 'Ymd-His' ) . '.csv',
+			array(
+				'started_at'        => 'Started',
+				'status'            => 'Status',
+				'called_number'     => 'Called number',
+				'number_label'      => 'Tracking number',
+				'company_name'      => 'Company',
+				'session_uuid'      => 'Session UUID',
+				'duration_seconds'  => 'Duration seconds',
+				'match_confidence'  => 'Match confidence',
+				'queue_name'        => 'Queue',
+				'agent_name'        => 'Agent',
+			),
+			$items
 		);
 	}
 
@@ -918,6 +955,40 @@ final class AdminController {
 			'date_from'   => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
 			'date_to'     => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
 			'repeat_only' => rest_sanitize_boolean( $values['repeat_only'] ?? true ) ? '1' : '0',
+		);
+	}
+
+	/**
+	 * Read call filters from the request.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return array<string, string>
+	 */
+	private function get_call_filters( WP_REST_Request $request ): array {
+		return $this->get_call_filters_from_array(
+			array(
+				'search'     => $request->get_param( 'search' ),
+				'status'     => $request->get_param( 'status' ),
+				'date_from'  => $request->get_param( 'date_from' ),
+				'date_to'    => $request->get_param( 'date_to' ),
+				'match_only' => $request->get_param( 'match_only' ),
+			)
+		);
+	}
+
+	/**
+	 * Sanitize call filters from a raw array.
+	 *
+	 * @param array<string, mixed> $values Raw values.
+	 * @return array<string, string>
+	 */
+	private function get_call_filters_from_array( array $values ): array {
+		return array(
+			'search'     => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
+			'status'     => sanitize_text_field( (string) ( $values['status'] ?? '' ) ),
+			'date_from'  => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
+			'date_to'    => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
+			'match_only' => rest_sanitize_boolean( $values['match_only'] ?? false ) ? '1' : '',
 		);
 	}
 

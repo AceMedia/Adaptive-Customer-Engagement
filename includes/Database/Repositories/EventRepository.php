@@ -131,13 +131,35 @@ final class EventRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_top_call_paths( int $limit = 8 ): array {
+	public function get_top_call_paths( int $limit = 8, array $filters = array() ): array {
 		global $wpdb;
+		$where  = array( "event_type = 'click_to_call'", "path IS NOT NULL", "path != ''" );
+		$params = array();
+
+		if ( ! empty( $filters['date_from'] ) ) {
+			$where[]  = 'DATE(occurred_at) >= %s';
+			$params[] = $filters['date_from'];
+		}
+
+		if ( ! empty( $filters['date_to'] ) ) {
+			$where[]  = 'DATE(occurred_at) <= %s';
+			$params[] = $filters['date_to'];
+		}
+
+		if ( ! empty( $filters['search'] ) ) {
+			$search   = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
+			$where[]  = '(path LIKE %s OR event_name LIKE %s OR metadata LIKE %s)';
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+		}
+
+		$params[] = $limit;
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT path, COUNT(*) AS total FROM ' . Schema::table_name( 'events' ) . " WHERE event_type = 'click_to_call' AND path IS NOT NULL AND path != '' GROUP BY path ORDER BY total DESC LIMIT %d",
-				$limit
+				'SELECT path, COUNT(*) AS total FROM ' . Schema::table_name( 'events' ) . ' WHERE ' . implode( ' AND ', $where ) . ' GROUP BY path ORDER BY total DESC LIMIT %d',
+				$params
 			),
 			ARRAY_A
 		);
@@ -151,12 +173,38 @@ final class EventRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_recent_call_intent_sessions( int $limit = 20 ): array {
+	public function get_recent_call_intent_sessions( int $limit = 20, array $filters = array() ): array {
 		global $wpdb;
 
 		$events    = Schema::table_name( 'events' );
 		$sessions  = Schema::table_name( 'sessions' );
 		$companies = Schema::table_name( 'companies' );
+
+		$where  = array();
+		$params = array();
+
+		if ( ! empty( $filters['date_from'] ) ) {
+			$where[]  = 'DATE(e.occurred_at) >= %s';
+			$params[] = $filters['date_from'];
+		}
+
+		if ( ! empty( $filters['date_to'] ) ) {
+			$where[]  = 'DATE(e.occurred_at) <= %s';
+			$params[] = $filters['date_to'];
+		}
+
+		if ( ! empty( $filters['search'] ) ) {
+			$search   = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
+			$where[]  = '(s.session_uuid LIKE %s OR s.landing_path LIKE %s OR s.referrer LIKE %s OR c.name LIKE %s OR e.path LIKE %s OR e.event_name LIKE %s)';
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+		}
+
+		$params[] = $limit;
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
@@ -168,10 +216,11 @@ final class EventRepository {
 				FROM {$sessions} s
 				INNER JOIN {$events} e ON e.session_id = s.id AND e.event_type = 'click_to_call'
 				LEFT JOIN {$companies} c ON c.id = s.company_id
+				" . ( $where ? 'WHERE ' . implode( ' AND ', $where ) : '' ) . "
 				GROUP BY s.id
 				ORDER BY MAX(e.occurred_at) DESC, s.last_seen DESC
 				LIMIT %d",
-				$limit
+				$params
 			),
 			ARRAY_A
 		);

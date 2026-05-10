@@ -25,6 +25,13 @@ const COMMERCE_FILTER_DEFAULTS = {
 	date_to: '',
 	repeat_only: '1',
 };
+const CALL_FILTER_DEFAULTS = {
+	search: '',
+	status: '',
+	date_from: '',
+	date_to: '',
+	match_only: '',
+};
 
 function request(route, options = {}) {
 	return apiFetch({
@@ -218,9 +225,14 @@ function DashboardView() {
 function CallsView() {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
+	const [filters, setFilters] = useState(CALL_FILTER_DEFAULTS);
+
+	const load = (nextFilters = filters) => {
+		request(withQuery('/admin/calls', nextFilters)).then(setData);
+	};
 
 	useEffect(() => {
-		request('/admin/calls').then(setData);
+		load(filters);
 	}, []);
 
 	if (!data) {
@@ -234,6 +246,7 @@ function CallsView() {
 		['Stored calls total', data.metrics.stored_calls_total],
 		['Matched calls total', data.metrics.matched_calls_total],
 		['Unmatched calls', data.metrics.unmatched_calls],
+		['Filtered calls', data.metrics.filtered_calls],
 	];
 
 	return createElement(
@@ -250,6 +263,36 @@ function CallsView() {
 				)
 			)
 		),
+		createElement(FilterPanel, {
+			filters,
+			onChange: setFilters,
+			onApply: () => load(filters),
+			onReset: () => {
+				const reset = { ...CALL_FILTER_DEFAULTS };
+				setFilters(reset);
+				load(reset);
+			},
+			selects: [
+				{ key: 'status', label: 'Status', options: data.filters?.statuses || [] },
+			],
+		}),
+		createElement(
+			Card,
+			{ style: { marginBottom: '16px' } },
+			createElement(
+				CardBody,
+				null,
+				createElement(ToggleControl, {
+					label: __('Only show matched calls', 'adaptive-customer-engagement'),
+					checked: !!filters.match_only,
+					onChange: (next) => setFilters({ ...filters, match_only: next ? '1' : '' }),
+				})
+			)
+		),
+		createElement(ExportPanel, {
+			label: __('Export current calls', 'adaptive-customer-engagement'),
+			href: getExportUrl('ace_export_calls', filters),
+		}),
 		createElement('h2', null, __('Top call-intent pages', 'adaptive-customer-engagement')),
 		createElement(
 			'table',
@@ -272,7 +315,7 @@ function CallsView() {
 				setSelectedSession(detail);
 			},
 		}),
-		createElement('h2', { style: { marginTop: '20px' } }, __('Recent stored calls', 'adaptive-customer-engagement')),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Stored calls', 'adaptive-customer-engagement')),
 		createElement(CallsTable, {
 			items: data.recent_calls || [],
 		}),
