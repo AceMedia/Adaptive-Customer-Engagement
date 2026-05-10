@@ -119,7 +119,7 @@ The sessions and companies screens can now export the **current filtered view** 
 
 ## WooCommerce reporting
 
-The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns, while session and company detail views now summarise the strongest commerce interest signals attached to that record.
+The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns, while session and company detail views now summarise the strongest commerce interest signals attached to that record. I can now also filter that view by search/date and export the current products, categories, sessions, or companies into CSV files.
 
 ## Privacy approach
 

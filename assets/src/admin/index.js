@@ -19,6 +19,12 @@ const COMPANY_FILTER_DEFAULTS = {
 	date_from: '',
 	date_to: '',
 };
+const COMMERCE_FILTER_DEFAULTS = {
+	search: '',
+	date_from: '',
+	date_to: '',
+	repeat_only: '1',
+};
 
 function request(route, options = {}) {
 	return apiFetch({
@@ -363,9 +369,14 @@ function CommerceView() {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [selectedCompany, setSelectedCompany] = useState(null);
+	const [filters, setFilters] = useState(COMMERCE_FILTER_DEFAULTS);
+
+	const load = (nextFilters = filters) => {
+		request(withQuery('/admin/commerce', nextFilters)).then(setData);
+	};
 
 	useEffect(() => {
-		request('/admin/commerce').then(setData);
+		load(filters);
 	}, []);
 
 	if (!data) {
@@ -395,11 +406,43 @@ function CommerceView() {
 				)
 			)
 		),
+		createElement(FilterPanel, {
+			filters,
+			onChange: setFilters,
+			onApply: () => load(filters),
+			onReset: () => {
+				const reset = { ...COMMERCE_FILTER_DEFAULTS };
+				setFilters(reset);
+				load(reset);
+			},
+		}),
+		createElement(
+			Card,
+			{ style: { marginBottom: '16px' } },
+			createElement(
+				CardBody,
+				null,
+				createElement('h3', { style: { marginTop: 0 } }, __('WooCommerce view options', 'adaptive-customer-engagement')),
+				createElement(ToggleControl, {
+					label: __('Only show repeat interest', 'adaptive-customer-engagement'),
+					checked: filters.repeat_only !== '0',
+					onChange: (next) => setFilters({ ...filters, repeat_only: next ? '1' : '0' }),
+				})
+			)
+		),
+		createElement(
+			'div',
+			{ style: { marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+			createElement(Button, { variant: 'secondary', href: getExportUrl('ace_export_commerce', { ...filters, dataset: 'products' }) }, __('Export products', 'adaptive-customer-engagement')),
+			createElement(Button, { variant: 'secondary', href: getExportUrl('ace_export_commerce', { ...filters, dataset: 'categories' }) }, __('Export categories', 'adaptive-customer-engagement')),
+			createElement(Button, { variant: 'secondary', href: getExportUrl('ace_export_commerce', { ...filters, dataset: 'sessions' }) }, __('Export sessions', 'adaptive-customer-engagement')),
+			createElement(Button, { variant: 'secondary', href: getExportUrl('ace_export_commerce', { ...filters, dataset: 'companies' }) }, __('Export companies', 'adaptive-customer-engagement'))
+		),
 		createElement('h2', null, __('Top repeated products', 'adaptive-customer-engagement')),
 		createElement(WooCommerceInterestTable, { items: data.top_products || [], type: 'product' }),
 		createElement('h2', { style: { marginTop: '20px' } }, __('Top repeated categories', 'adaptive-customer-engagement')),
 		createElement(WooCommerceInterestTable, { items: data.top_categories || [], type: 'category' }),
-		createElement('h2', { style: { marginTop: '20px' } }, __('Sessions showing repeat interest', 'adaptive-customer-engagement')),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Sessions showing WooCommerce interest', 'adaptive-customer-engagement')),
 		createElement(SessionsTable, {
 			items: data.repeat_sessions || [],
 			onView: async (id) => {
@@ -407,7 +450,7 @@ function CommerceView() {
 				setSelectedSession(detail);
 			},
 		}),
-		createElement('h2', { style: { marginTop: '20px' } }, __('Companies showing repeat interest', 'adaptive-customer-engagement')),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Companies showing WooCommerce interest', 'adaptive-customer-engagement')),
 		createElement(CompaniesTable, {
 			items: data.repeat_companies || [],
 			onView: async (id) => {

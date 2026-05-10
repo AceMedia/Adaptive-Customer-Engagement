@@ -443,11 +443,20 @@ final class AdminController {
 	 * @return WP_REST_Response
 	 */
 	public function commerce(): WP_REST_Response {
-		$report = $this->events->get_woocommerce_interest_report();
+		$filters = $this->get_commerce_filters_from_array(
+			array(
+				'search'      => isset( $_GET['search'] ) ? wp_unslash( $_GET['search'] ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				'date_from'   => isset( $_GET['date_from'] ) ? wp_unslash( $_GET['date_from'] ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				'date_to'     => isset( $_GET['date_to'] ) ? wp_unslash( $_GET['date_to'] ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				'repeat_only' => isset( $_GET['repeat_only'] ) ? wp_unslash( $_GET['repeat_only'] ) : '1', // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			)
+		);
+		$report  = $this->events->get_woocommerce_interest_report( $filters );
 
 		return new WP_REST_Response(
 			array(
 				'metrics'          => $report['metrics'],
+				'filters'          => $filters,
 				'top_products'     => $report['top_products'],
 				'top_categories'   => $report['top_categories'],
 				'repeat_sessions'  => array_map( array( $this, 'decorate_session_summary' ), $report['repeat_sessions'] ),
@@ -602,6 +611,80 @@ final class AdminController {
 			),
 			array_map( array( $this, 'decorate_company_summary' ), $items )
 		);
+	}
+
+	/**
+	 * Export WooCommerce reporting datasets as CSV.
+	 *
+	 * @return void
+	 */
+	public function export_commerce(): void {
+		$this->assert_export_access();
+
+		$dataset = sanitize_key( (string) ( $_GET['dataset'] ?? 'products' ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$filters = $this->get_commerce_filters_from_array( $_GET ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$exports = $this->events->get_woocommerce_interest_exports( $filters );
+
+		switch ( $dataset ) {
+			case 'categories':
+				$this->stream_csv(
+					'ace-woocommerce-categories-' . gmdate( 'Ymd-His' ) . '.csv',
+					array(
+						'name'         => 'Category',
+						'slug'         => 'Slug',
+						'views'        => 'Views',
+						'repeat_views' => 'Highest repeat count',
+					),
+					$exports['categories']
+				);
+				break;
+			case 'sessions':
+				$this->stream_csv(
+					'ace-woocommerce-sessions-' . gmdate( 'Ymd-His' ) . '.csv',
+					array(
+						'session_uuid'             => 'Session UUID',
+						'landing_path'             => 'Landing page',
+						'company_name'             => 'Company',
+						'utm_source'               => 'Source',
+						'utm_campaign'             => 'Campaign',
+						'repeat_interest_summary'  => 'WooCommerce summary',
+						'product_repeat_max'       => 'Highest product repeat count',
+						'category_repeat_max'      => 'Highest category repeat count',
+						'last_seen'                => 'Last seen',
+					),
+					array_map( array( $this, 'decorate_session_summary' ), $exports['sessions'] )
+				);
+				break;
+			case 'companies':
+				$this->stream_csv(
+					'ace-woocommerce-companies-' . gmdate( 'Ymd-His' ) . '.csv',
+					array(
+						'name'                     => 'Company',
+						'domain'                   => 'Domain',
+						'confidence'               => 'Confidence',
+						'repeat_interest_summary'  => 'WooCommerce summary',
+						'product_repeat_max'       => 'Highest product repeat count',
+						'category_repeat_max'      => 'Highest category repeat count',
+						'total_sessions'           => 'Sessions',
+						'total_events'             => 'Events',
+						'last_seen'                => 'Last seen',
+					),
+					array_map( array( $this, 'decorate_company_summary' ), $exports['companies'] )
+				);
+				break;
+			case 'products':
+			default:
+				$this->stream_csv(
+					'ace-woocommerce-products-' . gmdate( 'Ymd-His' ) . '.csv',
+					array(
+						'name'         => 'Product',
+						'slug'         => 'Slug',
+						'views'        => 'Views',
+						'repeat_views' => 'Highest repeat count',
+					),
+					$exports['products']
+				);
+		}
 	}
 
 	/**
@@ -820,6 +903,21 @@ final class AdminController {
 			'provider'   => sanitize_text_field( (string) ( $values['provider'] ?? '' ) ),
 			'date_from'  => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
 			'date_to'    => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Sanitize WooCommerce report filters from a raw array.
+	 *
+	 * @param array<string, mixed> $values Raw values.
+	 * @return array<string, string>
+	 */
+	private function get_commerce_filters_from_array( array $values ): array {
+		return array(
+			'search'      => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
+			'date_from'   => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
+			'date_to'     => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
+			'repeat_only' => rest_sanitize_boolean( $values['repeat_only'] ?? true ) ? '1' : '0',
 		);
 	}
 

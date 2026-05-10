@@ -185,24 +185,41 @@ final class EventRepository {
 	 * @param int $limit Rows per report section.
 	 * @return array<string, mixed>
 	 */
-	public function get_woocommerce_interest_report( int $limit = 10 ): array {
-		$report = $this->aggregate_woocommerce_interest( $this->get_woocommerce_interest_rows( 0, 0, 2000 ) );
+	public function get_woocommerce_interest_report( array $filters = array(), int $limit = 10 ): array {
+		$report      = $this->aggregate_woocommerce_interest( $this->get_woocommerce_interest_rows( 0, 0, 2000, $filters ) );
+		$repeat_only = ! empty( $filters['repeat_only'] );
+		$sessions    = array_values(
+			array_filter(
+				$report['sessions'],
+				static function ( array $session ) use ( $repeat_only ): bool {
+					return ! $repeat_only || ! empty( $session['has_repeat_interest'] );
+				}
+			)
+		);
+		$companies   = array_values(
+			array_filter(
+				$report['companies'],
+				static function ( array $company ) use ( $repeat_only ): bool {
+					return ! $repeat_only || ! empty( $company['has_repeat_interest'] );
+				}
+			)
+		);
 
 		return array(
 			'metrics'          => array(
-				'sessions_with_interest'       => count( $report['sessions'] ),
+				'sessions_with_interest'       => count( $sessions ),
 				'sessions_with_repeat_interest'=> count(
 					array_filter(
-						$report['sessions'],
+						$sessions,
 						static function ( array $session ): bool {
 							return ! empty( $session['has_repeat_interest'] );
 						}
 					)
 				),
-				'companies_with_interest'      => count( $report['companies'] ),
+				'companies_with_interest'      => count( $companies ),
 				'companies_with_repeat_interest' => count(
 					array_filter(
-						$report['companies'],
+						$companies,
 						static function ( array $company ): bool {
 							return ! empty( $company['has_repeat_interest'] );
 						}
@@ -213,30 +230,8 @@ final class EventRepository {
 			),
 			'top_products'     => array_slice( array_values( $report['products'] ), 0, $limit ),
 			'top_categories'   => array_slice( array_values( $report['categories'] ), 0, $limit ),
-			'repeat_sessions'  => array_slice(
-				array_values(
-					array_filter(
-						$report['sessions'],
-						static function ( array $session ): bool {
-							return ! empty( $session['has_repeat_interest'] );
-						}
-					)
-				),
-				0,
-				$limit
-			),
-			'repeat_companies' => array_slice(
-				array_values(
-					array_filter(
-						$report['companies'],
-						static function ( array $company ): bool {
-							return ! empty( $company['has_repeat_interest'] );
-						}
-					)
-				),
-				0,
-				$limit
-			),
+			'repeat_sessions'  => array_slice( $sessions, 0, $limit ),
+			'repeat_companies' => array_slice( $companies, 0, $limit ),
 		);
 	}
 
@@ -272,7 +267,7 @@ final class EventRepository {
 	 * @param int $limit      Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	private function get_woocommerce_interest_rows( int $session_id = 0, int $company_id = 0, int $limit = 2000 ): array {
+	private function get_woocommerce_interest_rows( int $session_id = 0, int $company_id = 0, int $limit = 2000, array $filters = array() ): array {
 		global $wpdb;
 
 		$events     = Schema::table_name( 'events' );
@@ -292,6 +287,28 @@ final class EventRepository {
 		if ( $company_id > 0 ) {
 			$where[]  = 's.company_id = %d';
 			$params[] = $company_id;
+		}
+
+		if ( ! empty( $filters['date_from'] ) ) {
+			$where[]  = 'DATE(e.occurred_at) >= %s';
+			$params[] = $filters['date_from'];
+		}
+
+		if ( ! empty( $filters['date_to'] ) ) {
+			$where[]  = 'DATE(e.occurred_at) <= %s';
+			$params[] = $filters['date_to'];
+		}
+
+		if ( ! empty( $filters['search'] ) ) {
+			$search   = '%' . $wpdb->esc_like( (string) $filters['search'] ) . '%';
+			$where[]  = '(s.session_uuid LIKE %s OR s.landing_path LIKE %s OR c.name LIKE %s OR e.path LIKE %s OR e.product_area LIKE %s OR e.taxonomy_context LIKE %s OR e.metadata LIKE %s)';
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
 		}
 
 		$params[] = $limit;
@@ -616,6 +633,23 @@ final class EventRepository {
 			'has_repeat_interest' => false,
 			'products'            => array(),
 			'categories'          => array(),
+		);
+	}
+
+	/**
+	 * Get export-ready WooCommerce reporting rows.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return array<string, array<int, array<string, mixed>>>
+	 */
+	public function get_woocommerce_interest_exports( array $filters = array() ): array {
+		$report = $this->get_woocommerce_interest_report( $filters, 500 );
+
+		return array(
+			'products'   => $report['top_products'],
+			'categories' => $report['top_categories'],
+			'sessions'   => $report['repeat_sessions'],
+			'companies'  => $report['repeat_companies'],
 		);
 	}
 }
