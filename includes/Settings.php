@@ -329,15 +329,18 @@ final class Settings {
 	private static function sanitize_reporting_segment( array $segment ): array {
 		$view    = sanitize_key( (string) ( $segment['view'] ?? 'sessions' ) );
 		$filters = isset( $segment['filters'] ) && is_array( $segment['filters'] ) ? $segment['filters'] : array();
-		$view    = in_array( $view, array( 'sessions', 'companies' ), true ) ? $view : 'sessions';
+		$view    = in_array( $view, array( 'sessions', 'companies', 'calls', 'commerce' ), true ) ? $view : 'sessions';
 
 		$sanitized_filters = array(
 			'search'     => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
 			'confidence' => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
 			'source'     => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
 			'provider'   => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
+			'status'     => sanitize_text_field( (string) ( $filters['status'] ?? '' ) ),
 			'date_from'  => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
 			'date_to'    => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
+			'match_only' => rest_sanitize_boolean( $filters['match_only'] ?? false ) ? '1' : '',
+			'repeat_only'=> rest_sanitize_boolean( $filters['repeat_only'] ?? false ) ? '1' : '',
 		);
 
 		return array(

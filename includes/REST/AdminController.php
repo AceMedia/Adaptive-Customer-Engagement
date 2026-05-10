@@ -315,6 +315,8 @@ final class AdminController {
 				'segment_shortcuts'  => array(
 					'sessions'  => Settings::get_reporting_segments( 'sessions' ),
 					'companies' => Settings::get_reporting_segments( 'companies' ),
+					'calls'     => Settings::get_reporting_segments( 'calls' ),
+					'commerce'  => Settings::get_reporting_segments( 'commerce' ),
 				),
 			)
 		);
@@ -457,6 +459,7 @@ final class AdminController {
 			array(
 				'metrics'          => $report['metrics'],
 				'filters'          => $filters,
+				'segments'         => Settings::get_reporting_segments( 'commerce' ),
 				'top_products'     => $report['top_products'],
 				'top_categories'   => $report['top_categories'],
 				'repeat_sessions'  => array_map( array( $this, 'decorate_session_summary' ), $report['repeat_sessions'] ),
@@ -491,6 +494,7 @@ final class AdminController {
 					'statuses' => $this->calls->get_statuses(),
 					'active'   => $filters,
 				),
+				'segments'             => Settings::get_reporting_segments( 'calls' ),
 				'top_call_paths'       => $this->events->get_top_call_paths( 8, $filters ),
 				'call_intent_sessions' => array_map( array( $this, 'decorate_session_summary' ), $this->events->get_recent_call_intent_sessions( 20, $filters ) ),
 				'recent_calls'         => $this->calls->get_calls( 50, $filters ),
@@ -755,7 +759,7 @@ final class AdminController {
 			return new WP_Error( 'ace_segment_name_required', __( 'Please provide a name for the saved segment.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
-		if ( ! in_array( $segment['view'], array( 'sessions', 'companies' ), true ) ) {
+		if ( ! in_array( $segment['view'], array( 'sessions', 'companies', 'calls', 'commerce' ), true ) ) {
 			return new WP_Error( 'ace_segment_view_invalid', __( 'Please provide a valid reporting view.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
@@ -869,8 +873,11 @@ final class AdminController {
 				'confidence' => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
 				'source'     => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
 				'provider'   => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
+				'status'     => sanitize_text_field( (string) ( $filters['status'] ?? '' ) ),
 				'date_from'  => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
 				'date_to'    => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
+				'match_only' => rest_sanitize_boolean( $filters['match_only'] ?? false ) ? '1' : '',
+				'repeat_only'=> rest_sanitize_boolean( $filters['repeat_only'] ?? false ) ? '1' : '',
 			),
 		);
 	}

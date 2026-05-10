@@ -13,8 +13,8 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Live enrichment provider support for **ipregistry** and **ipinfo**, with cached lookups, company linking, and an admin test lookup tool
 - Working company reporting screens and dashboard hot-company summaries for enriched traffic
 - Paginated session and company filters for confidence, source/provider, search terms, and date range
-- Saved reporting segments for reusing common session and company filters
-- Dashboard shortcuts into saved session and company segments
+- Saved reporting segments for reusing common session, company, calls, and WooCommerce filters
+- Dashboard shortcuts into saved reporting segments across sessions, companies, calls, and WooCommerce views
 - CSV exports for the current filtered session and company views
 - Expanded lead and company priority scoring with visible breakdowns in the admin reporting views
 - Calls screen with call-intent summaries, top call-driving pages, and stored-call reporting foundations

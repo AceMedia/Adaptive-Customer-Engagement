@@ -226,14 +226,51 @@ function CallsView() {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [filters, setFilters] = useState(CALL_FILTER_DEFAULTS);
+	const [segments, setSegments] = useState([]);
+	const [segmentName, setSegmentName] = useState('');
 
 	const load = (nextFilters = filters) => {
-		request(withQuery('/admin/calls', nextFilters)).then(setData);
+		request(withQuery('/admin/calls', nextFilters)).then((response) => {
+			setData(response);
+			setSegments(response.segments || []);
+		});
+	};
+
+	const saveSegment = async () => {
+		const response = await request('/admin/reporting-segments', {
+			method: 'POST',
+			data: {
+				name: segmentName,
+				view: 'calls',
+				filters,
+			},
+		});
+		setSegments(response.items || []);
+		setSegmentName('');
 	};
 
 	useEffect(() => {
 		load(filters);
 	}, []);
+
+	useEffect(() => {
+		const segmentId = getQueryParam('ace_segment');
+
+		if (!segmentId || !segments.length) {
+			return;
+		}
+
+		const segment = segments.find((item) => item.id === segmentId);
+
+		if (!segment) {
+			return;
+		}
+
+		const nextFilters = normaliseFilters(CALL_FILTER_DEFAULTS, segment.filters);
+		setFilters(nextFilters);
+		load(nextFilters);
+		clearQueryParam('ace_segment');
+	}, [segments]);
 
 	if (!data) {
 		return createElement(Spinner);
@@ -263,6 +300,21 @@ function CallsView() {
 				)
 			)
 		),
+		createElement(SavedSegmentsPanel, {
+			segments,
+			segmentName,
+			onSegmentNameChange: setSegmentName,
+			onSave: saveSegment,
+			onApply: (segment) => {
+				const nextFilters = normaliseFilters(CALL_FILTER_DEFAULTS, segment.filters);
+				setFilters(nextFilters);
+				load(nextFilters);
+			},
+			onDelete: async (segmentId) => {
+				const response = await request(`/admin/reporting-segments/${segmentId}`, { method: 'DELETE' });
+				setSegments((response.items || []).filter((item) => item.view === 'calls'));
+			},
+		}),
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
@@ -413,14 +465,51 @@ function CommerceView() {
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [selectedCompany, setSelectedCompany] = useState(null);
 	const [filters, setFilters] = useState(COMMERCE_FILTER_DEFAULTS);
+	const [segments, setSegments] = useState([]);
+	const [segmentName, setSegmentName] = useState('');
 
 	const load = (nextFilters = filters) => {
-		request(withQuery('/admin/commerce', nextFilters)).then(setData);
+		request(withQuery('/admin/commerce', nextFilters)).then((response) => {
+			setData(response);
+			setSegments(response.segments || []);
+		});
+	};
+
+	const saveSegment = async () => {
+		const response = await request('/admin/reporting-segments', {
+			method: 'POST',
+			data: {
+				name: segmentName,
+				view: 'commerce',
+				filters,
+			},
+		});
+		setSegments(response.items || []);
+		setSegmentName('');
 	};
 
 	useEffect(() => {
 		load(filters);
 	}, []);
+
+	useEffect(() => {
+		const segmentId = getQueryParam('ace_segment');
+
+		if (!segmentId || !segments.length) {
+			return;
+		}
+
+		const segment = segments.find((item) => item.id === segmentId);
+
+		if (!segment) {
+			return;
+		}
+
+		const nextFilters = normaliseFilters(COMMERCE_FILTER_DEFAULTS, segment.filters);
+		setFilters(nextFilters);
+		load(nextFilters);
+		clearQueryParam('ace_segment');
+	}, [segments]);
 
 	if (!data) {
 		return createElement(Spinner);
@@ -449,6 +538,21 @@ function CommerceView() {
 				)
 			)
 		),
+		createElement(SavedSegmentsPanel, {
+			segments,
+			segmentName,
+			onSegmentNameChange: setSegmentName,
+			onSave: saveSegment,
+			onApply: (segment) => {
+				const nextFilters = normaliseFilters(COMMERCE_FILTER_DEFAULTS, segment.filters);
+				setFilters(nextFilters);
+				load(nextFilters);
+			},
+			onDelete: async (segmentId) => {
+				const response = await request(`/admin/reporting-segments/${segmentId}`, { method: 'DELETE' });
+				setSegments((response.items || []).filter((item) => item.view === 'commerce'));
+			},
+		}),
 		createElement(FilterPanel, {
 			filters,
 			onChange: setFilters,
@@ -509,8 +613,10 @@ function CommerceView() {
 function DashboardSegmentsPanel({ shortcuts }) {
 	const sessionSegments = shortcuts.sessions || [];
 	const companySegments = shortcuts.companies || [];
+	const callSegments = shortcuts.calls || [];
+	const commerceSegments = shortcuts.commerce || [];
 
-	if (!sessionSegments.length && !companySegments.length) {
+	if (!sessionSegments.length && !companySegments.length && !callSegments.length && !commerceSegments.length) {
 		return null;
 	}
 
@@ -530,6 +636,16 @@ function DashboardSegmentsPanel({ shortcuts }) {
 				title: __('Company segments', 'adaptive-customer-engagement'),
 				segments: companySegments,
 				page: 'companies',
+			}),
+			createElement(DashboardSegmentCard, {
+				title: __('Call segments', 'adaptive-customer-engagement'),
+				segments: callSegments,
+				page: 'calls',
+			}),
+			createElement(DashboardSegmentCard, {
+				title: __('WooCommerce segments', 'adaptive-customer-engagement'),
+				segments: commerceSegments,
+				page: 'commerce',
 			})
 		)
 	);
