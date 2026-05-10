@@ -38,5 +38,8 @@ This repository holds my WordPress plugin **Adaptive Customer Engagement**. The 
 ## Documentation hygiene
 
 - Keep `README.md` current when behaviour or setup changes.
+- Keep the GitHub wiki at `https://github.com/AceMedia/Adaptive-Customer-Engagement/wiki` current when behaviour, setup, reporting screens, or roadmap position changes.
+- Write wiki pages in British English from my point of view, as normal reference documentation, without AI summary block quotes.
+- Do not maintain manual wiki sidebar page links unless there is a specific reason; rely on the native GitHub wiki navigation by default.
 - Capture future implementation plans in GitHub issues rather than ad-hoc notes in the repo.
 - Do not create speculative roadmap code without documenting the intended next step.
