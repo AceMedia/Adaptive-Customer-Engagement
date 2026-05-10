@@ -9,7 +9,7 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Public REST tracking endpoint for pageviews, click-to-call events, and downloads
 - Optional native form submission tracking without storing field values
 - Public phone-number resolution endpoint for frontend placeholders
-- React-based wp-admin screens for dashboard, sessions, session detail timelines, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
+- React-based wp-admin screens for dashboard, sessions, companies, WooCommerce interest, calls, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
 - Live enrichment provider support for **ipregistry** and **ipinfo**, with cached lookups, company linking, and an admin test lookup tool
 - Working company reporting screens and dashboard hot-company summaries for enriched traffic
 - Paginated session and company filters for confidence, source/provider, search terms, and date range
@@ -88,6 +88,7 @@ adaptive-customer-engagement/v1
 - `GET /admin/sessions/{id}`
 - `GET /admin/companies`
 - `GET /admin/companies/{id}`
+- `GET /admin/commerce`
 - `GET /admin/calls`
 - `GET /admin/numbers`
 - `POST /admin/numbers`
@@ -115,6 +116,10 @@ The plugin creates these tables with the WordPress table prefix:
 ## Reporting downloads
 
 The sessions and companies screens can now export the **current filtered view** as a CSV download, so I can pass the data into follow-up sales or reporting work without rebuilding it by hand elsewhere.
+
+## WooCommerce reporting
+
+The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns, while session and company detail views now summarise the strongest commerce interest signals attached to that record.
 
 ## Privacy approach
 

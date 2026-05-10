@@ -171,6 +171,16 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
+			'/admin/commerce',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'commerce' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/admin/companies/(?P<id>\d+)',
 			array(
 				'methods'             => 'GET',
@@ -358,8 +368,9 @@ final class AdminController {
 
 		return new WP_REST_Response(
 			array(
-				'session' => $this->decorate_session_summary( $session ),
-				'events'  => $events,
+				'session'  => $this->decorate_session_summary( $session ),
+				'events'   => $events,
+				'commerce' => $this->events->get_session_woocommerce_interest( $session_id ),
 			)
 		);
 	}
@@ -420,7 +431,29 @@ final class AdminController {
 			$company['recent_sessions'] = array_map( array( $this, 'decorate_session_summary' ), $company['recent_sessions'] );
 		}
 
-		return new WP_REST_Response( $this->decorate_company_summary( $company ) );
+		$company = $this->decorate_company_summary( $company );
+		$company['commerce'] = $this->events->get_company_woocommerce_interest( (int) $company['id'] );
+
+		return new WP_REST_Response( $company );
+	}
+
+	/**
+	 * WooCommerce reporting data.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function commerce(): WP_REST_Response {
+		$report = $this->events->get_woocommerce_interest_report();
+
+		return new WP_REST_Response(
+			array(
+				'metrics'          => $report['metrics'],
+				'top_products'     => $report['top_products'],
+				'top_categories'   => $report['top_categories'],
+				'repeat_sessions'  => array_map( array( $this, 'decorate_session_summary' ), $report['repeat_sessions'] ),
+				'repeat_companies' => array_map( array( $this, 'decorate_company_summary' ), $report['repeat_companies'] ),
+			)
+		);
 	}
 
 	/**

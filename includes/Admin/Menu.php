@@ -39,6 +39,7 @@ final class Menu {
 			'dashboard'      => __( 'Dashboard', 'adaptive-customer-engagement' ),
 			'sessions'       => __( 'Sessions', 'adaptive-customer-engagement' ),
 			'companies'      => __( 'Companies', 'adaptive-customer-engagement' ),
+			'commerce'       => __( 'WooCommerce', 'adaptive-customer-engagement' ),
 			'calls'          => __( 'Calls', 'adaptive-customer-engagement' ),
 			'numbers'        => __( 'Phone Numbers', 'adaptive-customer-engagement' ),
 			'enrichment'     => __( 'Enrichment', 'adaptive-customer-engagement' ),

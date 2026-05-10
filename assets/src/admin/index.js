@@ -274,6 +274,152 @@ function CallsView() {
 	);
 }
 
+function WooCommerceInterestTable({ items, type = 'product' }) {
+	if (!items.length) {
+		return createElement(Notice, { status: 'info', isDismissible: false }, __('No WooCommerce interest data has been recorded yet.', 'adaptive-customer-engagement'));
+	}
+
+	return createElement(
+		'table',
+		{ className: 'widefat striped' },
+		createElement(
+			'thead',
+			null,
+			createElement(
+				'tr',
+				null,
+				[type === 'product' ? 'Product' : 'Category', 'Slug', 'Views', 'Highest repeat count'].map((label) =>
+					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
+				)
+			)
+		),
+		createElement(
+			'tbody',
+			null,
+			items.map((item) =>
+				createElement(
+					'tr',
+					{ key: item.key || `${type}-${item.slug}-${item.id}` },
+					createElement('td', null, item.name || '—'),
+					createElement('td', null, item.slug || '—'),
+					createElement('td', null, item.views ?? 0),
+					createElement('td', null, item.repeat_views ?? 1)
+				)
+			)
+		)
+	);
+}
+
+function InterestSummaryPanel({ title, commerce }) {
+	if (!commerce) {
+		return null;
+	}
+
+	return createElement(
+		Card,
+		{ style: { marginBottom: '16px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement('h3', { style: { marginTop: 0 } }, title),
+			createElement('p', null, commerce.summary || __('No WooCommerce interest recorded yet.', 'adaptive-customer-engagement')),
+			createElement(
+				'div',
+				{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '12px' } },
+				createElement(
+					'div',
+					null,
+					createElement('strong', null, __('Products', 'adaptive-customer-engagement')),
+					commerce.products?.length
+						? createElement(
+								'ul',
+								null,
+								commerce.products.map((item) =>
+									createElement('li', { key: item.key || item.slug || item.id }, `${item.name || item.slug || '—'} (${item.repeat_views || item.views || 0})`)
+								)
+						  )
+						: createElement('p', null, '—')
+				),
+				createElement(
+					'div',
+					null,
+					createElement('strong', null, __('Categories', 'adaptive-customer-engagement')),
+					commerce.categories?.length
+						? createElement(
+								'ul',
+								null,
+								commerce.categories.map((item) =>
+									createElement('li', { key: item.key || item.slug || item.id }, `${item.name || item.slug || '—'} (${item.repeat_views || item.views || 0})`)
+								)
+						  )
+						: createElement('p', null, '—')
+				)
+			)
+		)
+	);
+}
+
+function CommerceView() {
+	const [data, setData] = useState(null);
+	const [selectedSession, setSelectedSession] = useState(null);
+	const [selectedCompany, setSelectedCompany] = useState(null);
+
+	useEffect(() => {
+		request('/admin/commerce').then(setData);
+	}, []);
+
+	if (!data) {
+		return createElement(Spinner);
+	}
+
+	const cards = [
+		['Sessions with interest', data.metrics.sessions_with_interest],
+		['Sessions with repeat interest', data.metrics.sessions_with_repeat_interest],
+		['Companies with interest', data.metrics.companies_with_interest],
+		['Companies with repeat interest', data.metrics.companies_with_repeat_interest],
+		['Products tracked', data.metrics.products_tracked],
+		['Categories tracked', data.metrics.categories_tracked],
+	];
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(
+			'div',
+			{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px', marginBottom: '16px' } },
+			cards.map(([label, value]) =>
+				createElement(
+					Card,
+					{ key: label },
+					createElement(CardBody, null, createElement('strong', null, __(label, 'adaptive-customer-engagement')), createElement('div', { style: { fontSize: '24px', marginTop: '8px' } }, value))
+				)
+			)
+		),
+		createElement('h2', null, __('Top repeated products', 'adaptive-customer-engagement')),
+		createElement(WooCommerceInterestTable, { items: data.top_products || [], type: 'product' }),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Top repeated categories', 'adaptive-customer-engagement')),
+		createElement(WooCommerceInterestTable, { items: data.top_categories || [], type: 'category' }),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Sessions showing repeat interest', 'adaptive-customer-engagement')),
+		createElement(SessionsTable, {
+			items: data.repeat_sessions || [],
+			onView: async (id) => {
+				const detail = await request(`/admin/sessions/${id}`);
+				setSelectedSession(detail);
+			},
+		}),
+		createElement('h2', { style: { marginTop: '20px' } }, __('Companies showing repeat interest', 'adaptive-customer-engagement')),
+		createElement(CompaniesTable, {
+			items: data.repeat_companies || [],
+			onView: async (id) => {
+				const detail = await request(`/admin/companies/${id}`);
+				setSelectedCompany(detail);
+			},
+		}),
+		selectedSession && createElement(SessionDetailPanel, { detail: selectedSession, onClose: () => setSelectedSession(null) }),
+		selectedCompany && createElement(CompanyDetailPanel, { detail: selectedCompany, onClose: () => setSelectedCompany(null) })
+	);
+}
+
 function DashboardSegmentsPanel({ shortcuts }) {
 	const sessionSegments = shortcuts.sessions || [];
 	const companySegments = shortcuts.companies || [];
@@ -466,6 +612,7 @@ function SessionDetailPanel({ detail, onClose }) {
 			),
 			createElement('p', null, `${__('Score', 'adaptive-customer-engagement')}: ${session.score || 0} (${session.score_label || 'noise'})`),
 			createElement('p', null, `${__('Why it scored', 'adaptive-customer-engagement')}: ${session.score_summary || '—'}`),
+			createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
 			createElement(
 				'table',
 				{ className: 'widefat striped', style: { marginBottom: '16px' } },
@@ -596,6 +743,7 @@ function CompanyDetailPanel({ detail, onClose }) {
 				createElement('h2', { style: { margin: 0 } }, __('Company detail', 'adaptive-customer-engagement')),
 				createElement(Button, { variant: 'secondary', onClick: onClose }, __('Close', 'adaptive-customer-engagement'))
 			),
+			createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
 			createElement(
 				'table',
 				{ className: 'widefat striped', style: { marginBottom: '16px' } },
@@ -1197,6 +1345,8 @@ function App() {
 			return createElement(SettingsView, { section: page });
 		case 'companies':
 			return createElement(CompaniesView);
+		case 'commerce':
+			return createElement(CommerceView);
 		case 'calls':
 			return createElement(CallsView);
 		default:
