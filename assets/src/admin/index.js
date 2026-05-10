@@ -194,6 +194,7 @@ function getAceSectionFromUrl(urlValue) {
 function syncWpAdminSidebar(page) {
 	const pluginLinks = document.querySelectorAll('#adminmenu a[href*="page=ace-"]');
 	const topLevel = document.querySelector('#adminmenu .toplevel_page_ace-dashboard');
+	const topLevelLink = topLevel ? topLevel.querySelector('a.menu-top') : null;
 
 	pluginLinks.forEach((link) => {
 		const item = link.closest('li');
@@ -208,6 +209,11 @@ function syncWpAdminSidebar(page) {
 
 	if (topLevel) {
 		topLevel.classList.add('wp-has-current-submenu', 'wp-menu-open', 'current');
+	}
+
+	if (topLevelLink) {
+		topLevelLink.classList.add('current');
+		topLevelLink.setAttribute('aria-current', 'page');
 	}
 
 	pluginLinks.forEach((link) => {
