@@ -171,6 +171,61 @@ function getAdminPageUrl(page, params = {}) {
 	return url.toString();
 }
 
+function getAceSectionFromUrl(urlValue) {
+	try {
+		const url = new URL(urlValue, window.location.origin);
+		const page = (url.searchParams.get('page') || '').replace(/^ace-/, '');
+		const hashSection = (url.hash || '').replace(/^#/, '').split('?')[0];
+
+		if (hashSection && PAGE_META[hashSection]) {
+			return hashSection;
+		}
+
+		if (page && PAGE_META[page]) {
+			return page;
+		}
+	} catch (error) {
+		return null;
+	}
+
+	return null;
+}
+
+function syncWpAdminSidebar(page) {
+	const pluginLinks = document.querySelectorAll('#adminmenu a[href*="page=ace-"]');
+	const topLevel = document.querySelector('#adminmenu .toplevel_page_ace-dashboard');
+
+	pluginLinks.forEach((link) => {
+		const item = link.closest('li');
+
+		if (item) {
+			item.classList.remove('current');
+		}
+
+		link.classList.remove('current');
+		link.removeAttribute('aria-current');
+	});
+
+	if (topLevel) {
+		topLevel.classList.add('wp-has-current-submenu', 'wp-menu-open', 'current');
+	}
+
+	pluginLinks.forEach((link) => {
+		if (getAceSectionFromUrl(link.href) !== page) {
+			return;
+		}
+
+		const item = link.closest('li');
+
+		if (item) {
+			item.classList.add('current');
+		}
+
+		link.classList.add('current');
+		link.setAttribute('aria-current', 'page');
+	});
+}
+
 function getExportUrl(action, params = {}) {
 	const base = config.adminPostUrl || config.adminUrl || 'admin-post.php';
 	const url = new URL(base, window.location.origin);
@@ -1957,6 +2012,50 @@ function App() {
 		return () => {
 			window.removeEventListener('hashchange', syncRoute);
 			window.removeEventListener('popstate', syncRoute);
+		};
+	}, []);
+
+	useEffect(() => {
+		syncWpAdminSidebar(page);
+	}, [page]);
+
+	useEffect(() => {
+		const adminMenu = document.getElementById('adminmenu');
+
+		if (!adminMenu) {
+			return undefined;
+		}
+
+		const handleClick = (event) => {
+			const link = event.target.closest('a[href*="page=ace-"]');
+
+			if (!link) {
+				return;
+			}
+
+			const targetPage = getAceSectionFromUrl(link.href);
+
+			if (!targetPage) {
+				return;
+			}
+
+			event.preventDefault();
+
+			const nextUrl = new URL(getAdminPageUrl(targetPage), window.location.origin);
+			const nextHash = nextUrl.hash || `#${targetPage}`;
+
+			if (window.location.hash === nextHash) {
+				syncWpAdminSidebar(targetPage);
+				return;
+			}
+
+			window.location.hash = nextHash;
+		};
+
+		adminMenu.addEventListener('click', handleClick);
+
+		return () => {
+			adminMenu.removeEventListener('click', handleClick);
 		};
 	}, []);
 
