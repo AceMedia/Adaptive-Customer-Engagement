@@ -95,6 +95,7 @@
 .ace-admin-nav__link {
 	display: flex;
 	align-items: center;
+	gap: 10px;
 	padding: 10px 12px;
 	border-radius: 10px;
 	color: rgba(255, 255, 255, 0.88);
@@ -112,6 +113,17 @@
 .ace-admin-nav__link.is-active {
 	color: #1d2327;
 	background: #fff;
+}
+
+.ace-admin-nav__icon {
+	flex: 0 0 20px;
+	width: 20px;
+	height: 20px;
+	font-size: 18px;
+}
+
+.ace-admin-nav__label {
+	min-width: 0;
 }
 
 .ace-admin-main {

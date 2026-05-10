@@ -50,46 +50,57 @@ const NAV_GROUPS = [
 const PAGE_META = {
 	dashboard: {
 		title: __('Dashboard', 'adaptive-customer-engagement'),
+		icon: 'chart-bar',
 		description: __('See the overall activity picture, review hot accounts, and seed local sample data so the reporting UI is easier to assess before live integrations are wired in.', 'adaptive-customer-engagement'),
 	},
 	sessions: {
 		title: __('Sessions', 'adaptive-customer-engagement'),
+		icon: 'clock',
 		description: __('Inspect first-party visit history, segment interesting traffic, and drill into timelines for the people and organisations showing intent.', 'adaptive-customer-engagement'),
 	},
 	companies: {
 		title: __('Companies', 'adaptive-customer-engagement'),
+		icon: 'building',
 		description: __('Review enriched company records, confidence levels, and priority signals for the organisations appearing in your tracked journeys.', 'adaptive-customer-engagement'),
 	},
 	commerce: {
 		title: __('WooCommerce interest', 'adaptive-customer-engagement'),
+		icon: 'cart',
 		description: __('Track repeat interest in products and categories so you can spot buying intent across sessions and companies before tying anything back to live orders.', 'adaptive-customer-engagement'),
 	},
 	calls: {
 		title: __('Calls', 'adaptive-customer-engagement'),
+		icon: 'phone',
 		description: __('Review call intent, stored call records, and matched sessions so the phone journey is visible alongside the rest of the engagement data.', 'adaptive-customer-engagement'),
 	},
 	numbers: {
 		title: __('Phone numbers', 'adaptive-customer-engagement'),
+		icon: 'smartphone',
 		description: __('Manage the routing rules and tracking numbers used for first-party call attribution across campaigns, product pages, and general site traffic.', 'adaptive-customer-engagement'),
 	},
 	settings: {
 		title: __('Tracking settings', 'adaptive-customer-engagement'),
+		icon: 'admin-generic',
 		description: __('Control the built-in tracking behaviour, cookies, selectors, and first-party capture rules that are already active inside the plugin.', 'adaptive-customer-engagement'),
 	},
 	privacy: {
 		title: __('Privacy', 'adaptive-customer-engagement'),
+		icon: 'shield',
 		description: __('Keep the local data model privacy-aware by managing retention, exclusions, and raw data handling before any external services are introduced.', 'adaptive-customer-engagement'),
 	},
 	enrichment: {
 		title: __('Enrichment', 'adaptive-customer-engagement'),
+		icon: 'search',
 		description: __('This is where you connect an enrichment provider such as ipregistry or ipinfo. The page includes the provider selector, key fields, test lookup, and direct links to obtain API keys.', 'adaptive-customer-engagement'),
 	},
 	'amazon-connect': {
 		title: __('Amazon Connect', 'adaptive-customer-engagement'),
+		icon: 'networking',
 		description: __('Prepare the AWS and Amazon Connect identifiers, access credentials, and contact flow settings ahead of the live telephony integration pass.', 'adaptive-customer-engagement'),
 	},
 	'ai-agent': {
 		title: __('AI agent', 'adaptive-customer-engagement'),
+		icon: 'format-chat',
 		description: __('Prepare the AI provider, model, guardrails, and handoff settings here so the admin side is ready before any live prompts or tools are connected.', 'adaptive-customer-engagement'),
 	},
 };
@@ -305,7 +316,8 @@ function AdminSidebarNavigation({ page }) {
 							className: `ace-admin-nav__link${page === item ? ' is-active' : ''}`,
 							href: getAdminPageUrl(item),
 						},
-						PAGE_META[item]?.title || item
+						createElement('span', { className: `ace-admin-nav__icon dashicons dashicons-${PAGE_META[item]?.icon || 'admin-generic'}`, 'aria-hidden': 'true' }),
+						createElement('span', { className: 'ace-admin-nav__label' }, PAGE_META[item]?.title || item)
 					)
 				)
 			)
