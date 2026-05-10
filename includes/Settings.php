@@ -63,6 +63,10 @@ final class Settings {
 			'ai_agent'       => array(
 				'enabled'          => false,
 				'mode'             => 'off',
+				'provider'         => 'openai',
+				'model'            => 'gpt-5-mini',
+				'api_key'          => '',
+				'base_url'         => '',
 				'handoff_to_human' => true,
 				'allowed_tools'    => array(),
 				'guardrails'       => array(),
@@ -247,6 +251,10 @@ final class Settings {
 			'ai_agent'       => array(
 				'enabled'          => rest_sanitize_boolean( $ai_agent['enabled'] ?? $defaults['ai_agent']['enabled'] ),
 				'mode'             => sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] ),
+				'provider'         => sanitize_key( $ai_agent['provider'] ?? $defaults['ai_agent']['provider'] ),
+				'model'            => sanitize_text_field( $ai_agent['model'] ?? $defaults['ai_agent']['model'] ),
+				'api_key'          => sanitize_text_field( $ai_agent['api_key'] ?? $defaults['ai_agent']['api_key'] ),
+				'base_url'         => esc_url_raw( $ai_agent['base_url'] ?? $defaults['ai_agent']['base_url'] ),
 				'handoff_to_human' => rest_sanitize_boolean( $ai_agent['handoff_to_human'] ?? $defaults['ai_agent']['handoff_to_human'] ),
 				'allowed_tools'    => array_values(
 					array_filter(

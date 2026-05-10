@@ -46,7 +46,15 @@ final class SessionManager {
 	public function should_ignore_request(): bool {
 		$settings = Settings::get();
 
-		return ! empty( $settings['tracking']['ignore_logged_in_admins'] ) && is_user_logged_in() && current_user_can( 'manage_options' );
+		if ( ! empty( $settings['tracking']['ignore_logged_in_admins'] ) && is_user_logged_in() && current_user_can( 'manage_options' ) ) {
+			return true;
+		}
+
+		if ( ! empty( $settings['privacy']['ignore_internal_ips'] ) && $this->privacy->is_private_ip( $this->privacy->get_client_ip() ) ) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**

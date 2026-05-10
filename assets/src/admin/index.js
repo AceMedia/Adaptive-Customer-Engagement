@@ -1,5 +1,5 @@
 import apiFetch from '@wordpress/api-fetch';
-import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, ToggleControl } from '@wordpress/components';
+import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
 import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { render } from '@wordpress/element';
@@ -1284,6 +1284,50 @@ function PaginationControls({ pagination, onPageChange }) {
 	);
 }
 
+function SetupGuideCard({ title, description, links = [] }) {
+	return createElement(
+		Card,
+		{ style: { marginBottom: '16px' } },
+		createElement(
+			CardBody,
+			null,
+			createElement('h3', { style: { marginTop: 0 } }, title),
+			description && createElement('p', null, description),
+			links.length
+				? createElement(
+						'ul',
+						{ style: { marginBottom: 0 } },
+						links.map((link) =>
+							createElement(
+								'li',
+								{ key: link.href },
+								createElement(
+									'a',
+									{ href: link.href, target: '_blank', rel: 'noreferrer noopener' },
+									link.label
+								)
+							)
+						)
+				  )
+				: null
+		)
+	);
+}
+
+function splitLines(value) {
+	return value
+		.split('\n')
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
+
+function splitCommaList(value) {
+	return value
+		.split(',')
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
+
 function NumberForm({ value, onChange, onSubmit, busy, label }) {
 	return createElement(
 		'div',
@@ -1467,33 +1511,75 @@ function SettingsView({ section = 'settings' }) {
 		setBusy(false);
 	};
 
+	const setTracking = (next) => setSettings({ ...settings, tracking: { ...settings.tracking, ...next } });
+	const setPrivacy = (next) => setSettings({ ...settings, privacy: { ...settings.privacy, ...next } });
+	const setEnrichment = (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, ...next } });
+	const setAmazonConnect = (next) => setSettings({ ...settings, amazon_connect: { ...settings.amazon_connect, ...next } });
+	const setAiAgent = (next) => setSettings({ ...settings, ai_agent: { ...settings.ai_agent, ...next } });
+
 	const sections = {
 		settings: createElement(
 			Fragment,
 			null,
+			createElement(SetupGuideCard, {
+				title: __('Tracking setup', 'adaptive-customer-engagement'),
+				description: __('This page controls the first-party tracking behaviour that is already built into the plugin, including pageviews, call intent, downloads, forms, cookies, and basic privacy-aware exclusions.', 'adaptive-customer-engagement'),
+			}),
 			createElement(ToggleControl, { label: __('Enable tracking', 'adaptive-customer-engagement'), checked: !!settings.enabled, onChange: (next) => setSettings({ ...settings, enabled: next }) }),
-			createElement(ToggleControl, { label: __('Ignore logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.tracking.ignore_logged_in_admins, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, ignore_logged_in_admins: next } }) }),
-			createElement(ToggleControl, { label: __('Respect Do Not Track', 'adaptive-customer-engagement'), checked: !!settings.tracking.respect_dnt, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, respect_dnt: next } }) }),
-			createElement(TextControl, { label: __('Session cookie name', 'adaptive-customer-engagement'), value: settings.tracking.cookie_name, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, cookie_name: next } }) }),
-			createElement(TextControl, { label: __('Visitor cookie name', 'adaptive-customer-engagement'), value: settings.tracking.visitor_cookie_name, onChange: (next) => setSettings({ ...settings, tracking: { ...settings.tracking, visitor_cookie_name: next } }) })
+			createElement(ToggleControl, { label: __('Track pageviews', 'adaptive-customer-engagement'), checked: !!settings.tracking.track_pageviews, onChange: (next) => setTracking({ track_pageviews: next }) }),
+			createElement(ToggleControl, { label: __('Track click-to-call events', 'adaptive-customer-engagement'), checked: !!settings.tracking.track_click_to_call, onChange: (next) => setTracking({ track_click_to_call: next }) }),
+			createElement(ToggleControl, { label: __('Track download events', 'adaptive-customer-engagement'), checked: !!settings.tracking.track_downloads, onChange: (next) => setTracking({ track_downloads: next }) }),
+			createElement(ToggleControl, { label: __('Track native form submissions', 'adaptive-customer-engagement'), checked: !!settings.tracking.track_forms, onChange: (next) => setTracking({ track_forms: next }) }),
+			createElement(ToggleControl, { label: __('Ignore logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.tracking.ignore_logged_in_admins, onChange: (next) => setTracking({ ignore_logged_in_admins: next }) }),
+			createElement(ToggleControl, { label: __('Respect Do Not Track', 'adaptive-customer-engagement'), checked: !!settings.tracking.respect_dnt, onChange: (next) => setTracking({ respect_dnt: next }) }),
+			createElement(TextControl, { label: __('Session cookie name', 'adaptive-customer-engagement'), value: settings.tracking.cookie_name, onChange: (next) => setTracking({ cookie_name: next }) }),
+			createElement(TextControl, { label: __('Visitor cookie name', 'adaptive-customer-engagement'), value: settings.tracking.visitor_cookie_name, onChange: (next) => setTracking({ visitor_cookie_name: next }) }),
+			createElement(TextControl, { label: __('Session lifetime (minutes)', 'adaptive-customer-engagement'), type: 'number', value: settings.tracking.session_lifetime_minutes, onChange: (next) => setTracking({ session_lifetime_minutes: Number(next || 30) }) }),
+			createElement(TextControl, { label: __('Visitor lifetime (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.tracking.visitor_lifetime_days, onChange: (next) => setTracking({ visitor_lifetime_days: Number(next || 90) }) }),
+			createElement(TextareaControl, {
+				label: __('Call tracking selectors', 'adaptive-customer-engagement'),
+				help: __('One CSS selector per line. These are used alongside tel: links when the frontend tracker watches for call intent.', 'adaptive-customer-engagement'),
+				value: (settings.tracking.call_track_selectors || []).join('\n'),
+				onChange: (next) => setTracking({ call_track_selectors: splitLines(next) }),
+			})
 		),
 		privacy: createElement(
 			Fragment,
 			null,
-			createElement(TextControl, { label: __('Raw IP retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_ip_retention_days, onChange: (next) => setSettings({ ...settings, privacy: { ...settings.privacy, raw_ip_retention_days: Number(next || 1) } }) }),
-			createElement(TextControl, { label: __('Raw phone retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_phone_retention_days, onChange: (next) => setSettings({ ...settings, privacy: { ...settings.privacy, raw_phone_retention_days: Number(next || 1) } }) }),
+			createElement(SetupGuideCard, {
+				title: __('Privacy controls', 'adaptive-customer-engagement'),
+				description: __('These settings control the local retention and exclusion rules around the first-party tracking data held by the plugin before any external integrations are switched on.', 'adaptive-customer-engagement'),
+			}),
+			createElement(TextControl, { label: __('Raw IP retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_ip_retention_days, onChange: (next) => setPrivacy({ raw_ip_retention_days: Number(next || 1) }) }),
+			createElement(TextControl, { label: __('Raw phone retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.raw_phone_retention_days, onChange: (next) => setPrivacy({ raw_phone_retention_days: Number(next || 1) }) }),
+			createElement(TextControl, { label: __('Session retention policy (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.session_retention_days, onChange: (next) => setPrivacy({ session_retention_days: Number(next || 30) }) }),
+			createElement(TextControl, { label: __('Bot retention policy (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.privacy.bot_retention_days, onChange: (next) => setPrivacy({ bot_retention_days: Number(next || 1) }) }),
+			createElement(ToggleControl, { label: __('Ignore internal/private IPs', 'adaptive-customer-engagement'), checked: !!settings.privacy.ignore_internal_ips, onChange: (next) => setPrivacy({ ignore_internal_ips: next }) }),
 			createElement(Button, { variant: 'secondary', onClick: purge, disabled: busy }, __('Run privacy purge now', 'adaptive-customer-engagement'))
 		),
 		enrichment: createElement(
 			Fragment,
 			null,
+			createElement(SetupGuideCard, {
+				title: __('IP enrichment setup', 'adaptive-customer-engagement'),
+				description: __('Choose a live provider for company and network enrichment. You only need to add a key once you are ready to turn live lookups on.', 'adaptive-customer-engagement'),
+				links: [
+					{ label: __('Get an ipregistry API key', 'adaptive-customer-engagement'), href: 'https://ipregistry.co/' },
+					{ label: __('Get an ipinfo API key', 'adaptive-customer-engagement'), href: 'https://ipinfo.io/' },
+					{ label: __('Read the ipregistry dashboard docs', 'adaptive-customer-engagement'), href: 'https://ipregistry.co/dashboard' },
+					{ label: __('Read the ipinfo account docs', 'adaptive-customer-engagement'), href: 'https://ipinfo.io/account/home' },
+				],
+			}),
 			createElement(SelectControl, {
 				label: __('Provider', 'adaptive-customer-engagement'),
 				value: settings.enrichment.provider,
 				options: ['none', 'ipregistry', 'ipinfo'].map((entry) => ({ label: entry, value: entry })),
-				onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, provider: next } }),
+				onChange: (next) => setEnrichment({ provider: next }),
 			}),
-			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), value: settings.enrichment.api_key, onChange: (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, api_key: next } }) }),
+			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), value: settings.enrichment.api_key, onChange: (next) => setEnrichment({ api_key: next }) }),
+			createElement(TextControl, { label: __('Cache length (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.enrichment.cache_days, onChange: (next) => setEnrichment({ cache_days: Number(next || 1) }) }),
+			createElement(ToggleControl, { label: __('Allow enrichment for bots', 'adaptive-customer-engagement'), checked: !!settings.enrichment.enrich_bots, onChange: (next) => setEnrichment({ enrich_bots: next }) }),
+			createElement(ToggleControl, { label: __('Allow enrichment for private IPs', 'adaptive-customer-engagement'), checked: !!settings.enrichment.enrich_private_ips, onChange: (next) => setEnrichment({ enrich_private_ips: next }) }),
 			createElement(TextControl, { label: __('Test lookup IP', 'adaptive-customer-engagement'), value: testIp, onChange: setTestIp }),
 			createElement(Button, { variant: 'secondary', onClick: runEnrichmentTest, disabled: busy || !testIp }, __('Run enrichment test', 'adaptive-customer-engagement')),
 			testResult && createElement(
@@ -1512,8 +1598,82 @@ function SettingsView({ section = 'settings' }) {
 				)
 			)
 		),
-		'amazon-connect': createElement(Notice, { status: 'info', isDismissible: false }, __('Amazon Connect support is scaffolded ready for a later implementation pass.', 'adaptive-customer-engagement')),
-		'ai-agent': createElement(Notice, { status: 'info', isDismissible: false }, __('The AI agent surface is intentionally placeholder-only in this release.', 'adaptive-customer-engagement')),
+		'amazon-connect': createElement(
+			Fragment,
+			null,
+			createElement(SetupGuideCard, {
+				title: __('Amazon Connect setup', 'adaptive-customer-engagement'),
+				description: __('This page is ready for the connection details you will need once you start wiring the plugin into your Amazon Connect instance and AWS account.', 'adaptive-customer-engagement'),
+				links: [
+					{ label: __('Open the Amazon Connect console', 'adaptive-customer-engagement'), href: 'https://console.aws.amazon.com/connect/home' },
+					{ label: __('Create or review AWS access keys', 'adaptive-customer-engagement'), href: 'https://console.aws.amazon.com/iam/home#/security_credentials' },
+					{ label: __('Amazon Connect administrator guide', 'adaptive-customer-engagement'), href: 'https://docs.aws.amazon.com/connect/latest/adminguide/what-is-amazon-connect.html' },
+					{ label: __('Amazon Connect contact flow guide', 'adaptive-customer-engagement'), href: 'https://docs.aws.amazon.com/connect/latest/adminguide/contact-flow-import-export.html' },
+				],
+			}),
+			createElement(ToggleControl, { label: __('Enable Amazon Connect features', 'adaptive-customer-engagement'), checked: !!settings.amazon_connect.enabled, onChange: (next) => setAmazonConnect({ enabled: next }) }),
+			createElement(ToggleControl, { label: __('Use IAM role instead of saved access keys', 'adaptive-customer-engagement'), checked: !!settings.amazon_connect.use_iam_role, onChange: (next) => setAmazonConnect({ use_iam_role: next }) }),
+			createElement(TextControl, { label: __('AWS region', 'adaptive-customer-engagement'), value: settings.amazon_connect.region, onChange: (next) => setAmazonConnect({ region: next }) }),
+			createElement(TextControl, { label: __('Amazon Connect instance ID', 'adaptive-customer-engagement'), value: settings.amazon_connect.instance_id, onChange: (next) => setAmazonConnect({ instance_id: next }) }),
+			createElement(TextControl, { label: __('AWS access key ID', 'adaptive-customer-engagement'), value: settings.amazon_connect.access_key_id, onChange: (next) => setAmazonConnect({ access_key_id: next }) }),
+			createElement(TextControl, { label: __('AWS secret access key', 'adaptive-customer-engagement'), type: 'password', value: settings.amazon_connect.secret_access_key, onChange: (next) => setAmazonConnect({ secret_access_key: next }) }),
+			createElement(TextControl, { label: __('Default contact flow ID', 'adaptive-customer-engagement'), value: settings.amazon_connect.default_contact_flow_id, onChange: (next) => setAmazonConnect({ default_contact_flow_id: next }) }),
+			createElement(TextControl, { label: __('Chat contact flow ID', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_contact_flow_id, onChange: (next) => setAmazonConnect({ chat_contact_flow_id: next }) }),
+			createElement(TextControl, { label: __('Webhook secret', 'adaptive-customer-engagement'), value: settings.amazon_connect.webhook_secret, onChange: (next) => setAmazonConnect({ webhook_secret: next }) }),
+			createElement(Notice, { status: 'info', isDismissible: false }, __('The connection settings are ready here, but live call import, sync, and matching still depend on the later Amazon Connect integration pass.', 'adaptive-customer-engagement'))
+		),
+		'ai-agent': createElement(
+			Fragment,
+			null,
+			createElement(SetupGuideCard, {
+				title: __('AI provider setup', 'adaptive-customer-engagement'),
+				description: __('This page lets me prepare the AI-side configuration before I connect a real provider and start testing any handoff or site-tool flows.', 'adaptive-customer-engagement'),
+				links: [
+					{ label: __('Create an OpenAI API key', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/api-keys' },
+					{ label: __('Create an Anthropic API key', 'adaptive-customer-engagement'), href: 'https://console.anthropic.com/settings/keys' },
+					{ label: __('OpenAI platform docs', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/docs/overview' },
+					{ label: __('Anthropic API docs', 'adaptive-customer-engagement'), href: 'https://docs.anthropic.com/' },
+				],
+			}),
+			createElement(ToggleControl, { label: __('Enable AI agent features', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.enabled, onChange: (next) => setAiAgent({ enabled: next }) }),
+			createElement(SelectControl, {
+				label: __('Mode', 'adaptive-customer-engagement'),
+				value: settings.ai_agent.mode,
+				options: [
+					{ label: 'off', value: 'off' },
+					{ label: 'assist', value: 'assist' },
+					{ label: 'handoff', value: 'handoff' },
+				],
+				onChange: (next) => setAiAgent({ mode: next }),
+			}),
+			createElement(SelectControl, {
+				label: __('Provider', 'adaptive-customer-engagement'),
+				value: settings.ai_agent.provider || 'openai',
+				options: [
+					{ label: 'openai', value: 'openai' },
+					{ label: 'anthropic', value: 'anthropic' },
+					{ label: 'custom', value: 'custom' },
+				],
+				onChange: (next) => setAiAgent({ provider: next }),
+			}),
+			createElement(TextControl, { label: __('Model', 'adaptive-customer-engagement'), value: settings.ai_agent.model || '', onChange: (next) => setAiAgent({ model: next }) }),
+			createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.api_key || '', onChange: (next) => setAiAgent({ api_key: next }) }),
+			createElement(TextControl, { label: __('Custom base URL', 'adaptive-customer-engagement'), value: settings.ai_agent.base_url || '', onChange: (next) => setAiAgent({ base_url: next }) }),
+			createElement(ToggleControl, { label: __('Allow human handoff', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.handoff_to_human, onChange: (next) => setAiAgent({ handoff_to_human: next }) }),
+			createElement(TextareaControl, {
+				label: __('Allowed tools', 'adaptive-customer-engagement'),
+				help: __('One tool key per line. Leave blank until the agent-side integration is actually being wired in.', 'adaptive-customer-engagement'),
+				value: (settings.ai_agent.allowed_tools || []).join('\n'),
+				onChange: (next) => setAiAgent({ allowed_tools: splitLines(next) }),
+			}),
+			createElement(TextareaControl, {
+				label: __('Guardrails', 'adaptive-customer-engagement'),
+				help: __('One guardrail per line so I can prepare the policy shape before the live AI connection is turned on.', 'adaptive-customer-engagement'),
+				value: (settings.ai_agent.guardrails || []).join('\n'),
+				onChange: (next) => setAiAgent({ guardrails: splitLines(next) }),
+			}),
+			createElement(Notice, { status: 'info', isDismissible: false }, __('The setup UI is ready, but live AI prompts, tool execution, and handoff flows remain intentionally deferred until the real provider hookup starts.', 'adaptive-customer-engagement'))
+		),
 	};
 
 	return createElement(
