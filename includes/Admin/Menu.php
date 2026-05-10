@@ -90,23 +90,30 @@ final class Menu {
 
 		$asset_file = ACE_PLUGIN_DIR . 'assets/build/admin.asset.php';
 		$script_src = ACE_PLUGIN_URL . 'assets/build/admin.js';
+		$style_src  = ACE_PLUGIN_URL . 'assets/build/style-admin.css';
+		$style_file = ACE_PLUGIN_DIR . 'assets/build/style-admin.css';
 		$asset      = file_exists( $asset_file ) ? require $asset_file : array(
 			'dependencies' => array( 'wp-element', 'wp-components', 'wp-api-fetch', 'wp-i18n' ),
 			'version'      => ACE_PLUGIN_VERSION,
 		);
+
+		if ( file_exists( $style_file ) ) {
+			wp_enqueue_style( 'ace-admin', $style_src, array( 'wp-components' ), $asset['version'] );
+		}
 
 		wp_enqueue_script( 'ace-admin', $script_src, $asset['dependencies'], $asset['version'], true );
 		wp_add_inline_script(
 			'ace-admin',
 			'window.ACEAdminConfig = ' . wp_json_encode(
 				array(
-					'root'      => esc_url_raw( rest_url() ),
-					'namespace' => 'adaptive-customer-engagement/v1',
-					'nonce'     => wp_create_nonce( 'wp_rest' ),
-					'exportNonce' => wp_create_nonce( 'ace_export_report' ),
-					'adminUrl'  => esc_url_raw( admin_url( 'admin.php' ) ),
+					'root'         => esc_url_raw( rest_url() ),
+					'namespace'    => 'adaptive-customer-engagement/v1',
+					'nonce'        => wp_create_nonce( 'wp_rest' ),
+					'exportNonce'  => wp_create_nonce( 'ace_export_report' ),
+					'adminUrl'     => esc_url_raw( admin_url( 'admin.php' ) ),
 					'adminPostUrl' => esc_url_raw( admin_url( 'admin-post.php' ) ),
-					'page'      => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
+					'page'         => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
+					'logoUrl'      => esc_url_raw( ACE_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
 				)
 			),
 			'before'
@@ -121,8 +128,7 @@ final class Menu {
 	 */
 	private function render_page( string $page ): void {
 		?>
-		<div class="wrap">
-			<h1><?php echo esc_html__( 'Adaptive Customer Engagement', 'adaptive-customer-engagement' ); ?></h1>
+		<div class="wrap ace-admin-wrap">
 			<div id="ace-admin-root" data-page="<?php echo esc_attr( $page ); ?>"></div>
 		</div>
 		<?php

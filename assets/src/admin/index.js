@@ -3,6 +3,7 @@ import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, Te
 import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { render } from '@wordpress/element';
+import './style.scss';
 
 const config = window.ACEAdminConfig || {};
 const SESSION_FILTER_DEFAULTS = {
@@ -31,6 +32,66 @@ const CALL_FILTER_DEFAULTS = {
 	date_from: '',
 	date_to: '',
 	match_only: '',
+};
+const NAV_GROUPS = [
+	{
+		label: __('Overview', 'adaptive-customer-engagement'),
+		items: ['dashboard'],
+	},
+	{
+		label: __('Reporting', 'adaptive-customer-engagement'),
+		items: ['sessions', 'companies', 'commerce', 'calls', 'numbers'],
+	},
+	{
+		label: __('Setup', 'adaptive-customer-engagement'),
+		items: ['settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent'],
+	},
+];
+const PAGE_META = {
+	dashboard: {
+		title: __('Dashboard', 'adaptive-customer-engagement'),
+		description: __('See the overall activity picture, review hot accounts, and seed local sample data so the reporting UI is easier to assess before live integrations are wired in.', 'adaptive-customer-engagement'),
+	},
+	sessions: {
+		title: __('Sessions', 'adaptive-customer-engagement'),
+		description: __('Inspect first-party visit history, segment interesting traffic, and drill into timelines for the people and organisations showing intent.', 'adaptive-customer-engagement'),
+	},
+	companies: {
+		title: __('Companies', 'adaptive-customer-engagement'),
+		description: __('Review enriched company records, confidence levels, and priority signals for the organisations appearing in your tracked journeys.', 'adaptive-customer-engagement'),
+	},
+	commerce: {
+		title: __('WooCommerce interest', 'adaptive-customer-engagement'),
+		description: __('Track repeat interest in products and categories so you can spot buying intent across sessions and companies before tying anything back to live orders.', 'adaptive-customer-engagement'),
+	},
+	calls: {
+		title: __('Calls', 'adaptive-customer-engagement'),
+		description: __('Review call intent, stored call records, and matched sessions so the phone journey is visible alongside the rest of the engagement data.', 'adaptive-customer-engagement'),
+	},
+	numbers: {
+		title: __('Phone numbers', 'adaptive-customer-engagement'),
+		description: __('Manage the routing rules and tracking numbers used for first-party call attribution across campaigns, product pages, and general site traffic.', 'adaptive-customer-engagement'),
+	},
+	settings: {
+		title: __('Tracking settings', 'adaptive-customer-engagement'),
+		description: __('Control the built-in tracking behaviour, cookies, selectors, and first-party capture rules that are already active inside the plugin.', 'adaptive-customer-engagement'),
+	},
+	privacy: {
+		title: __('Privacy', 'adaptive-customer-engagement'),
+		description: __('Keep the local data model privacy-aware by managing retention, exclusions, and raw data handling before any external services are introduced.', 'adaptive-customer-engagement'),
+	},
+	enrichment: {
+		title: __('Enrichment', 'adaptive-customer-engagement'),
+		description: __('This is where you connect an enrichment provider such as ipregistry or ipinfo. The page includes the provider selector, key fields, test lookup, and direct links to obtain API keys.', 'adaptive-customer-engagement'),
+	},
+	'amazon-connect': {
+		title: __('Amazon Connect', 'adaptive-customer-engagement'),
+		description: __('Prepare the AWS and Amazon Connect identifiers, access credentials, and contact flow settings ahead of the live telephony integration pass.', 'adaptive-customer-engagement'),
+	},
+	'ai-agent': {
+		title: __('AI agent', 'adaptive-customer-engagement'),
+		description: __('Prepare the AI provider, model, guardrails, and handoff settings here so the admin side is ready before any live prompts or tools are connected.', 'adaptive-customer-engagement'),
+	},
 };
 
 function request(route, options = {}) {
@@ -105,6 +166,122 @@ function getExportUrl(action, params = {}) {
 	return url.toString();
 }
 
+function AdminShell({ page, children }) {
+	const meta = PAGE_META[page] || {
+		title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'),
+		description: __('Adaptive Customer Engagement admin surface.', 'adaptive-customer-engagement'),
+	};
+
+	return createElement(
+		'div',
+		{ className: 'ace-admin-shell' },
+		createElement(
+			'aside',
+			{ className: 'ace-admin-sidebar' },
+			createElement(
+				'div',
+				{ className: 'ace-admin-brand' },
+				config.logoUrl && createElement('img', { src: config.logoUrl, alt: __('Ace Media', 'adaptive-customer-engagement'), className: 'ace-admin-brand__logo' }),
+				createElement(
+					'div',
+					null,
+					createElement('p', { className: 'ace-admin-brand__eyebrow' }, __('Ace Media plugin', 'adaptive-customer-engagement')),
+					createElement('h1', { className: 'ace-admin-brand__title' }, __('Adaptive Customer Engagement', 'adaptive-customer-engagement')),
+					createElement('p', { className: 'ace-admin-brand__text' }, __('Reporting-first attribution, enrichment, calls, and WooCommerce intent inside native WordPress admin patterns.', 'adaptive-customer-engagement'))
+				)
+			),
+			createElement(AdminSidebarNavigation, { page })
+		),
+		createElement(
+			'main',
+			{ className: 'ace-admin-main' },
+			createElement(
+				'header',
+				{ className: 'ace-admin-hero' },
+				createElement('p', { className: 'ace-admin-hero__eyebrow' }, __('Adaptive Customer Engagement', 'adaptive-customer-engagement')),
+				createElement('h2', { className: 'ace-admin-hero__title' }, meta.title),
+				createElement('p', { className: 'ace-admin-hero__description' }, meta.description)
+			),
+			createElement('div', { className: 'ace-admin-view ace-admin-stack' }, children)
+		)
+	);
+}
+
+function AdminSidebarNavigation({ page }) {
+	return createElement(
+		'nav',
+		{ className: 'ace-admin-nav', 'aria-label': __('Adaptive Customer Engagement navigation', 'adaptive-customer-engagement') },
+		NAV_GROUPS.map((group) =>
+			createElement(
+				'div',
+				{ className: 'ace-admin-nav__group', key: group.label },
+				createElement('p', { className: 'ace-admin-nav__heading' }, group.label),
+				group.items.map((item) =>
+					createElement(
+						'a',
+						{
+							key: item,
+							className: `ace-admin-nav__link${page === item ? ' is-active' : ''}`,
+							href: getAdminPageUrl(item),
+						},
+						PAGE_META[item]?.title || item
+					)
+				)
+			)
+		)
+	);
+}
+
+function SampleDataPanel({ status, busy, onSeed, onReset }) {
+	return createElement(
+		Card,
+		{ className: 'ace-admin-sample-card' },
+		createElement(
+			CardBody,
+			null,
+			createElement(
+				'div',
+				{ className: 'ace-admin-sample-card__header' },
+				createElement(
+					'div',
+					null,
+					createElement('h3', { style: { marginTop: 0 } }, __('Local sample data', 'adaptive-customer-engagement')),
+					createElement('p', null, status?.description || __('Seed three months of realistic UK business and council activity to preview the reporting UI before going live.', 'adaptive-customer-engagement'))
+				),
+				createElement(
+					'div',
+					{ className: 'ace-admin-sample-card__actions' },
+					createElement(Button, { variant: 'primary', onClick: onSeed, isBusy: busy, disabled: busy }, __('Seed sample data', 'adaptive-customer-engagement')),
+					createElement(Button, { variant: 'secondary', onClick: onReset, disabled: busy || !status?.is_seeded }, __('Remove sample data', 'adaptive-customer-engagement'))
+				)
+			),
+			createElement(
+				'div',
+				{ className: 'ace-admin-sample-stats' },
+				[
+					[__('Companies', 'adaptive-customer-engagement'), status?.companies || 0],
+					[__('Sessions', 'adaptive-customer-engagement'), status?.sessions || 0],
+					[__('Events', 'adaptive-customer-engagement'), status?.events || 0],
+					[__('Calls', 'adaptive-customer-engagement'), status?.calls || 0],
+				].map(([label, value]) =>
+					createElement(
+						'div',
+						{ className: 'ace-admin-sample-stats__item', key: label },
+						createElement('span', { className: 'ace-admin-sample-stats__label' }, label),
+						createElement('strong', { className: 'ace-admin-sample-stats__value' }, value)
+					)
+				)
+			),
+			status?.first_seen &&
+				createElement(
+					Notice,
+					{ status: 'info', isDismissible: false },
+					`${__('Current demo range', 'adaptive-customer-engagement')}: ${status.first_seen} — ${status.last_seen}`
+				)
+		)
+	);
+}
+
 function SessionsTable({ items, onView }) {
 	if (!items.length) {
 		return createElement(Notice, { status: 'info', isDismissible: false }, __('No sessions recorded yet.', 'adaptive-customer-engagement'));
@@ -155,9 +332,12 @@ function DashboardView() {
 	const [data, setData] = useState(null);
 	const [selectedSession, setSelectedSession] = useState(null);
 	const [selectedCompany, setSelectedCompany] = useState(null);
+	const [busySample, setBusySample] = useState(false);
+
+	const load = () => request('/admin/dashboard').then(setData);
 
 	useEffect(() => {
-		request('/admin/dashboard').then(setData);
+		load();
 	}, []);
 
 	if (!data) {
@@ -176,6 +356,22 @@ function DashboardView() {
 	return createElement(
 		Fragment,
 		null,
+		createElement(SampleDataPanel, {
+			status: data.sample_data || {},
+			busy: busySample,
+			onSeed: async () => {
+				setBusySample(true);
+				await request('/admin/sample-data', { method: 'POST' });
+				await load();
+				setBusySample(false);
+			},
+			onReset: async () => {
+				setBusySample(true);
+				await request('/admin/sample-data', { method: 'DELETE' });
+				await load();
+				setBusySample(false);
+			},
+		}),
 		createElement(
 			'div',
 			{ style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px', marginBottom: '16px' } },
@@ -1691,29 +1887,40 @@ function PlaceholderView({ title, message }) {
 
 function App() {
 	const page = (config.page || 'dashboard').replace(/^ace-/, '');
+	let view = null;
 
 	switch (page) {
 		case 'dashboard':
-			return createElement(DashboardView);
+			view = createElement(DashboardView);
+			break;
 		case 'sessions':
-			return createElement(SessionsView);
+			view = createElement(SessionsView);
+			break;
 		case 'numbers':
-			return createElement(NumbersView);
+			view = createElement(NumbersView);
+			break;
 		case 'settings':
 		case 'privacy':
 		case 'enrichment':
 		case 'amazon-connect':
 		case 'ai-agent':
-			return createElement(SettingsView, { section: page });
+			view = createElement(SettingsView, { section: page });
+			break;
 		case 'companies':
-			return createElement(CompaniesView);
+			view = createElement(CompaniesView);
+			break;
 		case 'commerce':
-			return createElement(CommerceView);
+			view = createElement(CommerceView);
+			break;
 		case 'calls':
-			return createElement(CallsView);
+			view = createElement(CallsView);
+			break;
 		default:
-			return createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') });
+			view = createElement(PlaceholderView, { title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'), message: __('This screen is not built yet.', 'adaptive-customer-engagement') });
+			break;
 	}
+
+	return createElement(AdminShell, { page }, view);
 }
 
 const root = document.getElementById('ace-admin-root');

@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
@@ -88,6 +89,13 @@ final class AdminController {
 	private $enrichment_service;
 
 	/**
+	 * Sample data seeder.
+	 *
+	 * @var SampleDataSeeder
+	 */
+	private $sample_data;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionRepository $sessions Session repository.
@@ -95,15 +103,16 @@ final class AdminController {
 	 * @param NumberRepository  $numbers  Number repository.
 	 * @param Privacy           $privacy  Privacy helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, Privacy $privacy, EnrichmentService $enrichment_service ) {
-		$this->sessions     = $sessions;
-		$this->events       = $events;
-		$this->numbers      = $numbers;
-		$this->companies    = $companies;
-		$this->calls        = $calls;
-		$this->privacy      = $privacy;
-		$this->lead_scorer  = new LeadScorer();
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data ) {
+		$this->sessions           = $sessions;
+		$this->events             = $events;
+		$this->numbers            = $numbers;
+		$this->companies          = $companies;
+		$this->calls              = $calls;
+		$this->privacy            = $privacy;
+		$this->lead_scorer        = new LeadScorer();
 		$this->enrichment_service = $enrichment_service;
+		$this->sample_data        = $sample_data;
 	}
 
 	/**
@@ -279,6 +288,28 @@ final class AdminController {
 				'callback'            => array( $this, 'test_enrichment' ),
 			)
 		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/sample-data',
+			array(
+				array(
+					'methods'             => 'GET',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'sample_data_status' ),
+				),
+				array(
+					'methods'             => 'POST',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'seed_sample_data' ),
+				),
+				array(
+					'methods'             => 'DELETE',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'reset_sample_data' ),
+				),
+			)
+		);
 	}
 
 	/**
@@ -312,6 +343,7 @@ final class AdminController {
 				'top_pages'          => $this->events->get_top_pages(),
 				'recent_sessions'    => $recent_sessions,
 				'hot_companies'      => array_map( array( $this, 'decorate_company_summary' ), $this->companies->get_hot_companies() ),
+				'sample_data'        => $this->sample_data->get_status(),
 				'segment_shortcuts'  => array(
 					'sessions'  => Settings::get_reporting_segments( 'sessions' ),
 					'companies' => Settings::get_reporting_segments( 'companies' ),
@@ -551,6 +583,33 @@ final class AdminController {
 		$payload = $request->get_json_params();
 
 		return new WP_REST_Response( Settings::update( is_array( $payload ) ? $payload : array() ) );
+	}
+
+	/**
+	 * Read sample-data status.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function sample_data_status(): WP_REST_Response {
+		return new WP_REST_Response( $this->sample_data->get_status() );
+	}
+
+	/**
+	 * Seed local sample data.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function seed_sample_data(): WP_REST_Response {
+		return new WP_REST_Response( $this->sample_data->seed(), 201 );
+	}
+
+	/**
+	 * Remove local sample data.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function reset_sample_data(): WP_REST_Response {
+		return new WP_REST_Response( $this->sample_data->reset() );
 	}
 
 	/**

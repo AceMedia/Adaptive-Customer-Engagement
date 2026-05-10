@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement;
 
+use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
@@ -69,6 +70,7 @@ final class Plugin {
 			$privacy
 		);
 		$menu               = new Menu();
+		$sample_data        = new SampleDataSeeder();
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
 			new EventLogger( $event_repository ),
@@ -78,7 +80,7 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data );
 		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );

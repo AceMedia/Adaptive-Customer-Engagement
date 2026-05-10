@@ -1,0 +1,252 @@
+.ace-admin-wrap {
+	max-width: 1600px;
+}
+
+#ace-admin-root {
+	margin-top: 16px;
+}
+
+.ace-admin-shell {
+	display: grid;
+	grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+	gap: 24px;
+	align-items: start;
+}
+
+.ace-admin-sidebar,
+.ace-admin-hero,
+.ace-admin-view .components-card,
+.ace-admin-view .notice,
+.ace-admin-view table.widefat,
+.ace-admin-view .ace-admin-panel {
+	border-radius: 16px;
+	box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.ace-admin-sidebar {
+	position: sticky;
+	top: 32px;
+	padding: 20px;
+	background: linear-gradient(180deg, #1d3557 0%, #294d73 58%, #336699 100%);
+	color: #fff;
+}
+
+.ace-admin-brand {
+	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
+	gap: 16px;
+	align-items: center;
+	padding-bottom: 20px;
+	margin-bottom: 20px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.ace-admin-brand__logo {
+	width: 72px;
+	height: auto;
+	display: block;
+	filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.18));
+}
+
+.ace-admin-brand__eyebrow,
+.ace-admin-hero__eyebrow,
+.ace-admin-nav__heading,
+.ace-admin-sample-stats__label {
+	margin: 0;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.ace-admin-brand__title,
+.ace-admin-hero__title {
+	margin: 4px 0 8px;
+	line-height: 1.1;
+}
+
+.ace-admin-brand__title {
+	font-size: 24px;
+	color: #fff;
+}
+
+.ace-admin-brand__text {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.6;
+	color: rgba(255, 255, 255, 0.82);
+}
+
+.ace-admin-nav {
+	display: grid;
+	gap: 18px;
+}
+
+.ace-admin-nav__group {
+	display: grid;
+	gap: 6px;
+}
+
+.ace-admin-nav__heading {
+	color: rgba(255, 255, 255, 0.65);
+}
+
+.ace-admin-nav__link {
+	display: flex;
+	align-items: center;
+	padding: 10px 12px;
+	border-radius: 10px;
+	color: rgba(255, 255, 255, 0.88);
+	text-decoration: none;
+	font-weight: 600;
+}
+
+.ace-admin-nav__link:hover,
+.ace-admin-nav__link:focus {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.12);
+	box-shadow: none;
+}
+
+.ace-admin-nav__link.is-active {
+	color: #1d2327;
+	background: #fff;
+}
+
+.ace-admin-main {
+	min-width: 0;
+}
+
+.ace-admin-hero {
+	padding: 28px 32px;
+	margin-bottom: 20px;
+	background: linear-gradient(135deg, #ffffff 0%, #f5f8fb 100%);
+	border: 1px solid #dcdcde;
+}
+
+.ace-admin-hero__eyebrow {
+	color: #336699;
+}
+
+.ace-admin-hero__title {
+	font-size: 32px;
+}
+
+.ace-admin-hero__description {
+	max-width: 900px;
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.7;
+	color: #50575e;
+}
+
+.ace-admin-stack {
+	display: grid;
+	gap: 16px;
+}
+
+.ace-admin-view .components-card {
+	border: 1px solid #dcdcde;
+}
+
+.ace-admin-view .components-card__body {
+	padding: 20px 22px;
+}
+
+.ace-admin-view h2,
+.ace-admin-view h3 {
+	color: #1d2327;
+}
+
+.ace-admin-view table.widefat {
+	overflow: hidden;
+	border: 1px solid #dcdcde;
+	background: #fff;
+}
+
+.ace-admin-view table.widefat thead th {
+	padding: 12px;
+	background: #f6f7f7;
+}
+
+.ace-admin-view table.widefat td,
+.ace-admin-view table.widefat th {
+	vertical-align: top;
+}
+
+.ace-admin-view .notice {
+	margin: 0;
+}
+
+.ace-admin-sample-card__header {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	margin-bottom: 16px;
+}
+
+.ace-admin-sample-card__actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.ace-admin-sample-stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+	gap: 12px;
+	margin-bottom: 16px;
+}
+
+.ace-admin-sample-stats__item {
+	padding: 14px;
+	border-radius: 12px;
+	background: #f6f7f7;
+	border: 1px solid #e0e0e0;
+}
+
+.ace-admin-sample-stats__label {
+	display: block;
+	color: #646970;
+}
+
+.ace-admin-sample-stats__value {
+	display: block;
+	margin-top: 4px;
+	font-size: 24px;
+	line-height: 1.1;
+}
+
+@media (max-width: 1080px) {
+	.ace-admin-shell {
+		grid-template-columns: 1fr;
+	}
+
+	.ace-admin-sidebar {
+		position: static;
+	}
+
+	.ace-admin-nav {
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	}
+}
+
+@media (max-width: 782px) {
+	.ace-admin-wrap {
+		margin-right: 10px;
+	}
+
+	.ace-admin-hero {
+		padding: 22px 20px;
+	}
+
+	.ace-admin-hero__title {
+		font-size: 26px;
+	}
+
+	.ace-admin-brand {
+		grid-template-columns: 1fr;
+	}
+}

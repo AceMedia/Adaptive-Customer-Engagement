@@ -21,6 +21,8 @@ Adaptive Customer Engagement is a native WordPress plugin I am building to track
 - Calls screen filters and CSV exports for stored-call investigation and reuse outside WordPress
 - WooCommerce-aware tracking for product and category pages, including repeat-interest counts carried in event metadata
 - Setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, and AI configuration, with guidance links for getting the keys and identifiers needed later
+- Refreshed WordPress-style admin shell with branded header treatment, clearer page introductions, and a side navigation layer across the plugin sub-pages
+- Local sample-data seeding controls for generating roughly three months of UK business and council activity inside the plugin tables for UI preview work
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
 - Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
 
@@ -103,6 +105,9 @@ adaptive-customer-engagement/v1
 - `DELETE /admin/reporting-segments/{id}`
 - `POST /admin/privacy/purge`
 - `POST /admin/enrichment/test`
+- `GET /admin/sample-data`
+- `POST /admin/sample-data`
+- `DELETE /admin/sample-data`
 
 ## Data model
 
@@ -128,6 +133,12 @@ The WooCommerce screen surfaces **repeat product and category interest**, plus t
 ## Setup and connection guidance
 
 The admin settings screens now cover the built-in tracking and privacy controls more fully, and the enrichment, Amazon Connect, and AI pages include setup guidance plus external links for where to get the relevant API keys, instance IDs, access keys, and provider docs before I start the live hookup work.
+
+The **Enrichment** page is the place where I connect the implemented provider support today. That page already includes the provider selector, API key field, cache controls, bot/private-IP options, and a live test lookup tool for the supported providers.
+
+## Sample data
+
+The dashboard can now seed and remove a **local-only demo dataset**. This creates roughly three months of realistic-looking UK council and business activity across sessions, companies, events, WooCommerce interest, calls, and tracking numbers so I can inspect the reporting UI before switching on live integrations.
 
 ## Privacy approach
 
