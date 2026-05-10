@@ -261,9 +261,8 @@ function AdminShell({ page, children }) {
 				createElement(
 					'div',
 					null,
-					createElement('p', { className: 'ace-admin-brand__eyebrow' }, __('Ace Media plugin', 'adaptive-customer-engagement')),
 					createElement('h1', { className: 'ace-admin-brand__title' }, __('Adaptive Customer Engagement', 'adaptive-customer-engagement')),
-					createElement('p', { className: 'ace-admin-brand__text' }, __('Reporting-first attribution, enrichment, calls, and WooCommerce intent inside native WordPress admin patterns.', 'adaptive-customer-engagement'))
+					createElement('p', { className: 'ace-admin-brand__text' }, __('Track visits, calls, companies, and buyer intent in one place.', 'adaptive-customer-engagement'))
 				)
 			),
 			createElement(AdminSidebarNavigation, { page })

@@ -33,16 +33,15 @@
 
 .ace-admin-brand {
 	display: grid;
-	grid-template-columns: 72px minmax(0, 1fr);
-	gap: 16px;
-	align-items: center;
+	gap: 14px;
+	align-items: start;
 	padding-bottom: 20px;
 	margin-bottom: 20px;
 	border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .ace-admin-brand__logo {
-	width: 72px;
+	width: 92px;
 	height: auto;
 	display: block;
 	filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.18));
@@ -66,14 +65,16 @@
 }
 
 .ace-admin-brand__title {
-	font-size: 24px;
+	font-size: 28px;
+	font-weight: 800;
+	letter-spacing: -0.02em;
 	color: #fff;
 }
 
 .ace-admin-brand__text {
 	margin: 0;
 	font-size: 13px;
-	line-height: 1.6;
+	line-height: 1.55;
 	color: rgba(255, 255, 255, 0.82);
 }
 
@@ -267,6 +268,6 @@
 	}
 
 	.ace-admin-brand {
-		grid-template-columns: 1fr;
+		justify-items: start;
 	}
 }
