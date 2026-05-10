@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\Database\Repositories;
 
+use ACE\AdaptiveCustomerEngagement\Database\DateRange;
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentResult;
 
@@ -109,6 +110,37 @@ final class CompanyRepository {
 				'UPDATE ' . Schema::table_name( 'companies' ) . ' SET total_sessions = total_sessions + 1, total_events = total_events + %d, last_seen = %s, updated_at = %s WHERE id = %d',
 				max( 0, $event_count ),
 				current_time( 'mysql', true ),
+				current_time( 'mysql', true ),
+				$company_id
+			)
+		);
+	}
+
+	/**
+	 * Recalculate total matched calls for a company.
+	 *
+	 * @param int $company_id Company ID.
+	 * @return void
+	 */
+	public function sync_call_total( int $company_id ): void {
+		global $wpdb;
+
+		if ( $company_id <= 0 ) {
+			return;
+		}
+
+		$companies = Schema::table_name( 'companies' );
+		$calls     = Schema::table_name( 'calls' );
+
+		$wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$companies}
+				SET total_calls = (
+					SELECT COUNT(*) FROM {$calls} WHERE matched_company_id = %d
+				),
+					updated_at = %s
+				WHERE id = %d",
+				$company_id,
 				current_time( 'mysql', true ),
 				$company_id
 			)
@@ -221,15 +253,7 @@ final class CompanyRepository {
 			$params[] = $filters['provider'];
 		}
 
-		if ( ! empty( $filters['date_from'] ) ) {
-			$where[]  = 'DATE(last_seen) >= %s';
-			$params[] = $filters['date_from'];
-		}
-
-		if ( ! empty( $filters['date_to'] ) ) {
-			$where[]  = 'DATE(last_seen) <= %s';
-			$params[] = $filters['date_to'];
-		}
+		DateRange::append_filters( $where, $params, 'last_seen', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
 
 		if ( ! empty( $filters['search'] ) ) {
 			$search    = '%' . $wpdb->esc_like( $filters['search'] ) . '%';

@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\Database\Repositories;
 
+use ACE\AdaptiveCustomerEngagement\Database\DateRange;
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
 
 defined( 'ABSPATH' ) || exit;
@@ -65,10 +66,37 @@ final class EventRepository {
 	public function count_today_by_type( string $event_type ): int {
 		global $wpdb;
 
+		$bounds = DateRange::today_bounds();
+
 		return (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT COUNT(*) FROM ' . Schema::table_name( 'events' ) . ' WHERE DATE(occurred_at) = UTC_DATE() AND event_type = %s',
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'events' ) . ' WHERE occurred_at >= %s AND occurred_at < %s AND event_type = %s',
+				$bounds['start'],
+				$bounds['end'],
 				$event_type
+			)
+		);
+	}
+
+	/**
+	 * Count events of a given type with optional filters.
+	 *
+	 * @param string               $event_type Event type.
+	 * @param array<string, mixed> $filters    Filters.
+	 * @return int
+	 */
+	public function count_by_type( string $event_type, array $filters = array() ): int {
+		global $wpdb;
+
+		$where  = array( 'event_type = %s' );
+		$params = array( $event_type );
+
+		DateRange::append_filters( $where, $params, 'occurred_at', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'events' ) . ' WHERE ' . implode( ' AND ', $where ),
+				$params
 			)
 		);
 	}
@@ -79,13 +107,20 @@ final class EventRepository {
 	 * @param int $limit Row limit.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function get_top_pages( int $limit = 5 ): array {
+	public function get_top_pages( int $limit = 5, array $filters = array() ): array {
 		global $wpdb;
+
+		$where  = array( "event_type = 'pageview'", "path IS NOT NULL", "path != ''" );
+		$params = array();
+
+		DateRange::append_filters( $where, $params, 'occurred_at', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
+
+		$params[] = $limit;
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT path, COUNT(*) AS total FROM ' . Schema::table_name( 'events' ) . " WHERE event_type = 'pageview' AND path IS NOT NULL AND path != '' GROUP BY path ORDER BY total DESC LIMIT %d",
-				$limit
+				'SELECT path, COUNT(*) AS total FROM ' . Schema::table_name( 'events' ) . ' WHERE ' . implode( ' AND ', $where ) . ' GROUP BY path ORDER BY total DESC LIMIT %d',
+				$params
 			),
 			ARRAY_A
 		);
@@ -136,15 +171,7 @@ final class EventRepository {
 		$where  = array( "event_type = 'click_to_call'", "path IS NOT NULL", "path != ''" );
 		$params = array();
 
-		if ( ! empty( $filters['date_from'] ) ) {
-			$where[]  = 'DATE(occurred_at) >= %s';
-			$params[] = $filters['date_from'];
-		}
-
-		if ( ! empty( $filters['date_to'] ) ) {
-			$where[]  = 'DATE(occurred_at) <= %s';
-			$params[] = $filters['date_to'];
-		}
+		DateRange::append_filters( $where, $params, 'occurred_at', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
 
 		if ( ! empty( $filters['search'] ) ) {
 			$search   = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
@@ -183,15 +210,7 @@ final class EventRepository {
 		$where  = array();
 		$params = array();
 
-		if ( ! empty( $filters['date_from'] ) ) {
-			$where[]  = 'DATE(e.occurred_at) >= %s';
-			$params[] = $filters['date_from'];
-		}
-
-		if ( ! empty( $filters['date_to'] ) ) {
-			$where[]  = 'DATE(e.occurred_at) <= %s';
-			$params[] = $filters['date_to'];
-		}
+		DateRange::append_filters( $where, $params, 'e.occurred_at', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
 
 		if ( ! empty( $filters['search'] ) ) {
 			$search   = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
@@ -226,6 +245,56 @@ final class EventRepository {
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * Find the best recent click-to-call event for a tracking number before a call started.
+	 *
+	 * @param int    $number_id   Tracking number ID.
+	 * @param string $started_at  Call start time in UTC.
+	 * @param int    $window_hours Match window in hours.
+	 * @return array<string, mixed>|null
+	 */
+	public function find_best_call_intent_match( int $number_id, string $started_at, int $window_hours = 6 ): ?array {
+		global $wpdb;
+
+		if ( $number_id <= 0 || '' === $started_at ) {
+			return null;
+		}
+
+		$started_timestamp = strtotime( $started_at . ' UTC' );
+
+		if ( false === $started_timestamp ) {
+			return null;
+		}
+
+		$window_start = gmdate( 'Y-m-d H:i:s', $started_timestamp - ( max( 1, $window_hours ) * HOUR_IN_SECONDS ) );
+		$events       = Schema::table_name( 'events' );
+		$sessions     = Schema::table_name( 'sessions' );
+		$companies    = Schema::table_name( 'companies' );
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT e.id AS event_id, e.occurred_at, s.id AS session_id, s.session_uuid, s.company_id, c.name AS company_name
+				FROM {$events} e
+				INNER JOIN {$sessions} s ON s.id = e.session_id
+				LEFT JOIN {$companies} c ON c.id = s.company_id
+				WHERE e.event_type = 'click_to_call'
+					AND e.number_id = %d
+					AND e.occurred_at >= %s
+					AND e.occurred_at <= %s
+					AND s.is_bot = 0
+					AND s.ignored = 0
+				ORDER BY e.occurred_at DESC, e.id DESC
+				LIMIT 1",
+				$number_id,
+				$window_start,
+				$started_at
+			),
+			ARRAY_A
+		);
+
+		return is_array( $row ) ? $row : null;
 	}
 
 	/**
@@ -338,15 +407,7 @@ final class EventRepository {
 			$params[] = $company_id;
 		}
 
-		if ( ! empty( $filters['date_from'] ) ) {
-			$where[]  = 'DATE(e.occurred_at) >= %s';
-			$params[] = $filters['date_from'];
-		}
-
-		if ( ! empty( $filters['date_to'] ) ) {
-			$where[]  = 'DATE(e.occurred_at) <= %s';
-			$params[] = $filters['date_to'];
-		}
+		DateRange::append_filters( $where, $params, 'e.occurred_at', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
 
 		if ( ! empty( $filters['search'] ) ) {
 			$search   = '%' . $wpdb->esc_like( (string) $filters['search'] ) . '%';

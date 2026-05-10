@@ -87,6 +87,18 @@ final class Privacy {
 	}
 
 	/**
+	 * Get the raw caller-number expiry timestamp.
+	 *
+	 * @return string
+	 */
+	public function get_raw_phone_expiry(): string {
+		$settings = Settings::get();
+		$days     = max( 1, (int) $settings['privacy']['raw_phone_retention_days'] );
+
+		return gmdate( 'Y-m-d H:i:s', time() + ( $days * DAY_IN_SECONDS ) );
+	}
+
+	/**
 	 * Determine whether an IP is private or reserved.
 	 *
 	 * @param string $ip IP address.

@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\Database\Repositories;
 
+use ACE\AdaptiveCustomerEngagement\Database\DateRange;
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
 
 defined( 'ABSPATH' ) || exit;
@@ -161,6 +162,39 @@ final class SessionRepository {
 	}
 
 	/**
+	 * Get top traffic sources.
+	 *
+	 * @param int $limit Row limit.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_top_sources( int $limit = 8, array $filters = array() ): array {
+		global $wpdb;
+
+		$filter_fragments = $this->build_recent_session_filters( $filters );
+		$params           = $filter_fragments['params'];
+		$params[]         = $limit;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT
+					COALESCE(NULLIF(s.utm_source, ''), '__direct__') AS source_key,
+					COALESCE(NULLIF(s.utm_source, ''), 'Direct / none') AS source_label,
+					COUNT(*) AS total
+				FROM " . Schema::table_name( 'sessions' ) . " s
+				LEFT JOIN " . Schema::table_name( 'companies' ) . " c ON c.id = s.company_id
+				" . $filter_fragments['where'] . "
+				GROUP BY source_key, source_label
+				ORDER BY total DESC
+				LIMIT %d",
+				$params
+			),
+			ARRAY_A
+		);
+
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
 	 * Count recent sessions matching filters.
 	 *
 	 * @param array<string, string> $filters Filters.
@@ -218,23 +252,20 @@ final class SessionRepository {
 		}
 
 		if ( ! empty( $filters['source'] ) ) {
-			$where[]  = 's.utm_source = %s';
-			$params[] = $filters['source'];
+			if ( '__direct__' === $filters['source'] ) {
+				$where[] = "(s.utm_source IS NULL OR s.utm_source = '')";
+			} else {
+				$where[]  = 's.utm_source = %s';
+				$params[] = $filters['source'];
+			}
 		}
 
-		if ( ! empty( $filters['date_from'] ) ) {
-			$where[]  = 'DATE(s.last_seen) >= %s';
-			$params[] = $filters['date_from'];
-		}
-
-		if ( ! empty( $filters['date_to'] ) ) {
-			$where[]  = 'DATE(s.last_seen) <= %s';
-			$params[] = $filters['date_to'];
-		}
+		DateRange::append_filters( $where, $params, 's.last_seen', (string) ( $filters['date_from'] ?? '' ), (string) ( $filters['date_to'] ?? '' ) );
 
 		if ( ! empty( $filters['search'] ) ) {
 			$search    = '%' . $wpdb->esc_like( $filters['search'] ) . '%';
-			$where[]   = '(s.session_uuid LIKE %s OR s.landing_path LIKE %s OR s.referrer LIKE %s OR c.name LIKE %s)';
+			$where[]   = '(s.session_uuid LIKE %s OR s.landing_path LIKE %s OR s.referrer LIKE %s OR c.name LIKE %s OR EXISTS (SELECT 1 FROM ' . Schema::table_name( 'events' ) . ' e_search WHERE e_search.session_id = s.id AND e_search.path LIKE %s))';
+			$params[]  = $search;
 			$params[]  = $search;
 			$params[]  = $search;
 			$params[]  = $search;
@@ -315,7 +346,15 @@ final class SessionRepository {
 	public function count_today(): int {
 		global $wpdb;
 
-		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . ' WHERE DATE(first_seen) = UTC_DATE()' ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$bounds = DateRange::today_bounds();
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . ' WHERE first_seen >= %s AND first_seen < %s',
+				$bounds['start'],
+				$bounds['end']
+			)
+		);
 	}
 
 	/**
@@ -326,7 +365,15 @@ final class SessionRepository {
 	public function count_ignored_today(): int {
 		global $wpdb;
 
-		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . ' WHERE DATE(first_seen) = UTC_DATE() AND (ignored = 1 OR is_bot = 1)' ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$bounds = DateRange::today_bounds();
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . ' WHERE first_seen >= %s AND first_seen < %s AND (ignored = 1 OR is_bot = 1)',
+				$bounds['start'],
+				$bounds['end']
+			)
+		);
 	}
 
 	/**
@@ -337,9 +384,11 @@ final class SessionRepository {
 	public function count_returning_today(): int {
 		global $wpdb;
 
-		$table = Schema::table_name( 'sessions' );
-		$sql   = "SELECT COUNT(*) FROM {$table} s
-			WHERE DATE(s.first_seen) = UTC_DATE()
+		$table  = Schema::table_name( 'sessions' );
+		$bounds = DateRange::today_bounds();
+		$sql    = "SELECT COUNT(*) FROM {$table} s
+			WHERE s.first_seen >= %s
+			AND s.first_seen < %s
 			AND s.visitor_uuid IS NOT NULL
 			AND EXISTS (
 				SELECT 1 FROM {$table} older
@@ -347,7 +396,13 @@ final class SessionRepository {
 				AND older.id != s.id
 			)";
 
-		return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				$sql,
+				$bounds['start'],
+				$bounds['end']
+			)
+		);
 	}
 
 	/**
@@ -358,8 +413,77 @@ final class SessionRepository {
 	public function count_likely_business_today(): int {
 		global $wpdb;
 
+		$bounds = DateRange::today_bounds();
+
 		return (int) $wpdb->get_var(
-			"SELECT COUNT(*) FROM " . Schema::table_name( 'sessions' ) . " WHERE DATE(first_seen) = UTC_DATE() AND company_confidence IN ('likely', 'confirmed')" // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . " WHERE first_seen >= %s AND first_seen < %s AND company_confidence IN ('likely', 'confirmed')",
+				$bounds['start'],
+				$bounds['end']
+			)
 		);
+	}
+
+	/**
+	 * Count ignored sessions with optional filters.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return int
+	 */
+	public function count_ignored( array $filters = array() ): int {
+		return $this->count_by_filters( $filters, '(s.ignored = 1 OR s.is_bot = 1)' );
+	}
+
+	/**
+	 * Count returning sessions with optional filters.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return int
+	 */
+	public function count_returning( array $filters = array() ): int {
+		global $wpdb;
+
+		$filter_fragments = $this->build_recent_session_filters( $filters );
+		$query            = 'SELECT COUNT(*) FROM ' . Schema::table_name( 'sessions' ) . ' s LEFT JOIN ' . Schema::table_name( 'companies' ) . ' c ON c.id = s.company_id ' . $filter_fragments['where'];
+		$query           .= $filter_fragments['where'] ? ' AND ' : ' WHERE ';
+		$query           .= 's.visitor_uuid IS NOT NULL AND EXISTS (SELECT 1 FROM ' . Schema::table_name( 'sessions' ) . ' older WHERE older.visitor_uuid = s.visitor_uuid AND older.id != s.id)';
+
+		$total = empty( $filter_fragments['params'] )
+			? $wpdb->get_var( $query ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			: $wpdb->get_var( $wpdb->prepare( $query, $filter_fragments['params'] ) );
+
+		return (int) $total;
+	}
+
+	/**
+	 * Count likely business sessions with optional filters.
+	 *
+	 * @param array<string, string> $filters Filters.
+	 * @return int
+	 */
+	public function count_likely_business( array $filters = array() ): int {
+		return $this->count_by_filters( $filters, "s.company_confidence IN ('likely', 'confirmed')" );
+	}
+
+	/**
+	 * Count sessions with optional extra conditions.
+	 *
+	 * @param array<string, string> $filters         Filters.
+	 * @param string                $extra_condition Extra SQL condition.
+	 * @return int
+	 */
+	private function count_by_filters( array $filters, string $extra_condition ): int {
+		global $wpdb;
+
+		$filter_fragments = $this->build_recent_session_filters( $filters );
+		$query            = 'SELECT COUNT(DISTINCT s.id) FROM ' . Schema::table_name( 'sessions' ) . ' s LEFT JOIN ' . Schema::table_name( 'companies' ) . ' c ON c.id = s.company_id ' . $filter_fragments['where'];
+		$query           .= $filter_fragments['where'] ? ' AND ' : ' WHERE ';
+		$query           .= $extra_condition;
+
+		$total = empty( $filter_fragments['params'] )
+			? $wpdb->get_var( $query ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			: $wpdb->get_var( $wpdb->prepare( $query, $filter_fragments['params'] ) );
+
+		return (int) $total;
 	}
 }

@@ -13,6 +13,7 @@ final class Settings {
 	public const OPTION_NAME      = 'ace_settings';
 	public const HASH_SALT_OPTION = 'ace_hash_salt';
 	public const REPORTING_SEGMENTS_OPTION = 'ace_reporting_segments';
+	public const CONNECT_IMPORT_STATUS_OPTION = 'ace_connect_import_status';
 
 	/**
 	 * Default settings.
@@ -53,23 +54,41 @@ final class Settings {
 				'enabled'                 => false,
 				'region'                  => 'eu-west-2',
 				'instance_id'             => '',
+				'instance_url'            => '',
+				'chat_widget_script_url'  => '',
+				'chat_widget_id'          => '',
+				'chat_widget_snippet_id'  => '',
+				'chat_widget_security_key'=> '',
+				's3_bucket'               => '',
+				's3_prefix'               => '',
+				'flow_logs_group'         => '',
 				'access_key_id'           => '',
 				'secret_access_key'       => '',
 				'use_iam_role'            => true,
 				'default_contact_flow_id' => '',
 				'chat_contact_flow_id'    => '',
+				'chat_api_endpoint'       => '',
 				'webhook_secret'          => '',
 			),
 			'ai_agent'       => array(
-				'enabled'          => false,
-				'mode'             => 'off',
-				'provider'         => 'openai',
-				'model'            => 'gpt-5-mini',
-				'api_key'          => '',
-				'base_url'         => '',
-				'handoff_to_human' => true,
-				'allowed_tools'    => array(),
-				'guardrails'       => array(),
+				'enabled'                    => false,
+				'mode'                       => 'off',
+				'provider'                   => 'amazon_q_connect',
+				'assistant_id'               => '',
+				'assistant_arn'              => '',
+				'handoff_to_human'           => true,
+				'share_session_context'      => true,
+				'share_company_context'      => true,
+				'share_number_context'       => true,
+				'share_woocommerce_context'  => false,
+				'session_summary_attribute'  => 'ace_session_summary',
+				'company_summary_attribute'  => 'ace_company_summary',
+				'number_summary_attribute'   => 'ace_number_summary',
+				'context_instructions'       => '',
+				'frontend_test_enabled'      => false,
+				'frontend_test_admin_only'   => true,
+				'allowed_tools'              => array(),
+				'guardrails'                 => array(),
 			),
 		);
 	}
@@ -186,6 +205,30 @@ final class Settings {
 	}
 
 	/**
+	 * Get the latest Amazon Connect import-run status.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function get_connect_import_status(): array {
+		$status = get_option( self::CONNECT_IMPORT_STATUS_OPTION, array() );
+
+		return is_array( $status ) ? self::sanitize_connect_import_status( $status ) : self::sanitize_connect_import_status( array() );
+	}
+
+	/**
+	 * Save the latest Amazon Connect import-run status.
+	 *
+	 * @param array<string, mixed> $status Import status payload.
+	 * @return array<string, mixed>
+	 */
+	public static function update_connect_import_status( array $status ): array {
+		$sanitized = self::sanitize_connect_import_status( $status );
+		update_option( self::CONNECT_IMPORT_STATUS_OPTION, $sanitized, false );
+
+		return $sanitized;
+	}
+
+	/**
 	 * Sanitize settings.
 	 *
 	 * @param array<string, mixed> $settings Settings payload.
@@ -241,22 +284,40 @@ final class Settings {
 				'enabled'                 => rest_sanitize_boolean( $amazon_connect['enabled'] ?? $defaults['amazon_connect']['enabled'] ),
 				'region'                  => sanitize_text_field( $amazon_connect['region'] ?? $defaults['amazon_connect']['region'] ),
 				'instance_id'             => sanitize_text_field( $amazon_connect['instance_id'] ?? $defaults['amazon_connect']['instance_id'] ),
+				'instance_url'            => esc_url_raw( $amazon_connect['instance_url'] ?? $defaults['amazon_connect']['instance_url'] ),
+				'chat_widget_script_url'  => esc_url_raw( $amazon_connect['chat_widget_script_url'] ?? $defaults['amazon_connect']['chat_widget_script_url'] ),
+				'chat_widget_id'          => sanitize_text_field( $amazon_connect['chat_widget_id'] ?? $defaults['amazon_connect']['chat_widget_id'] ),
+				'chat_widget_snippet_id'  => sanitize_text_field( $amazon_connect['chat_widget_snippet_id'] ?? $defaults['amazon_connect']['chat_widget_snippet_id'] ),
+				'chat_widget_security_key'=> sanitize_text_field( $amazon_connect['chat_widget_security_key'] ?? $defaults['amazon_connect']['chat_widget_security_key'] ),
+				's3_bucket'               => sanitize_text_field( $amazon_connect['s3_bucket'] ?? $defaults['amazon_connect']['s3_bucket'] ),
+				's3_prefix'               => sanitize_text_field( $amazon_connect['s3_prefix'] ?? $defaults['amazon_connect']['s3_prefix'] ),
+				'flow_logs_group'         => sanitize_text_field( $amazon_connect['flow_logs_group'] ?? $defaults['amazon_connect']['flow_logs_group'] ),
 				'access_key_id'           => sanitize_text_field( $amazon_connect['access_key_id'] ?? $defaults['amazon_connect']['access_key_id'] ),
 				'secret_access_key'       => sanitize_text_field( $amazon_connect['secret_access_key'] ?? $defaults['amazon_connect']['secret_access_key'] ),
 				'use_iam_role'            => rest_sanitize_boolean( $amazon_connect['use_iam_role'] ?? $defaults['amazon_connect']['use_iam_role'] ),
 				'default_contact_flow_id' => sanitize_text_field( $amazon_connect['default_contact_flow_id'] ?? $defaults['amazon_connect']['default_contact_flow_id'] ),
 				'chat_contact_flow_id'    => sanitize_text_field( $amazon_connect['chat_contact_flow_id'] ?? $defaults['amazon_connect']['chat_contact_flow_id'] ),
+				'chat_api_endpoint'       => esc_url_raw( $amazon_connect['chat_api_endpoint'] ?? $defaults['amazon_connect']['chat_api_endpoint'] ),
 				'webhook_secret'          => sanitize_text_field( $amazon_connect['webhook_secret'] ?? $defaults['amazon_connect']['webhook_secret'] ),
 			),
 			'ai_agent'       => array(
-				'enabled'          => rest_sanitize_boolean( $ai_agent['enabled'] ?? $defaults['ai_agent']['enabled'] ),
-				'mode'             => sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] ),
-				'provider'         => sanitize_key( $ai_agent['provider'] ?? $defaults['ai_agent']['provider'] ),
-				'model'            => sanitize_text_field( $ai_agent['model'] ?? $defaults['ai_agent']['model'] ),
-				'api_key'          => sanitize_text_field( $ai_agent['api_key'] ?? $defaults['ai_agent']['api_key'] ),
-				'base_url'         => esc_url_raw( $ai_agent['base_url'] ?? $defaults['ai_agent']['base_url'] ),
-				'handoff_to_human' => rest_sanitize_boolean( $ai_agent['handoff_to_human'] ?? $defaults['ai_agent']['handoff_to_human'] ),
-				'allowed_tools'    => array_values(
+				'enabled'                   => rest_sanitize_boolean( $ai_agent['enabled'] ?? $defaults['ai_agent']['enabled'] ),
+				'mode'                      => sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] ),
+				'provider'                  => 'amazon_q_connect',
+				'assistant_id'              => sanitize_text_field( $ai_agent['assistant_id'] ?? $defaults['ai_agent']['assistant_id'] ),
+				'assistant_arn'             => sanitize_text_field( $ai_agent['assistant_arn'] ?? $defaults['ai_agent']['assistant_arn'] ),
+				'handoff_to_human'          => rest_sanitize_boolean( $ai_agent['handoff_to_human'] ?? $defaults['ai_agent']['handoff_to_human'] ),
+				'share_session_context'     => rest_sanitize_boolean( $ai_agent['share_session_context'] ?? $defaults['ai_agent']['share_session_context'] ),
+				'share_company_context'     => rest_sanitize_boolean( $ai_agent['share_company_context'] ?? $defaults['ai_agent']['share_company_context'] ),
+				'share_number_context'      => rest_sanitize_boolean( $ai_agent['share_number_context'] ?? $defaults['ai_agent']['share_number_context'] ),
+				'share_woocommerce_context' => rest_sanitize_boolean( $ai_agent['share_woocommerce_context'] ?? $defaults['ai_agent']['share_woocommerce_context'] ),
+				'session_summary_attribute' => sanitize_key( $ai_agent['session_summary_attribute'] ?? $defaults['ai_agent']['session_summary_attribute'] ),
+				'company_summary_attribute' => sanitize_key( $ai_agent['company_summary_attribute'] ?? $defaults['ai_agent']['company_summary_attribute'] ),
+				'number_summary_attribute'  => sanitize_key( $ai_agent['number_summary_attribute'] ?? $defaults['ai_agent']['number_summary_attribute'] ),
+				'context_instructions'      => sanitize_textarea_field( $ai_agent['context_instructions'] ?? $defaults['ai_agent']['context_instructions'] ),
+				'frontend_test_enabled'     => rest_sanitize_boolean( $ai_agent['frontend_test_enabled'] ?? $defaults['ai_agent']['frontend_test_enabled'] ),
+				'frontend_test_admin_only'  => rest_sanitize_boolean( $ai_agent['frontend_test_admin_only'] ?? $defaults['ai_agent']['frontend_test_admin_only'] ),
+				'allowed_tools'             => array_values(
 					array_filter(
 						array_map(
 							static function ( $tool ): string {
@@ -266,7 +327,7 @@ final class Settings {
 						)
 					)
 				),
-				'guardrails'       => array_values(
+				'guardrails'                => array_values(
 					array_filter(
 						array_map(
 							static function ( $guardrail ): string {
@@ -326,6 +387,44 @@ final class Settings {
 		}
 
 		return $sanitized;
+	}
+
+	/**
+	 * Sanitize a stored Connect import status payload.
+	 *
+	 * @param array<string, mixed> $status Raw status payload.
+	 * @return array<string, mixed>
+	 */
+	private static function sanitize_connect_import_status( array $status ): array {
+		$errors = is_array( $status['errors'] ?? null ) ? $status['errors'] : array();
+
+		return array(
+			'status'          => sanitize_key( (string) ( $status['status'] ?? 'idle' ) ),
+			'started_at'      => sanitize_text_field( (string) ( $status['started_at'] ?? '' ) ),
+			'completed_at'    => sanitize_text_field( (string) ( $status['completed_at'] ?? '' ) ),
+			'lookback_hours'  => max( 0, absint( $status['lookback_hours'] ?? 0 ) ),
+			'max_objects'     => max( 0, absint( $status['max_objects'] ?? 0 ) ),
+			'objects_scanned' => max( 0, absint( $status['objects_scanned'] ?? 0 ) ),
+			'records_found'   => max( 0, absint( $status['records_found'] ?? 0 ) ),
+			'created'         => max( 0, absint( $status['created'] ?? 0 ) ),
+			'updated'         => max( 0, absint( $status['updated'] ?? 0 ) ),
+			'matched'         => max( 0, absint( $status['matched'] ?? 0 ) ),
+			'number_matched'  => max( 0, absint( $status['number_matched'] ?? 0 ) ),
+			'errors'          => array_values(
+				array_slice(
+					array_filter(
+						array_map(
+							static function ( $error ): string {
+								return sanitize_text_field( (string) $error );
+							},
+							$errors
+						)
+					),
+					0,
+					20
+				)
+			),
+		);
 	}
 
 	/**
