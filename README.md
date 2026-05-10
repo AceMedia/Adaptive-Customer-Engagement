@@ -1,38 +1,63 @@
 # Adaptive Customer Engagement
 
-Adaptive Customer Engagement is a native WordPress plugin I am building to track first-party lead signals, route phone numbers by source and page context, and give me a practical admin view of how visits turn into conversations.
+Adaptive Customer Engagement is a native WordPress plugin for tracking first-party lead signals, routing phone numbers by source and page context, and giving WordPress teams a practical operational view of how visits turn into conversations.
 
 ## What is in this first release
 
+### Tracking and data foundation
+
 - WordPress plugin scaffold with activation, deactivation, uninstall, capabilities, and custom schema management
-- Custom tables for sessions, events, companies, phone numbers, calls, and enrichment cache
-- Public REST tracking endpoint for pageviews, click-to-call events, and downloads
-- Optional native form submission tracking without storing field values
-- Public phone-number resolution endpoint for frontend placeholders
-- React-based wp-admin screens for dashboard, sessions, companies, WooCommerce interest, calls, phone numbers, settings, privacy, enrichment, Amazon Connect, and AI placeholders
-- Live enrichment provider support for **ipregistry** and **ipinfo**, with cached lookups, company linking, and an admin test lookup tool
-- Working company reporting screens and dashboard hot-company summaries for enriched traffic
-- Paginated session and company filters for confidence, source/provider, search terms, and date range
-- Saved reporting segments for reusing common session, company, calls, and WooCommerce filters
-- Dashboard shortcuts into saved reporting segments across sessions, companies, calls, and WooCommerce views
-- CSV exports for the current filtered session and company views
-- Expanded lead and company priority scoring with visible breakdowns in the admin reporting views
-- Calls screen with call-intent summaries, top call-driving pages, and stored-call reporting foundations
-- Calls screen filters and CSV exports for stored-call investigation and reuse outside WordPress
-- WooCommerce-aware tracking for product and category pages, including repeat-interest counts carried in event metadata
-- Setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, and AI configuration, with guidance links for getting the keys and identifiers needed later
-- Refreshed WordPress-style admin shell with branded header treatment, clearer page introductions, and a side navigation layer across the plugin sub-pages
-- Local sample-data seeding controls for generating roughly three months of UK business and council activity inside the plugin tables for UI preview work
+- Custom tables for sessions, events, companies, phone numbers, calls, enrichment cache, and saved reporting segments
+- Public REST tracking endpoint for pageviews, click-to-call events, downloads, and optional native form submissions without storing field values
 - Frontend tracker script for session cookies, pageview capture, number replacement, and call/download event capture
-- Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, and a manual privacy purge action
+- Public phone-number resolution endpoint for frontend placeholders
+- Privacy-aware defaults with hashed IP support, raw IP expiry, basic bot filtering, admin-user exclusion, private/internal IP exclusion, and a manual privacy purge action
+
+### Admin reporting and drilldowns
+
+- React-based wp-admin app with dashboard, sessions, companies, WooCommerce interest, calls, numbers, tracking, privacy, enrichment, Amazon Connect, and AI screens
+- Dashboard metrics for tracked sessions, engaged visits, call intent, commerce interest, and top pages
+- Rich single-record drilldowns for sessions, companies, calls, and numbers, with charts, linked related data, and route-based takeover views
+- Inline matched call context inside session and company detail views so call activity can be reviewed without leaving the record
+- Expanded lead and company priority scoring with visible factor breakdowns in the reporting views
+- Working company reporting screens and dashboard hot-company summaries for enriched traffic
+- Paginated session, company, calls, and WooCommerce filters for search terms, status, confidence, provider/source, matched state, repeat-interest, and date range
+- Screen re-fetch behaviour tuned so seeded or newly changed data appears properly when returning to a report
+
+### Exports, segments, and commerce reporting
+
+- Saved reporting segments for reusing common session, company, calls, and WooCommerce filters
+- Dashboard shortcuts that deep-link straight into saved reporting segments across sessions, companies, calls, and WooCommerce views
+- CSV exports for the current filtered sessions, companies, calls, and WooCommerce reporting views
+- WooCommerce-aware tracking for product and category pages, including repeat-interest counts carried in event metadata
+- WooCommerce reporting for top products, top categories, and the sessions and companies showing repeat buying-intent patterns
+
+### Numbers, setup, and sample data
+
+- Setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, AI, and phone-number management
+- Amazon Connect setup fields for region, instance ID, S3 export bucket/prefix, flow log group, credentials strategy, and contact flow IDs
+- A setup-style phone-numbers screen for adding, editing, routing, and reviewing tracked numbers, including default-number handling and Amazon Connect identifiers
+- Live Amazon Connect number visibility inside the phone-number setup screen, so already claimed instance numbers can be reviewed alongside local routing rules
+- Amazon Connect number search and claim actions in wp-admin, with newly claimed numbers loaded straight into a local routing-rule draft
+- Amazon Q in Connect assistant visibility in the Amazon Connect settings screen
+- Sample/demo numbers kept visible for reporting and setup work without participating in live number resolution
+- Guided setup content and external links for enrichment providers, Amazon Connect, and future AI configuration
+- Local sample-data seeding controls for generating realistic recent UK business and council activity across sessions, companies, events, WooCommerce interest, calls, pages, and tracking numbers for UI preview work
+
+### Enrichment already in place
+
+- Live enrichment provider support for **ipregistry** and **ipinfo**
+- Cached enrichment lookups, company linking, enrichment storage on sessions, and an admin test lookup tool
+- Reporting surfaces that reuse enrichment data for company views and prioritisation
 
 ## What is intentionally deferred
 
 This repository does **not** yet implement:
 
-- Amazon Connect sync, imports, or matching
-- AI chat, handoff, or site tools
+- Amazon Connect call imports, call matching, outbound callbacks, or dialler workflows
+- AI chat, voice chat, handoff, or assistant creation tools
 - CRM exports or automated export workflows
+- Order-level revenue attribution or ecommerce conversion stitching beyond interest reporting
 
 The database shape and settings surface are ready for those next phases.
 
@@ -63,7 +88,7 @@ The database shape and settings surface are ready for those next phases.
 
 ## Frontend placeholders
 
-I can drop these into theme templates, blocks, or rendered content:
+These placeholders can be used in theme templates, blocks, or rendered content:
 
 ```html
 <span data-ace-phone="default">Loading…</span>
@@ -94,7 +119,9 @@ adaptive-customer-engagement/v1
 - `GET /admin/companies/{id}`
 - `GET /admin/commerce`
 - `GET /admin/calls`
+- `GET /admin/calls/{id}`
 - `GET /admin/numbers`
+- `GET /admin/numbers/{id}`
 - `POST /admin/numbers`
 - `PATCH /admin/numbers/{id}`
 - `DELETE /admin/numbers/{id}`
@@ -105,6 +132,11 @@ adaptive-customer-engagement/v1
 - `DELETE /admin/reporting-segments/{id}`
 - `POST /admin/privacy/purge`
 - `POST /admin/enrichment/test`
+- `GET /admin/connect-readiness`
+- `GET /admin/connect/resources`
+- `GET /admin/connect/assistants`
+- `POST /admin/connect/phone-numbers/search`
+- `POST /admin/connect/phone-numbers/claim`
 - `GET /admin/sample-data`
 - `POST /admin/sample-data`
 - `DELETE /admin/sample-data`
@@ -120,25 +152,33 @@ The plugin creates these tables with the WordPress table prefix:
 - `ace_calls`
 - `ace_enrichment_cache`
 
-## Reporting downloads
+## Reporting downloads and saved views
 
-The sessions and companies screens can now export the **current filtered view** as a CSV download, so I can pass the data into follow-up sales or reporting work without rebuilding it by hand elsewhere.
+The sessions, companies, calls, and WooCommerce screens can all export the **current filtered view** as CSV so the exact reporting slice can be handed into follow-up sales, reporting, or investigation work.
 
-The calls screen can now export the **current filtered stored-call view** as a CSV too, which makes it much easier to analyse call outcomes or hand them into follow-up work.
+Saved reporting segments preserve useful filter combinations, and the dashboard can surface shortcuts straight back into those saved views.
+
+## Detail views and data visualisation
+
+The admin now leans much more heavily on **single-item takeover views** for sessions, companies, calls, and numbers. Those views include summary cards, charts, related activity tables, and cross-links into the other reporting surfaces so a top-level trend can be followed into the underlying record without losing context.
 
 ## WooCommerce reporting
 
-The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns, while session and company detail views now summarise the strongest commerce interest signals attached to that record. I can now also filter that view by search/date and export the current products, categories, sessions, or companies into CSV files.
+The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns. Session and company detail views also summarise the strongest commerce interest signals attached to that record.
 
 ## Setup and connection guidance
 
-The admin settings screens now cover the built-in tracking and privacy controls more fully, and the enrichment, Amazon Connect, and AI pages include setup guidance plus external links for where to get the relevant API keys, instance IDs, access keys, and provider docs before I start the live hookup work.
+The setup screens now cover tracking, privacy, enrichment, AI, Amazon Connect, and phone numbers more clearly, with consistent introductions, section spacing, and guidance links for the relevant API keys, instance IDs, phone number identifiers, and provider documentation.
 
-The **Enrichment** page is the place where I connect the implemented provider support today. That page already includes the provider selector, API key field, cache controls, bot/private-IP options, and a live test lookup tool for the supported providers.
+The **Amazon Connect** page also acts as a pre-flight screen for later testing, so the region, instance ID, S3 export bucket/prefix, flow log group, credentials mode, and contact flow IDs can be stored in one place while the remaining readiness gaps are checked.
+
+The **Enrichment** page is where the implemented provider support is connected today. That page already includes the provider selector, API key field, cache controls, bot/private-IP options, and a live test lookup tool for the supported providers.
+
+The **Phone numbers** page is now treated as a proper setup surface rather than just a list, so defaults, routing rules, display labels, source context, Amazon Connect identifiers, live claimed Connect numbers, and new-number claiming can all be managed in one place.
 
 ## Sample data
 
-The dashboard can now seed and remove a **local-only demo dataset**. This creates roughly three months of realistic-looking UK council and business activity across sessions, companies, events, WooCommerce interest, calls, and tracking numbers so I can inspect the reporting UI before switching on live integrations.
+The dashboard can seed and remove a **local-only demo dataset**. This fills the plugin with realistic recent UK business and council activity across sessions, companies, events, top pages, WooCommerce interest, calls, and tracking numbers so the reporting UI can be reviewed before live integrations are enabled, while keeping those demo numbers out of live frontend resolution.
 
 ## Privacy approach
 
@@ -156,7 +196,7 @@ The next sensible build steps are:
 
 1. broaden reporting polish around calls, scoring, ranking, and follow-up workflows
 2. deeper enrichment provider support and reporting polish
-3. Amazon Connect import, matching, and number sync
+3. Amazon Connect call import, call matching, assistant creation, and deeper number synchronisation
 4. AI-assisted lead capture and safe content tools
 
 ## Author
