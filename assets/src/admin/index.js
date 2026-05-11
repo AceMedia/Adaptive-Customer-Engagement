@@ -4163,6 +4163,11 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsData, setOpenAiModelsData] = useState(null);
 	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
+	const currentOpenAiKey = settings?.ai_agent?.openai_api_key || '';
+	const aiEnabled = !!settings?.ai_agent?.enabled;
+	const setAiAgent = (next) => setSettings((current) => (current
+		? { ...current, ai_agent: { ...(current.ai_agent || {}), ...next } }
+		: current));
 
 	useEffect(() => {
 		if (active && !settings) {
@@ -4201,34 +4206,13 @@ function SettingsView({ section = 'settings', active }) {
 	}, [active, section, settings, queueFlowData]);
 
 	useEffect(() => {
-		const apiKey = settings?.ai_agent?.openai_api_key || '';
-
-		if (!apiKey) {
+		if (!currentOpenAiKey) {
 			setOpenAiModelsData(null);
 			setOpenAiModelsKey('');
 		}
-	}, [settings?.ai_agent?.openai_api_key]);
+	}, [currentOpenAiKey]);
 
-	if (!settings) {
-		return createElement(Spinner);
-	}
-
-	const save = async () => {
-		setBusy(true);
-		const response = await request('/admin/settings', { method: 'POST', data: settings });
-		setSettings(response);
-		if (section === 'amazon-connect') {
-			setConnectReadiness(await request('/admin/connect-readiness'));
-			setConnectImportStatus(await request('/admin/connect/calls/import-status'));
-			setContactFlowData(await request('/admin/connect/contact-flows'));
-			setQueueFlowData(await request('/admin/connect/queue-flows'));
-			setQueueData(await request('/admin/connect/queues'));
-		}
-		setNotice(__('Settings saved.', 'adaptive-customer-engagement'));
-		setBusy(false);
-	};
-
-	const refreshOpenAiModels = async (apiKey = settings?.ai_agent?.openai_api_key || '') => {
+	const refreshOpenAiModels = async (apiKey = currentOpenAiKey) => {
 		if (!apiKey) {
 			setOpenAiModelsData(null);
 			setOpenAiModelsKey('');
@@ -4267,6 +4251,38 @@ function SettingsView({ section = 'settings', active }) {
 		}
 
 		setOpenAiModelsBusy(false);
+	};
+
+	useEffect(() => {
+		if (
+			active
+			&& section === 'ai-agent'
+			&& aiEnabled
+			&& currentOpenAiKey
+			&& !openAiModelsBusy
+			&& openAiModelsKey !== currentOpenAiKey
+		) {
+			refreshOpenAiModels(currentOpenAiKey);
+		}
+	}, [active, section, aiEnabled, currentOpenAiKey, openAiModelsBusy, openAiModelsKey]);
+
+	if (!settings) {
+		return createElement(Spinner);
+	}
+
+	const save = async () => {
+		setBusy(true);
+		const response = await request('/admin/settings', { method: 'POST', data: settings });
+		setSettings(response);
+		if (section === 'amazon-connect') {
+			setConnectReadiness(await request('/admin/connect-readiness'));
+			setConnectImportStatus(await request('/admin/connect/calls/import-status'));
+			setContactFlowData(await request('/admin/connect/contact-flows'));
+			setQueueFlowData(await request('/admin/connect/queue-flows'));
+			setQueueData(await request('/admin/connect/queues'));
+		}
+		setNotice(__('Settings saved.', 'adaptive-customer-engagement'));
+		setBusy(false);
 	};
 
 	const exportSettingsConfig = async () => {
@@ -4447,16 +4463,13 @@ function SettingsView({ section = 'settings', active }) {
 	const setPrivacy = (next) => setSettings({ ...settings, privacy: { ...settings.privacy, ...next } });
 	const setEnrichment = (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, ...next } });
 	const setAmazonConnect = (next) => setSettings({ ...settings, amazon_connect: { ...settings.amazon_connect, ...next } });
-	const setAiAgent = (next) => setSettings({ ...settings, ai_agent: { ...settings.ai_agent, ...next } });
 	const trackingEnabled = !!settings.enabled;
 	const enrichmentProviderChosen = !!(settings.enrichment?.provider && settings.enrichment.provider !== 'none');
 	const enrichmentConnected = hasEnrichmentConfig(settings.enrichment || {});
 	const connectEnabled = !!settings.amazon_connect?.enabled;
 	const connectConfigured = hasConnectConfig(settings.amazon_connect || {});
-	const aiEnabled = !!settings.ai_agent?.enabled;
 	const openAiConfigured = hasOpenAiConfig(settings.ai_agent || {});
 	const connectLiveReady = connectConfigured && !contactFlowData?.error;
-	const currentOpenAiKey = settings.ai_agent?.openai_api_key || '';
 	const openAiTokenActive = !!openAiModelsData?.active && openAiModelsKey === currentOpenAiKey;
 	const aiProviderReady = aiEnabled && openAiTokenActive && !!settings.ai_agent?.openai_model;
 	const openAiModelOptions = [{ label: __('Choose a model', 'adaptive-customer-engagement'), value: '' }].concat(
@@ -4492,19 +4505,6 @@ function SettingsView({ section = 'settings', active }) {
 			{ label: __('Imported calls', 'adaptive-customer-engagement'), value: `${connectImportStatus?.summary?.imported_total || 0}` },
 		]
 		: [{ label: __('Status', 'adaptive-customer-engagement'), value: __('Loading readiness', 'adaptive-customer-engagement') }];
-
-	useEffect(() => {
-		if (
-			active
-			&& section === 'ai-agent'
-			&& aiEnabled
-			&& currentOpenAiKey
-			&& !openAiModelsBusy
-			&& openAiModelsKey !== currentOpenAiKey
-		) {
-			refreshOpenAiModels(currentOpenAiKey);
-		}
-	}, [active, section, aiEnabled, currentOpenAiKey, openAiModelsBusy, openAiModelsKey]);
 
 	const commonHighlights = [
 		{ label: __('Shell', 'adaptive-customer-engagement'), value: __('Native WordPress admin', 'adaptive-customer-engagement') },
