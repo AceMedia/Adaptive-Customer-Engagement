@@ -187,6 +187,8 @@ final class FrontendChatService {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			$response = $this->normalise_provider_error( $response );
+
 			if ( ! empty( $thread['id'] ) ) {
 				$this->store_message(
 					(int) $thread['id'],
@@ -222,6 +224,33 @@ final class FrontendChatService {
 			'message' => sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
 			'sources' => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
 			'model'   => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Replace raw upstream provider failures with a visitor-safe message.
+	 *
+	 * @param WP_Error $error Provider error.
+	 * @return WP_Error
+	 */
+	private function normalise_provider_error( WP_Error $error ): WP_Error {
+		$provider_codes = array(
+			'ace_openai_api_key_missing',
+			'ace_openai_model_missing',
+			'ace_openai_messages_missing',
+			'ace_openai_request_failed',
+			'ace_openai_bad_response',
+			'ace_openai_empty_response',
+		);
+
+		if ( ! in_array( $error->get_error_code(), $provider_codes, true ) ) {
+			return $error;
+		}
+
+		return new WP_Error(
+			'ace_ai_chat_temporarily_unavailable',
+			__( 'The site assistant is currently offline for maintenance. Please try again shortly.', 'adaptive-customer-engagement' ),
+			array( 'status' => 503 )
 		);
 	}
 
