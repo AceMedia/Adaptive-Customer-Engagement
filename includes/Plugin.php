@@ -171,6 +171,18 @@ final class Plugin {
 		$ai_agent   = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$admin_only = ! empty( $ai_agent['frontend_chat_admin_only'] );
 		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE );
+		$bot_name   = sanitize_text_field( (string) ( $ai_agent['frontend_chat_bot_name'] ?? $ai_agent['frontend_chat_title'] ?? '' ) );
+		$bot_name   = '' !== $bot_name ? $bot_name : __( 'Site assistant', 'adaptive-customer-engagement' );
+		$greeting   = sanitize_textarea_field( (string) ( $ai_agent['frontend_chat_greeting'] ?? '' ) );
+
+		if ( '' === $greeting ) {
+			$greeting = sprintf(
+				/* translators: %s: chatbot name. */
+				__( 'Hello, I am %s. Ask me about the company, products, or services and I will do my best to help.', 'adaptive-customer-engagement' ),
+				$bot_name
+			);
+		}
+
 		$enabled    = ! empty( $ai_agent['enabled'] )
 			&& ! empty( $ai_agent['frontend_chat_enabled'] )
 			&& ! empty( $ai_agent['openai_api_key'] )
@@ -181,14 +193,13 @@ final class Plugin {
 			'adminOnly'         => $admin_only,
 			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
 			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
-			'title'             => sanitize_text_field( (string) ( $ai_agent['frontend_chat_title'] ?? '' ) ),
-			'greeting'          => sanitize_textarea_field( (string) ( $ai_agent['frontend_chat_greeting'] ?? '' ) ),
+			'title'             => $bot_name,
+			'botName'           => $bot_name,
+			'greeting'          => $greeting,
 			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),
 			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
 			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),
 			'maxHistoryMessages'=> max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? 8 ) ) ),
-			'provider'          => sanitize_key( (string) ( $ai_agent['provider'] ?? 'openai' ) ),
-			'model'             => sanitize_text_field( (string) ( $ai_agent['openai_model'] ?? '' ) ),
 			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),
 		);
 	}

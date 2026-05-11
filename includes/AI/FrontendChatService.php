@@ -156,6 +156,10 @@ final class FrontendChatService {
 				'role'    => 'system',
 				'content' => implode( "\n\n", array_filter( $context ) ),
 			),
+			array(
+				'role'    => 'system',
+				'content' => 'When the provided live site context includes explicit product facts such as capacities, sizes, weights, attributes, rankings, or product names, answer from those facts directly. Do not say the website does not specify those details if they are present in the supplied context.',
+			),
 		);
 
 		$context_instructions = sanitize_textarea_field( (string) ( $ai_agent['context_instructions'] ?? '' ) );
@@ -353,9 +357,12 @@ final class FrontendChatService {
 			array_map(
 				static function ( array $source ): array {
 					return array(
-						'title' => sanitize_text_field( (string) ( $source['title'] ?? '' ) ),
-						'url'   => esc_url_raw( (string) ( $source['url'] ?? '' ) ),
-						'label' => sanitize_text_field( (string) ( $source['source_label'] ?? $source['source_type'] ?? '' ) ),
+						'title'       => sanitize_text_field( (string) ( $source['title'] ?? '' ) ),
+						'url'         => esc_url_raw( (string) ( $source['url'] ?? '' ) ),
+						'label'       => sanitize_text_field( (string) ( $source['source_label'] ?? $source['source_type'] ?? '' ) ),
+						'summary'     => sanitize_textarea_field( (string) ( $source['summary'] ?? '' ) ),
+						'image_url'   => esc_url_raw( (string) ( $source['image_url'] ?? '' ) ),
+						'source_type' => sanitize_key( (string) ( $source['source_type'] ?? '' ) ),
 					);
 				},
 				array_slice( $sources, 0, 5 )

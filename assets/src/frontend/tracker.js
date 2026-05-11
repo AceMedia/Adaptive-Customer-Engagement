@@ -435,6 +435,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				word-break: break-word;
 				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 			}
+			.ace-ai-chat-bubble a {
+				color: #1d4ed8;
+				font-weight: 600;
+				text-decoration: underline;
+			}
 			.ace-ai-chat-message[data-role="assistant"] .ace-ai-chat-bubble {
 				background: #ffffff;
 				color: #0f172a;
@@ -448,40 +453,110 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				color: #ffffff;
 			}
 			.ace-ai-chat-sources {
-				margin: 8px 0 0;
-				padding-left: 18px;
-				font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-				color: #334155;
+				display: grid;
+				gap: 10px;
+				margin: 10px 0 0;
 			}
-			.ace-ai-chat-sources a {
+			.ace-ai-chat-source-lead {
+				margin-bottom: 2px;
+			}
+			.ace-ai-chat-source-more[hidden] {
+				display: none;
+			}
+			.ace-ai-chat-source-toggle {
+				justify-self: start;
+				padding: 0;
+				border: 0;
+				background: transparent;
 				color: #1d4ed8;
+				font: 700 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+				text-decoration: underline;
+			}
+			.ace-ai-chat-source-card {
+				display: grid;
+				grid-template-columns: 64px minmax(0, 1fr);
+				gap: 10px;
+				align-items: start;
+				padding: 10px;
+				border-radius: 14px;
+				background: #ffffff;
+				border: 1px solid rgba(15, 23, 42, 0.08);
+				color: #0f172a;
+				text-decoration: none;
+			}
+			.ace-ai-chat-source-card:hover {
+				border-color: rgba(37, 99, 235, 0.28);
+				box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+			}
+			.ace-ai-chat-source-thumb {
+				width: 64px;
+				height: 64px;
+				border-radius: 12px;
+				object-fit: cover;
+				background: #e2e8f0;
+			}
+			.ace-ai-chat-source-thumb-placeholder {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 64px;
+				height: 64px;
+				border-radius: 12px;
+				background: linear-gradient(135deg, #dbeafe, #eff6ff);
+				color: #1d4ed8;
+				font: 700 18px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			.ace-ai-chat-source-copy {
+				min-width: 0;
+			}
+			.ace-ai-chat-source-title {
+				display: block;
+				font: 700 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: inherit;
+			}
+			.ace-ai-chat-source-summary {
+				display: block;
+				margin-top: 4px;
+				font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #475569;
 			}
 			#ace-ai-chat-form {
-				padding: 14px;
+				box-sizing: border-box;
+				padding: 12px;
 				border-top: 1px solid rgba(15, 23, 42, 0.08);
 				background: #ffffff;
 			}
 			#ace-ai-chat-input {
+				display: block;
+				box-sizing: border-box;
 				width: 100%;
-				min-height: 92px;
-				padding: 12px 14px;
+				height: 42px;
+				min-height: 42px;
+				max-height: 126px;
+				padding: 10px 14px;
 				border: 1px solid rgba(15, 23, 42, 0.14);
 				border-radius: 14px;
-				resize: vertical;
+				resize: none;
+				overflow-y: hidden;
 				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 			}
 			#ace-ai-chat-actions {
 				display: flex;
-				align-items: center;
+				flex-wrap: wrap;
+				align-items: flex-start;
 				justify-content: space-between;
 				gap: 12px;
 				margin-top: 10px;
 			}
 			#ace-ai-chat-meta {
+				flex: 1 1 180px;
+				min-width: 0;
 				font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 				color: #64748b;
 			}
 			#ace-ai-chat-send {
+				flex: 0 0 auto;
 				border: 0;
 				border-radius: 999px;
 				background: #2563eb;
@@ -504,7 +579,6 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const header = document.createElement('div');
 	const titleWrap = document.createElement('div');
 	const title = document.createElement('strong');
-	const subtitle = document.createElement('small');
 	const close = document.createElement('button');
 	const messagesNode = document.createElement('div');
 	const form = document.createElement('form');
@@ -529,10 +603,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	panel.hidden = true;
 
 	header.id = 'ace-ai-chat-header';
-	title.textContent = chatConfig.title || 'Site assistant';
-	subtitle.textContent = chatConfig.provider === 'openai' && chatConfig.model ? `OpenAI · ${chatConfig.model}` : 'Website assistant';
+	title.textContent = chatConfig.title || chatConfig.botName || 'Site assistant';
 	titleWrap.appendChild(title);
-	titleWrap.appendChild(subtitle);
 
 	close.id = 'ace-ai-chat-close';
 	close.type = 'button';
@@ -547,11 +619,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	form.id = 'ace-ai-chat-form';
 	input.id = 'ace-ai-chat-input';
-	input.placeholder = chatConfig.placeholder || 'Ask a question about this website';
+	input.rows = 1;
+	input.placeholder = chatConfig.placeholder || 'Ask about the company or products';
 
 	actions.id = 'ace-ai-chat-actions';
 	meta.id = 'ace-ai-chat-meta';
-	meta.textContent = chatConfig.showSources ? 'Replies can include source links from this website.' : 'Ask about pages, posts, and products on this website.';
+	meta.textContent = chatConfig.showSources ? 'Replies can include links to relevant company and product information.' : 'Ask about the company, products, or services.';
 	send.id = 'ace-ai-chat-send';
 	send.type = 'submit';
 	send.textContent = 'Send';
@@ -571,6 +644,160 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		state.messages.push(message);
 	};
 
+	const updateInputHeight = () => {
+		input.style.height = 'auto';
+
+		const computed = window.getComputedStyle(input);
+		const lineHeight = parseFloat(computed.lineHeight) || 21;
+		const padding = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0);
+		const border = (parseFloat(computed.borderTopWidth) || 0) + (parseFloat(computed.borderBottomWidth) || 0);
+		const minHeight = Math.round(lineHeight + padding + border);
+		const maxHeight = Math.round((lineHeight * 5) + padding + border);
+		const nextHeight = Math.max(minHeight, Math.min(input.scrollHeight, maxHeight));
+
+		input.style.height = `${nextHeight}px`;
+		input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+	};
+
+	const normaliseSourceTitle = (title) => String(title || '').trim().toLowerCase();
+
+	const appendLinkedText = (container, text, sources) => {
+		const content = String(text || '');
+		const linkableSources = Array.isArray(sources)
+			? sources
+				.filter((source) => source?.url && source?.title)
+				.sort((left, right) => String(right.title || '').length - String(left.title || '').length)
+			: [];
+
+		if (!content || !linkableSources.length) {
+			container.appendChild(document.createTextNode(content));
+			return;
+		}
+
+		const contentLower = content.toLowerCase();
+		let cursor = 0;
+
+		while (cursor < content.length) {
+			let nextMatch = null;
+
+			linkableSources.forEach((source) => {
+				const title = String(source.title || '');
+				const titleLower = normaliseSourceTitle(title);
+
+				if (!titleLower) {
+					return;
+				}
+
+				const index = contentLower.indexOf(titleLower, cursor);
+
+				if (index === -1) {
+					return;
+				}
+
+				if (!nextMatch || index < nextMatch.index || (index === nextMatch.index && title.length > nextMatch.title.length)) {
+					nextMatch = { index, title, source };
+				}
+			});
+
+			if (!nextMatch) {
+				container.appendChild(document.createTextNode(content.slice(cursor)));
+				break;
+			}
+
+			if (nextMatch.index > cursor) {
+				container.appendChild(document.createTextNode(content.slice(cursor, nextMatch.index)));
+			}
+
+			const link = document.createElement('a');
+			link.href = nextMatch.source.url;
+			link.target = '_blank';
+			link.rel = 'noopener noreferrer';
+			link.textContent = content.slice(nextMatch.index, nextMatch.index + nextMatch.title.length);
+			container.appendChild(link);
+
+			cursor = nextMatch.index + nextMatch.title.length;
+		}
+	};
+
+	const renderBubbleContent = (bubble, message) => {
+		bubble.textContent = '';
+
+		String(message?.content || '').split('\n').forEach((line, index, lines) => {
+			appendLinkedText(bubble, line, message?.role === 'assistant' ? message.sources : []);
+
+			if (index < lines.length - 1) {
+				bubble.appendChild(document.createElement('br'));
+			}
+		});
+	};
+
+	const summariseSourceText = (source) => {
+		const raw = String(source?.summary || '').replace(/\s+/g, ' ').replace(/^["'\s]+|["'\s]+$/g, '').trim();
+
+		if (!raw) {
+			return '';
+		}
+
+		const sentences = raw.match(/[^.!?]+[.!?]?/g) || [raw];
+		const lead = sentences
+			.map((sentence) => sentence.trim())
+			.filter(Boolean)
+			.slice(0, 2)
+			.join(' ');
+
+		const summary = lead || raw;
+
+		if (summary.length <= 140) {
+			return summary;
+		}
+
+		return `${summary.slice(0, 137).trim().replace(/[.,;:!?-]+$/u, '')}…`;
+	};
+
+	const buildSourceCard = (source) => {
+		if (!source?.url || !source?.title) {
+			return null;
+		}
+
+		const card = document.createElement('a');
+		const thumb = document.createElement(source.image_url ? 'img' : 'div');
+		const copy = document.createElement('div');
+		const titleNode = document.createElement('strong');
+		const summaryNode = document.createElement('span');
+
+		card.className = 'ace-ai-chat-source-card';
+		card.href = source.url;
+		card.target = '_blank';
+		card.rel = 'noopener noreferrer';
+
+		if (source.image_url) {
+			thumb.className = 'ace-ai-chat-source-thumb';
+			thumb.src = source.image_url;
+			thumb.alt = source.title;
+			thumb.loading = 'lazy';
+		} else {
+			thumb.className = 'ace-ai-chat-source-thumb-placeholder';
+			thumb.textContent = String(source.title || '').trim().charAt(0).toUpperCase() || '•';
+		}
+
+		copy.className = 'ace-ai-chat-source-copy';
+		titleNode.className = 'ace-ai-chat-source-title';
+		titleNode.textContent = source.title;
+		summaryNode.className = 'ace-ai-chat-source-summary';
+		summaryNode.textContent = summariseSourceText(source);
+
+		copy.appendChild(titleNode);
+
+		if (summaryNode.textContent) {
+			copy.appendChild(summaryNode);
+		}
+
+		card.appendChild(thumb);
+		card.appendChild(copy);
+
+		return card;
+	};
+
 	const renderMessages = () => {
 		messagesNode.innerHTML = '';
 
@@ -581,27 +808,50 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			item.className = 'ace-ai-chat-message';
 			item.dataset.role = message.role;
 			bubble.className = 'ace-ai-chat-bubble';
-			bubble.textContent = message.content;
+			renderBubbleContent(bubble, message);
 			item.appendChild(bubble);
 
 			if (chatConfig.showSources && Array.isArray(message.sources) && message.sources.length) {
-				const list = document.createElement('ol');
+				const list = document.createElement('div');
+				const leadWrap = document.createElement('div');
+				const moreWrap = document.createElement('div');
 				list.className = 'ace-ai-chat-sources';
+				leadWrap.className = 'ace-ai-chat-source-lead';
+				moreWrap.className = 'ace-ai-chat-source-more';
+				moreWrap.hidden = true;
 
-				message.sources.forEach((source) => {
-					if (!source?.url || !source?.title) {
-						return;
+				message.sources.forEach((source, index) => {
+					const card = buildSourceCard(source);
+
+					if (card) {
+						if (0 === index) {
+							leadWrap.appendChild(card);
+						} else {
+							moreWrap.appendChild(card);
+						}
 					}
-
-					const listItem = document.createElement('li');
-					const link = document.createElement('a');
-					link.href = source.url;
-					link.target = '_blank';
-					link.rel = 'noopener noreferrer';
-					link.textContent = source.label ? `${source.title} (${source.label})` : source.title;
-					listItem.appendChild(link);
-					list.appendChild(listItem);
 				});
+
+				if (leadWrap.childNodes.length) {
+					list.appendChild(leadWrap);
+				}
+
+				if (moreWrap.childNodes.length) {
+					const toggle = document.createElement('button');
+					const extraCount = moreWrap.childNodes.length;
+					toggle.type = 'button';
+					toggle.className = 'ace-ai-chat-source-toggle';
+					toggle.textContent = `Show ${extraCount} other option${extraCount === 1 ? '' : 's'}`;
+					toggle.addEventListener('click', () => {
+						const isHidden = moreWrap.hidden;
+						moreWrap.hidden = !isHidden;
+						toggle.textContent = isHidden
+							? 'Hide other options'
+							: `Show ${extraCount} other option${extraCount === 1 ? '' : 's'}`;
+					});
+					list.appendChild(toggle);
+					list.appendChild(moreWrap);
+				}
 
 				if (list.childNodes.length) {
 					item.appendChild(list);
@@ -637,6 +887,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				},
 			}, pageContext));
 			input.focus();
+			updateInputHeight();
 		}
 	};
 
@@ -645,6 +896,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		input.disabled = nextPending;
 		send.disabled = nextPending;
 		send.textContent = nextPending ? 'Sending…' : 'Send';
+		updateInputHeight();
 	};
 
 	const buildHistory = () => state.messages
@@ -728,10 +980,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	pushMessage({
 		role: 'assistant',
-		content: chatConfig.greeting || 'Hello, I am the site assistant. Ask me anything about this website and I will do my best to help.',
+		content: chatConfig.greeting || `Hello, I am ${chatConfig.botName || chatConfig.title || 'the site assistant'}. Ask me about the company, products, or services and I will do my best to help.`,
 		sources: [],
 	});
 	renderMessages();
+	updateInputHeight();
 
 	launcher.addEventListener('click', () => setOpen(!state.open));
 	close.addEventListener('click', () => setOpen(false));
@@ -744,8 +997,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		input.value = '';
+		updateInputHeight();
 		sendMessage(content);
 	});
+	input.addEventListener('input', updateInputHeight);
 	input.addEventListener('keydown', (event) => {
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();

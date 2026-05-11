@@ -36,7 +36,7 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 
 - Setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, AI, and phone-number management
 - Amazon Connect setup fields for region, instance ID, S3 export bucket/prefix, flow log group, credentials strategy, and default contact flow selection
-- OpenAI-backed website chat controls for API key, model, prompts, launcher copy, live site-context grounding, and frontend visibility rules
+- OpenAI-backed company and product assistant controls for API key, model, prompts, chatbot name, launcher copy, live site-context grounding, and frontend visibility rules
 - A setup-style phone-numbers screen for adding, editing, routing, and reviewing tracked numbers, including default-number handling and Amazon Connect identifiers
 - Live Amazon Connect number visibility inside the phone-number setup screen, so already claimed instance numbers can be reviewed alongside local routing rules
 - Amazon Connect number search and claim actions in wp-admin, with newly claimed numbers loaded straight into a local routing-rule draft
@@ -165,13 +165,27 @@ The admin now leans much more heavily on **single-item takeover views** for sess
 
 The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns. Session and company detail views also summarise the strongest commerce interest signals attached to that record.
 
+## Website assistant
+
+The frontend assistant is now positioned around **the company, products, and services** rather than generic website help.
+
+It currently supports:
+
+- a configurable chatbot name, opening message, and input placeholder
+- a compact single-line composer that expands as needed up to five lines
+- OpenAI-backed replies grounded in live WordPress and WooCommerce content
+- product-aware comparison answers, including size and capacity ranking where the catalogue provides those signals
+- inline linked titles in assistant replies when relevant sources are mentioned
+- a lead source card with thumbnail and short summary, plus a collapsed list of extra options
+- stored chat conversations and transcripts in the plugin reporting surfaces
+
 ## Setup and connection guidance
 
 The setup screens now cover tracking, privacy, enrichment, AI, Amazon Connect, and phone numbers more clearly, with consistent introductions, section spacing, and guidance links for the relevant API keys, instance IDs, phone number identifiers, and provider documentation.
 
 The **Amazon Connect** page also acts as a pre-flight screen for later testing, so the region, instance ID, S3 export bucket/prefix, flow log group, credentials mode, and default contact flow can be stored in one place while the remaining readiness gaps are checked.
 
-The **AI agent** page now runs the website assistant directly from WordPress using OpenAI. That means the model, prompts, frontend launcher copy, source-link behaviour, and live site-context grounding can all be managed without relying on Amazon Connect chat-flow wiring.
+The **AI agent** page now runs the company and product assistant directly from WordPress using OpenAI. That means the model, prompts, chatbot name, frontend launcher copy, source-link behaviour, and live site-context grounding can all be managed without relying on Amazon Connect chat-flow wiring.
 
 The **Enrichment** page is where the implemented provider support is connected today. That page already includes the provider selector, API key field, cache controls, bot/private-IP options, and a live test lookup tool for the supported providers.
 

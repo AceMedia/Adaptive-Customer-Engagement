@@ -154,7 +154,7 @@ final class SiteContextService {
 			return array(
 				'answer'     => sprintf(
 					/* translators: %s: site name */
-					__( 'Hello from %s. Ask me about the site, a page, a post, or one of the products and I will look it up from the live content.', 'adaptive-customer-engagement' ),
+					__( 'Hello from %s. Ask me about the company, services, or one of the products and I will look it up from the live content.', 'adaptive-customer-engagement' ),
 					$site['name']
 				),
 				'sources'    => array(),
@@ -167,7 +167,7 @@ final class SiteContextService {
 			return array(
 				'answer'     => sprintf(
 					/* translators: %s: site name */
-					__( 'Hello, I am the %s site assistant. Ask me about products, pages, posts, or anything published on the site and I will look it up live.', 'adaptive-customer-engagement' ),
+					__( 'Hello, I am the %s assistant. Ask me about the company, products, or services and I will look it up live.', 'adaptive-customer-engagement' ),
 					$site['name']
 				),
 				'sources'    => array(),
@@ -176,11 +176,17 @@ final class SiteContextService {
 			);
 		}
 
+		$product_comparison = $this->answer_product_comparison_question( $question, $limit );
+
+		if ( ! empty( $product_comparison ) ) {
+			return $product_comparison;
+		}
+
 		$documents = $this->search( $this->expand_query_for_search( $question ), $limit );
 
 		if ( empty( $documents ) ) {
 			return array(
-				'answer'     => __( 'I could not find a clear answer in the current site content. Please try naming the page, post, or product you want to know about.', 'adaptive-customer-engagement' ),
+				'answer'     => __( 'I could not find a clear answer in the current company or product information. Please try naming the product, service, or topic you want to know about.', 'adaptive-customer-engagement' ),
 				'sources'    => array(),
 				'confidence' => 'low',
 				'fallback'   => true,
@@ -194,19 +200,7 @@ final class SiteContextService {
 
 		return array(
 			'answer'     => $answer,
-			'sources'    => array_map(
-				static function ( array $document ): array {
-					return array(
-						'id'           => (int) ( $document['id'] ?? 0 ),
-						'title'        => sanitize_text_field( (string) ( $document['title'] ?? '' ) ),
-						'url'          => esc_url_raw( (string) ( $document['url'] ?? '' ) ),
-						'source_type'  => sanitize_key( (string) ( $document['source_type'] ?? '' ) ),
-						'source_label' => sanitize_text_field( (string) ( $document['source_label'] ?? '' ) ),
-						'summary'      => sanitize_textarea_field( (string) ( $document['summary'] ?? '' ) ),
-					);
-				},
-				$documents
-			),
+			'sources'    => array_map( array( $this, 'format_source_document' ), $documents ),
 			'confidence' => $confidence,
 			'fallback'   => false,
 		);
@@ -314,12 +308,21 @@ final class SiteContextService {
 			'score'        => $score,
 			'modified_gmt' => sanitize_text_field( (string) $post->post_modified_gmt ),
 			'terms'        => $this->get_post_terms( $post ),
+			'image_url'    => $this->get_document_image_url( $post ),
 		);
 
 		$commerce = $this->get_product_details( $post );
 
 		if ( ! empty( $commerce ) ) {
+			$commerce_summary = $this->build_commerce_summary( $commerce );
+
+			if ( '' !== $commerce_summary ) {
+				$summary = trim( $commerce_summary . ' ' . $summary );
+				$summary = $this->trim_content( $summary, 420 );
+			}
+
 			$document['commerce'] = $commerce;
+			$document['summary']  = sanitize_textarea_field( $summary );
 		}
 
 		if ( $include_content ) {
@@ -344,15 +347,18 @@ final class SiteContextService {
 		$product_text = '';
 
 		if ( 'product' === $source_type && ! empty( $top['commerce'] ) && is_array( $top['commerce'] ) ) {
-			$price = sanitize_text_field( (string) ( $top['commerce']['price'] ?? '' ) );
+			$product_text = $this->build_commerce_summary( $top['commerce'] );
+			$price        = sanitize_text_field( (string) ( $top['commerce']['price'] ?? '' ) );
 
 			if ( '' !== $price ) {
-				$product_text = sprintf(
+				$product_text .= ' ' . sprintf(
 					/* translators: %s: price text. */
-					__( ' Current price: %s.', 'adaptive-customer-engagement' ),
+					__( 'Current price: %s.', 'adaptive-customer-engagement' ),
 					$price
 				);
 			}
+
+			$product_text = '' !== trim( $product_text ) ? ' ' . trim( $product_text ) : '';
 		}
 
 		$answer = sprintf(
@@ -411,6 +417,10 @@ final class SiteContextService {
 			$expanded .= ' price pricing quote product';
 		}
 
+		if ( preg_match( '/\b(largest|biggest|smallest|capacity|size|litre|litres)\b/i', $query ) ) {
+			$expanded .= ' bin bins container containers litre litres capacity taylor metal bins';
+		}
+
 		return $expanded;
 	}
 
@@ -460,6 +470,7 @@ final class SiteContextService {
 				$description       = method_exists( $product, 'get_description' ) ? (string) $product->get_description() : '';
 				$price_text        = method_exists( $product, 'get_price_html' ) ? wp_strip_all_tags( (string) $product->get_price_html() ) : '';
 				$sku               = method_exists( $product, 'get_sku' ) ? (string) $product->get_sku() : '';
+				$attributes        = $this->get_product_attributes( $product, $post->ID );
 
 				if ( '' !== $short_description ) {
 					$parts[] = $short_description;
@@ -475,6 +486,10 @@ final class SiteContextService {
 
 				if ( '' !== $sku ) {
 					$parts[] = $sku;
+				}
+
+				foreach ( $attributes as $label => $value ) {
+					$parts[] = sprintf( '%s: %s', sanitize_text_field( (string) $label ), sanitize_text_field( (string) $value ) );
 				}
 			}
 		}
@@ -654,17 +669,496 @@ final class SiteContextService {
 			return array();
 		}
 
+		$categories = wp_get_post_terms( $post->ID, 'product_cat', array( 'fields' => 'names' ) );
+		$categories = is_wp_error( $categories ) ? array() : $categories;
+		$categories = array_values(
+			array_filter(
+				array_map(
+					'sanitize_text_field',
+					is_array( $categories ) ? $categories : array()
+				)
+			)
+		);
+		$attributes = $this->get_product_attributes( $product, $post->ID );
+		$measurements = array_merge(
+			array_values( $attributes ),
+			array(
+				(string) $post->post_title,
+				(string) $post->post_excerpt,
+				(string) $post->post_content,
+			)
+		);
+		$capacity_litres = $this->extract_measurement_value( $measurements, '/(\d+(?:\.\d+)?)\s*(?:litres?|ltr|l)\b/i' );
+		$weight_kg       = $this->extract_measurement_value( $measurements, '/(\d+(?:\.\d+)?)\s*kg\b/i' );
+		$product_kind    = $this->classify_product_kind( (string) $post->post_title, $categories );
+
 		return array_filter(
 			array(
-				'price'       => sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) ),
-				'sku'         => sanitize_text_field( (string) $product->get_sku() ),
-				'in_stock'    => $product->is_in_stock(),
-				'stock_status'=> sanitize_key( (string) $product->get_stock_status() ),
+				'price'            => sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) ),
+				'sku'              => sanitize_text_field( (string) $product->get_sku() ),
+				'in_stock'         => $product->is_in_stock(),
+				'stock_status'     => sanitize_key( (string) $product->get_stock_status() ),
+				'categories'       => $categories,
+				'attributes'       => $attributes,
+				'capacity_litres'  => $capacity_litres > 0 ? $capacity_litres : null,
+				'empty_weight_kg'  => $weight_kg > 0 ? $weight_kg : null,
+				'product_kind'     => $product_kind,
 			),
 			static function ( $value ): bool {
+				if ( is_array( $value ) ) {
+					return ! empty( $value );
+				}
+
+				if ( is_bool( $value ) ) {
+					return true;
+				}
+
 				return '' !== (string) $value && null !== $value;
 			}
 		);
+	}
+
+	/**
+	 * Build a compact structured product summary.
+	 *
+	 * @param array<string, mixed> $commerce Product details.
+	 * @return string
+	 */
+	private function build_commerce_summary( array $commerce ): string {
+		$parts = array();
+
+		if ( ! empty( $commerce['capacity_litres'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: product capacity in litres. */
+				__( 'Capacity: %s litres.', 'adaptive-customer-engagement' ),
+				number_format_i18n( (float) $commerce['capacity_litres'], 0 )
+			);
+		}
+
+		if ( ! empty( $commerce['empty_weight_kg'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: empty weight in kilograms. */
+				__( 'Empty weight: %skg.', 'adaptive-customer-engagement' ),
+				number_format_i18n( (float) $commerce['empty_weight_kg'], 0 )
+			);
+		}
+
+		if ( ! empty( $commerce['categories'] ) && is_array( $commerce['categories'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: comma-separated product categories. */
+				__( 'Categories: %s.', 'adaptive-customer-engagement' ),
+				implode( ', ', array_slice( array_map( 'sanitize_text_field', $commerce['categories'] ), 0, 3 ) )
+			);
+		}
+
+		return trim( implode( ' ', array_filter( $parts ) ) );
+	}
+
+	/**
+	 * Build a structured answer for product comparison questions.
+	 *
+	 * @param string $question User question.
+	 * @param int    $limit    Source document limit.
+	 * @return array<string, mixed>
+	 */
+	private function answer_product_comparison_question( string $question, int $limit ): array {
+		$comparison = $this->detect_product_comparison( $question );
+
+		if ( empty( $comparison ) ) {
+			return array();
+		}
+
+		$posts = get_posts(
+			array(
+				'post_type'           => 'product',
+				'post_status'         => 'publish',
+				'posts_per_page'      => -1,
+				'orderby'             => 'modified',
+				'order'               => 'DESC',
+				'suppress_filters'    => false,
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		if ( empty( $posts ) ) {
+			return array();
+		}
+
+		$focus_terms = $this->extract_product_focus_terms( $question );
+		$candidates  = array();
+
+		foreach ( $posts as $post ) {
+			if ( ! $post instanceof \WP_Post ) {
+				continue;
+			}
+
+			$document = $this->build_document( $post, array(), false );
+
+			if ( empty( $document['commerce'] ) || ! is_array( $document['commerce'] ) ) {
+				continue;
+			}
+
+			if ( ! $this->is_primary_bin_product( $document ) ) {
+				continue;
+			}
+
+			$metric_value = (float) ( $document['commerce'][ $comparison['metric'] ] ?? 0 );
+
+			if ( $metric_value <= 0 ) {
+				continue;
+			}
+
+			if ( ! $this->matches_product_focus_terms( $document, $focus_terms ) ) {
+				continue;
+			}
+
+			$document['comparison_metric_value'] = $metric_value;
+			$candidates[]                        = $document;
+		}
+
+		if ( empty( $candidates ) ) {
+			return array();
+		}
+
+		usort(
+			$candidates,
+			static function ( array $left, array $right ) use ( $comparison ): int {
+				$left_value  = (float) ( $left['comparison_metric_value'] ?? 0 );
+				$right_value = (float) ( $right['comparison_metric_value'] ?? 0 );
+
+				if ( $left_value === $right_value ) {
+					return strcmp( (string) ( $left['title'] ?? '' ), (string) ( $right['title'] ?? '' ) );
+				}
+
+				return 'asc' === $comparison['direction'] ? ( $left_value <=> $right_value ) : ( $right_value <=> $left_value );
+			}
+		);
+
+		$winner      = $candidates[0];
+		$winner_name = sanitize_text_field( (string) ( $winner['title'] ?? '' ) );
+		$winner_value = (float) ( $winner['comparison_metric_value'] ?? 0 );
+		$metric_label = 'capacity_litres' === $comparison['metric'] ? __( 'litres', 'adaptive-customer-engagement' ) : __( 'kg', 'adaptive-customer-engagement' );
+		$answer      = sprintf(
+			/* translators: 1: ranking word, 2: product title, 3: measurement value, 4: measurement unit. */
+			__( 'The %1$s bin I can find in the live catalogue is %2$s at %3$s %4$s.', 'adaptive-customer-engagement' ),
+			sanitize_text_field( (string) $comparison['label'] ),
+			$winner_name,
+			number_format_i18n( $winner_value, 0 ),
+			$metric_label
+		);
+
+		$runner_ups = array();
+
+		foreach ( array_slice( $candidates, 1, max( 0, $limit - 1 ) ) as $candidate ) {
+			$runner_ups[] = sprintf(
+				'%s (%s %s)',
+				sanitize_text_field( (string) ( $candidate['title'] ?? '' ) ),
+				number_format_i18n( (float) ( $candidate['comparison_metric_value'] ?? 0 ), 0 ),
+				$metric_label
+			);
+		}
+
+		if ( ! empty( $runner_ups ) ) {
+			$answer .= ' ' . sprintf(
+				/* translators: %s: comma-separated runner-up products. */
+				__( 'The next closest options are %s.', 'adaptive-customer-engagement' ),
+				implode( ', ', $runner_ups )
+			);
+		}
+
+		$winner_excerpt = sanitize_textarea_field( (string) ( $winner['excerpt'] ?? '' ) );
+
+		if ( '' !== $winner_excerpt ) {
+			$answer .= ' ' . sprintf(
+				/* translators: %s: excerpt text. */
+				__( 'Its listing says: %s', 'adaptive-customer-engagement' ),
+				$winner_excerpt
+			);
+		}
+
+		return array(
+			'answer'     => sanitize_textarea_field( trim( $answer ) ),
+			'sources'    => array_map( array( $this, 'format_source_document' ), array_slice( $candidates, 0, $limit ) ),
+			'confidence' => 'high',
+			'fallback'   => false,
+		);
+	}
+
+	/**
+	 * Build a frontend-safe source payload from a document.
+	 *
+	 * @param array<string, mixed> $document Raw document.
+	 * @return array<string, mixed>
+	 */
+	private function format_source_document( array $document ): array {
+		return array(
+			'id'           => (int) ( $document['id'] ?? 0 ),
+			'title'        => sanitize_text_field( (string) ( $document['title'] ?? '' ) ),
+			'url'          => esc_url_raw( (string) ( $document['url'] ?? '' ) ),
+			'source_type'  => sanitize_key( (string) ( $document['source_type'] ?? '' ) ),
+			'source_label' => sanitize_text_field( (string) ( $document['source_label'] ?? '' ) ),
+			'summary'      => sanitize_textarea_field( (string) ( $document['summary'] ?? '' ) ),
+			'image_url'    => esc_url_raw( (string) ( $document['image_url'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Detect whether a question is asking for a sortable product comparison.
+	 *
+	 * @param string $question User question.
+	 * @return array<string, string>
+	 */
+	private function detect_product_comparison( string $question ): array {
+		$question = $this->normalise_text( $question );
+
+		if ( ! preg_match( '/\b(bin|bins|container|containers|product|products|capacity|size|litre|litres)\b/', $question ) ) {
+			return array();
+		}
+
+		if ( preg_match( '/\b(largest|biggest|max(?:imum)?)\b/', $question ) ) {
+			return array(
+				'metric'    => 'capacity_litres',
+				'direction' => 'desc',
+				'label'     => __( 'largest', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		if ( preg_match( '/\b(smallest|min(?:imum)?)\b/', $question ) ) {
+			return array(
+				'metric'    => 'capacity_litres',
+				'direction' => 'asc',
+				'label'     => __( 'smallest', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		if ( preg_match( '/\b(heaviest)\b/', $question ) ) {
+			return array(
+				'metric'    => 'empty_weight_kg',
+				'direction' => 'desc',
+				'label'     => __( 'heaviest', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		if ( preg_match( '/\b(lightest)\b/', $question ) ) {
+			return array(
+				'metric'    => 'empty_weight_kg',
+				'direction' => 'asc',
+				'label'     => __( 'lightest', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		return array();
+	}
+
+	/**
+	 * Extract non-generic focus terms from a product comparison question.
+	 *
+	 * @param string $question User question.
+	 * @return array<int, string>
+	 */
+	private function extract_product_focus_terms( string $question ): array {
+		$ignored = array(
+			'largest',
+			'biggest',
+			'smallest',
+			'heaviest',
+			'lightest',
+			'maximum',
+			'minimum',
+			'what',
+			'which',
+			'bin',
+			'bins',
+			'container',
+			'containers',
+			'product',
+			'products',
+			'capacity',
+			'capacities',
+			'size',
+			'sizes',
+			'litre',
+			'litres',
+		);
+
+		return array_values(
+			array_filter(
+				$this->extract_terms( $question ),
+				static function ( string $term ) use ( $ignored ): bool {
+					return ! in_array( $term, $ignored, true );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Determine whether a product document represents a primary bin/container.
+	 *
+	 * @param array<string, mixed> $document Product document.
+	 * @return bool
+	 */
+	private function is_primary_bin_product( array $document ): bool {
+		if ( 'product' !== sanitize_key( (string) ( $document['source_type'] ?? '' ) ) ) {
+			return false;
+		}
+
+		if ( empty( $document['commerce'] ) || ! is_array( $document['commerce'] ) ) {
+			return false;
+		}
+
+		return 'container' === sanitize_key( (string) ( $document['commerce']['product_kind'] ?? '' ) );
+	}
+
+	/**
+	 * Check whether a product document matches the focused comparison terms.
+	 *
+	 * @param array<string, mixed> $document Product document.
+	 * @param array<int, string>   $terms    Focus terms.
+	 * @return bool
+	 */
+	private function matches_product_focus_terms( array $document, array $terms ): bool {
+		if ( empty( $terms ) ) {
+			return true;
+		}
+
+		$parts   = array(
+			(string) ( $document['title'] ?? '' ),
+			(string) ( $document['summary'] ?? '' ),
+			(string) ( $document['excerpt'] ?? '' ),
+		);
+		$commerce = $document['commerce'] ?? array();
+
+		if ( is_array( $commerce ) ) {
+			if ( ! empty( $commerce['categories'] ) && is_array( $commerce['categories'] ) ) {
+				$parts[] = implode( ' ', array_map( 'sanitize_text_field', $commerce['categories'] ) );
+			}
+
+			if ( ! empty( $commerce['attributes'] ) && is_array( $commerce['attributes'] ) ) {
+				foreach ( $commerce['attributes'] as $label => $value ) {
+					$parts[] = sanitize_text_field( (string) $label ) . ' ' . sanitize_text_field( (string) $value );
+				}
+			}
+		}
+
+		$haystack = $this->normalise_text( implode( ' ', array_filter( $parts ) ) );
+		$matches  = 0;
+
+		foreach ( $terms as $term ) {
+			if ( '' !== $term && false !== strpos( $haystack, $term ) ) {
+				++$matches;
+			}
+		}
+
+		return $matches >= min( count( $terms ), 2 );
+	}
+
+	/**
+	 * Classify the overall product kind from its title and categories.
+	 *
+	 * @param string             $title      Product title.
+	 * @param array<int, string> $categories Product categories.
+	 * @return string
+	 */
+	private function classify_product_kind( string $title, array $categories ): string {
+		$haystack = $this->normalise_text( $title . ' ' . implode( ' ', $categories ) );
+
+		if ( preg_match( '/\b(range)\b/', $haystack ) ) {
+			return 'collection';
+		}
+
+		if ( preg_match( '/\b(spare|spares|artwork|lid|castor|lock|drainplug|din|part|parts|component|components|body|frame|housing)\b/', $haystack ) ) {
+			return 'accessory';
+		}
+
+		if ( false !== strpos( $haystack, 'taylor metal bins' ) || preg_match( '/\b(bin|container|continental)\b/', $haystack ) ) {
+			return 'container';
+		}
+
+		return 'product';
+	}
+
+	/**
+	 * Extract readable WooCommerce product attributes.
+	 *
+	 * @param object $product WooCommerce product object.
+	 * @param int    $post_id Product post ID.
+	 * @return array<string, string>
+	 */
+	private function get_product_attributes( $product, int $post_id ): array {
+		if ( ! is_object( $product ) || ! method_exists( $product, 'get_attributes' ) ) {
+			return array();
+		}
+
+		$attributes = array();
+
+		foreach ( $product->get_attributes() as $attribute ) {
+			if ( ! is_object( $attribute ) || ! method_exists( $attribute, 'get_name' ) ) {
+				continue;
+			}
+
+			$name  = (string) $attribute->get_name();
+			$label = function_exists( 'wc_attribute_label' ) ? wc_attribute_label( $name, $product ) : $name;
+			$label = sanitize_text_field( (string) $label );
+			$values = array();
+
+			if ( method_exists( $attribute, 'is_taxonomy' ) && $attribute->is_taxonomy() && function_exists( 'wc_get_product_terms' ) ) {
+				$values = wc_get_product_terms( $post_id, $name, array( 'fields' => 'names' ) );
+			} elseif ( method_exists( $attribute, 'get_options' ) ) {
+				$values = $attribute->get_options();
+			}
+
+			$values = array_values(
+				array_filter(
+					array_map(
+						static function ( $value ): string {
+							return sanitize_text_field( wp_strip_all_tags( (string) $value ) );
+						},
+						is_array( $values ) ? $values : array()
+					)
+				)
+			);
+
+			if ( '' === $label || empty( $values ) ) {
+				continue;
+			}
+
+			$attributes[ $label ] = implode( ', ', $values );
+		}
+
+		return $attributes;
+	}
+
+	/**
+	 * Get the main image URL for a document.
+	 *
+	 * @param \WP_Post $post Document post.
+	 * @return string
+	 */
+	private function get_document_image_url( \WP_Post $post ): string {
+		$image_url = get_the_post_thumbnail_url( $post, 'medium' );
+
+		return is_string( $image_url ) ? esc_url_raw( $image_url ) : '';
+	}
+
+	/**
+	 * Extract a numeric measurement from a list of product strings.
+	 *
+	 * @param array<int, string> $values  Candidate strings.
+	 * @param string             $pattern Regex pattern with the numeric capture in group 1.
+	 * @return float
+	 */
+	private function extract_measurement_value( array $values, string $pattern ): float {
+		foreach ( $values as $value ) {
+			if ( ! is_string( $value ) || '' === trim( $value ) ) {
+				continue;
+			}
+
+			if ( preg_match( $pattern, wp_strip_all_tags( $value ), $matches ) && isset( $matches[1] ) ) {
+				return (float) $matches[1];
+			}
+		}
+
+		return 0.0;
 	}
 
 	/**

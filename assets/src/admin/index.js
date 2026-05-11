@@ -5037,7 +5037,7 @@ function SettingsView({ section = 'settings', active }) {
 					),
 					settings.ai_agent.frontend_chat_enabled
 						? createElement(SettingsFieldGrid, { compact: true },
-							createElement(TextControl, { label: __('Chat title', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_title: next }) }),
+							createElement(TextControl, { label: __('Chatbot name', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_bot_name || settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_bot_name: next, frontend_chat_title: next }) }),
 							createElement(TextControl, { label: __('Input placeholder', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_placeholder || '', onChange: (next) => setAiAgent({ frontend_chat_placeholder: next }) }),
 							createElement(TextControl, { label: __('Max context documents', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 8, value: settings.ai_agent.max_context_documents ?? 4, onChange: (next) => setAiAgent({ max_context_documents: Number(next || 1) }) }),
 							createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 12, value: settings.ai_agent.max_history_messages ?? 8, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
