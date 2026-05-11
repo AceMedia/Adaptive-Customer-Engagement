@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
@@ -283,6 +284,16 @@ final class AdminController {
 				'methods'             => 'POST',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'import_settings' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/openai/models',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'openai_models' ),
 			)
 		);
 
@@ -896,6 +907,28 @@ final class AdminController {
 				'imported_at' => gmdate( 'c' ),
 			)
 		);
+	}
+
+	/**
+	 * Validate the OpenAI token and list available models.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function openai_models( WP_REST_Request $request ) {
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+		$api_key  = sanitize_text_field( (string) ( $payload['api_key'] ?? $ai_agent['openai_api_key'] ?? '' ) );
+
+		$result = ( new OpenAIClient() )->list_models( $api_key );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response( $result );
 	}
 
 	/**

@@ -194,7 +194,7 @@ function hasEnrichmentConfig(settings = {}) {
 }
 
 function hasOpenAiConfig(settings = {}) {
-	return !!(settings?.provider === 'openai' && settings?.openai_api_key && settings?.openai_model);
+	return !!settings?.openai_api_key;
 }
 
 function getApiErrorMessage(error, fallback) {
@@ -3786,6 +3786,9 @@ function SettingsView({ section = 'settings', active }) {
 	const [queueFlowData, setQueueFlowData] = useState(null);
 	const [queueData, setQueueData] = useState(null);
 	const [flowDraft, setFlowDraft] = useState(CONNECT_FLOW_DRAFT_DEFAULTS);
+	const [openAiModelsData, setOpenAiModelsData] = useState(null);
+	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
+	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
 
 	useEffect(() => {
 		if (active && !settings) {
@@ -3823,6 +3826,15 @@ function SettingsView({ section = 'settings', active }) {
 		}
 	}, [active, section, settings, queueFlowData]);
 
+	useEffect(() => {
+		const apiKey = settings?.ai_agent?.openai_api_key || '';
+
+		if (!apiKey) {
+			setOpenAiModelsData(null);
+			setOpenAiModelsKey('');
+		}
+	}, [settings?.ai_agent?.openai_api_key]);
+
 	if (!settings) {
 		return createElement(Spinner);
 	}
@@ -3840,6 +3852,47 @@ function SettingsView({ section = 'settings', active }) {
 		}
 		setNotice(__('Settings saved.', 'adaptive-customer-engagement'));
 		setBusy(false);
+	};
+
+	const refreshOpenAiModels = async (apiKey = settings?.ai_agent?.openai_api_key || '') => {
+		if (!apiKey) {
+			setOpenAiModelsData(null);
+			setOpenAiModelsKey('');
+			return;
+		}
+
+		setOpenAiModelsBusy(true);
+
+		try {
+			const response = await request('/admin/openai/models', {
+				method: 'POST',
+				data: { api_key: apiKey },
+			});
+			const modelIds = (response?.models || []).map((item) => item.id);
+			const selectedModel = settings?.ai_agent?.openai_model || '';
+			const nextModel = modelIds.includes(selectedModel)
+				? selectedModel
+				: (response?.preferred_model || modelIds[0] || '');
+
+			setOpenAiModelsData({
+				...response,
+				error: '',
+			});
+			setOpenAiModelsKey(apiKey);
+
+			if (nextModel && nextModel !== selectedModel) {
+				setAiAgent({ openai_model: nextModel, provider: 'openai' });
+			}
+		} catch (error) {
+			setOpenAiModelsData({
+				active: false,
+				models: [],
+				error: getApiErrorMessage(error, __('The OpenAI token could not be verified.', 'adaptive-customer-engagement')),
+			});
+			setOpenAiModelsKey(apiKey);
+		}
+
+		setOpenAiModelsBusy(false);
 	};
 
 	const exportSettingsConfig = async () => {
@@ -4029,12 +4082,15 @@ function SettingsView({ section = 'settings', active }) {
 	const aiEnabled = !!settings.ai_agent?.enabled;
 	const openAiConfigured = hasOpenAiConfig(settings.ai_agent || {});
 	const connectLiveReady = connectConfigured && !contactFlowData?.error;
-	const aiProviderReady = aiEnabled && openAiConfigured;
-	const openAiModelOptions = [
-		{ label: 'gpt-4.1-mini', value: 'gpt-4.1-mini' },
-		{ label: 'gpt-4.1', value: 'gpt-4.1' },
-		{ label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
-	];
+	const currentOpenAiKey = settings.ai_agent?.openai_api_key || '';
+	const openAiTokenActive = !!openAiModelsData?.active && openAiModelsKey === currentOpenAiKey;
+	const aiProviderReady = aiEnabled && openAiTokenActive && !!settings.ai_agent?.openai_model;
+	const openAiModelOptions = [{ label: __('Choose a model', 'adaptive-customer-engagement'), value: '' }].concat(
+		(openAiModelsData?.models || []).map((item) => ({
+			label: item.label || item.id,
+			value: item.id,
+		}))
+	);
 	const frontendChatEndpoint = `${config.root.replace(/\/$/, '')}/${config.namespace}/ai/chat/respond`;
 	const connectFlowOptions = [{ label: __('Choose a contact flow', 'adaptive-customer-engagement'), value: '' }].concat(
 		((contactFlowData?.items) || []).map((item) => ({
@@ -4062,6 +4118,20 @@ function SettingsView({ section = 'settings', active }) {
 			{ label: __('Imported calls', 'adaptive-customer-engagement'), value: `${connectImportStatus?.summary?.imported_total || 0}` },
 		]
 		: [{ label: __('Status', 'adaptive-customer-engagement'), value: __('Loading readiness', 'adaptive-customer-engagement') }];
+
+	useEffect(() => {
+		if (
+			active
+			&& section === 'ai-agent'
+			&& aiEnabled
+			&& currentOpenAiKey
+			&& !openAiModelsBusy
+			&& openAiModelsKey !== currentOpenAiKey
+		) {
+			refreshOpenAiModels(currentOpenAiKey);
+		}
+	}, [active, section, aiEnabled, currentOpenAiKey, openAiModelsBusy, openAiModelsKey]);
+
 	const commonHighlights = [
 		{ label: __('Shell', 'adaptive-customer-engagement'), value: __('Native WordPress admin', 'adaptive-customer-engagement') },
 		{ label: __('Defaults', 'adaptive-customer-engagement'), value: __('Privacy-first', 'adaptive-customer-engagement') },
@@ -4523,89 +4593,117 @@ function SettingsView({ section = 'settings', active }) {
 			}),
 			createElement(SettingsPanel, {
 				title: __('Connection and model', 'adaptive-customer-engagement'),
-				description: __('Enable the AI surface, connect the OpenAI key, and choose the model used by the frontend website assistant.', 'adaptive-customer-engagement'),
+				description: __('Enable the AI surface, connect the OpenAI key, and pull the available models straight from the active token.', 'adaptive-customer-engagement'),
 			},
 			createElement(SettingsToggleList, null,
 				createElement(ToggleControl, { label: __('Enable AI agent features', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.enabled, onChange: (next) => setAiAgent({ enabled: next }) }),
 				aiEnabled ? createElement(ToggleControl, { label: __('Allow human handoff', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.handoff_to_human, onChange: (next) => setAiAgent({ handoff_to_human: next }) }) : null
 			),
 			aiEnabled
-				? createElement(SettingsFieldGrid, { compact: true },
-					createElement(TextControl, { label: __('Provider', 'adaptive-customer-engagement'), value: 'OpenAI', disabled: true }),
-					createElement(TextControl, { label: __('OpenAI API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.openai_api_key || '', onChange: (next) => setAiAgent({ openai_api_key: next, provider: 'openai' }) }),
-					createElement(SelectControl, { label: __('Model', 'adaptive-customer-engagement'), value: settings.ai_agent.openai_model || 'gpt-4.1-mini', options: openAiModelOptions, onChange: (next) => setAiAgent({ openai_model: next, provider: 'openai' }) }),
-					createElement(TextControl, { label: __('Temperature', 'adaptive-customer-engagement'), type: 'number', min: 0, max: 2, step: '0.1', value: settings.ai_agent.openai_temperature ?? 0.2, onChange: (next) => setAiAgent({ openai_temperature: Number(next || 0) }) }),
-					createElement(TextControl, { label: __('Max response tokens', 'adaptive-customer-engagement'), type: 'number', min: 200, max: 4000, step: '50', value: settings.ai_agent.openai_max_response_tokens ?? 700, onChange: (next) => setAiAgent({ openai_max_response_tokens: Number(next || 700) }) }),
+				? createElement(Fragment, null,
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(TextControl, { label: __('OpenAI API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.openai_api_key || '', onChange: (next) => setAiAgent({ openai_api_key: next, provider: 'openai', openai_model: next !== (settings.ai_agent.openai_api_key || '') ? '' : settings.ai_agent.openai_model }) }),
+					),
+					createElement(SettingsActionRow, null,
+						createElement(Button, {
+							variant: 'secondary',
+							onClick: () => refreshOpenAiModels(),
+							disabled: openAiModelsBusy || !openAiConfigured,
+						}, openAiModelsBusy ? __('Checking token…', 'adaptive-customer-engagement') : __('Check OpenAI token', 'adaptive-customer-engagement'))
+					),
+					openAiModelsBusy ? createElement(Spinner) : null,
+					openAiModelsData?.error
+						? createElement(Notice, { status: 'warning', isDismissible: false }, openAiModelsData.error)
+						: null,
+					openAiTokenActive
+						? createElement(Fragment, null,
+							createElement(Notice, { status: 'success', isDismissible: false }, __('OpenAI is connected. Model and chat settings are now available below.', 'adaptive-customer-engagement')),
+							createElement(SettingsFieldGrid, { compact: true },
+								createElement(SelectControl, { label: __('Model', 'adaptive-customer-engagement'), value: settings.ai_agent.openai_model || '', options: openAiModelOptions, onChange: (next) => setAiAgent({ openai_model: next, provider: 'openai' }) }),
+							)
+						)
+						: null
 				)
 				: createElement(Notice, { status: 'info', isDismissible: false }, __('Enable AI agent features first to reveal the OpenAI connection fields.', 'adaptive-customer-engagement')),
 			aiEnabled && !openAiConfigured
-				? createElement(Notice, { status: 'warning', isDismissible: false }, __('Save a valid OpenAI API key and model before turning on the frontend chat.', 'adaptive-customer-engagement'))
+				? createElement(Notice, { status: 'warning', isDismissible: false }, __('Add an OpenAI API key first, then check the token to reveal the website-assistant settings.', 'adaptive-customer-engagement'))
 				: null,
-			openAiConfigured
+			aiEnabled && openAiConfigured && !openAiTokenActive && !openAiModelsBusy
+				? createElement(Notice, { status: 'info', isDismissible: false }, __('Check the OpenAI token to load the models available to this account.', 'adaptive-customer-engagement'))
+				: null,
+			openAiTokenActive
 				? createElement(SettingsResultCard, {
 					items: [
-						{ label: __('Provider', 'adaptive-customer-engagement'), value: 'OpenAI' },
 						{ label: __('Selected model', 'adaptive-customer-engagement'), value: settings.ai_agent.openai_model || '—' },
+						{ label: __('Available models', 'adaptive-customer-engagement'), value: `${(openAiModelsData?.models || []).length}` },
 						{ label: __('Frontend chat', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_enabled ? __('Enabled', 'adaptive-customer-engagement') : __('Disabled', 'adaptive-customer-engagement') },
 					],
 				})
 				: null
 			),
-			createElement(SettingsPanel, {
-				title: __('Frontend website chat', 'adaptive-customer-engagement'),
-				description: __('Control the launcher, visibility, and grounding behaviour for the plugin-managed frontend AI chat.', 'adaptive-customer-engagement'),
-				tone: 'soft',
-			},
-			createElement(SettingsToggleList, null,
-				createElement(ToggleControl, { label: __('Enable frontend AI chat', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_enabled, onChange: (next) => setAiAgent({ frontend_chat_enabled: next }) }),
-				createElement(ToggleControl, { label: __('Restrict frontend AI chat to logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_admin_only, onChange: (next) => setAiAgent({ frontend_chat_admin_only: next }) }),
-				createElement(ToggleControl, { label: __('Use live site context in replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.use_live_site_context, onChange: (next) => setAiAgent({ use_live_site_context: next }) }),
-				createElement(ToggleControl, { label: __('Show source links beneath replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.show_source_links, onChange: (next) => setAiAgent({ show_source_links: next }) }),
-				createElement(ToggleControl, { label: __('Keep recent conversation history', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.keep_history, onChange: (next) => setAiAgent({ keep_history: next }) })
-			),
-			settings.ai_agent.frontend_chat_enabled
-				? createElement(SettingsFieldGrid, { compact: true },
-					createElement(TextControl, { label: __('Chat title', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_title: next }) }),
-					createElement(TextControl, { label: __('Input placeholder', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_placeholder || '', onChange: (next) => setAiAgent({ frontend_chat_placeholder: next }) }),
-					createElement(TextControl, { label: __('Max context documents', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 8, value: settings.ai_agent.max_context_documents ?? 4, onChange: (next) => setAiAgent({ max_context_documents: Number(next || 1) }) }),
-					createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 12, value: settings.ai_agent.max_history_messages ?? 8, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
+			openAiTokenActive
+				? createElement(Fragment, null,
+					createElement(SettingsPanel, {
+						title: __('Frontend website chat', 'adaptive-customer-engagement'),
+						description: __('Control the launcher, visibility, and grounding behaviour for the plugin-managed frontend AI chat.', 'adaptive-customer-engagement'),
+						tone: 'soft',
+					},
+					createElement(SettingsToggleList, null,
+						createElement(ToggleControl, { label: __('Enable frontend AI chat', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_enabled, onChange: (next) => setAiAgent({ frontend_chat_enabled: next }) }),
+						createElement(ToggleControl, { label: __('Restrict frontend AI chat to logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_admin_only, onChange: (next) => setAiAgent({ frontend_chat_admin_only: next }) }),
+						createElement(ToggleControl, { label: __('Use live site context in replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.use_live_site_context, onChange: (next) => setAiAgent({ use_live_site_context: next }) }),
+						createElement(ToggleControl, { label: __('Show source links beneath replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.show_source_links, onChange: (next) => setAiAgent({ show_source_links: next }) }),
+						createElement(ToggleControl, { label: __('Keep recent conversation history', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.keep_history, onChange: (next) => setAiAgent({ keep_history: next }) })
+					),
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(TextControl, { label: __('Temperature', 'adaptive-customer-engagement'), type: 'number', min: 0, max: 2, step: '0.1', value: settings.ai_agent.openai_temperature ?? 0.2, onChange: (next) => setAiAgent({ openai_temperature: Number(next || 0) }) }),
+						createElement(TextControl, { label: __('Max response tokens', 'adaptive-customer-engagement'), type: 'number', min: 200, max: 4000, step: '50', value: settings.ai_agent.openai_max_response_tokens ?? 700, onChange: (next) => setAiAgent({ openai_max_response_tokens: Number(next || 700) }) }),
+					),
+					settings.ai_agent.frontend_chat_enabled
+						? createElement(SettingsFieldGrid, { compact: true },
+							createElement(TextControl, { label: __('Chat title', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_title: next }) }),
+							createElement(TextControl, { label: __('Input placeholder', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_placeholder || '', onChange: (next) => setAiAgent({ frontend_chat_placeholder: next }) }),
+							createElement(TextControl, { label: __('Max context documents', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 8, value: settings.ai_agent.max_context_documents ?? 4, onChange: (next) => setAiAgent({ max_context_documents: Number(next || 1) }) }),
+							createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 12, value: settings.ai_agent.max_history_messages ?? 8, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
+						)
+						: createElement(Notice, { status: 'info', isDismissible: false }, __('Turn on the frontend AI chat when you are ready to show the plugin-managed assistant on the website.', 'adaptive-customer-engagement')),
+					createElement(TextareaControl, {
+						label: __('Opening message', 'adaptive-customer-engagement'),
+						help: __('This is the first assistant message visitors see when the chat opens.', 'adaptive-customer-engagement'),
+						value: settings.ai_agent.frontend_chat_greeting || '',
+						onChange: (next) => setAiAgent({ frontend_chat_greeting: next }),
+					}),
+					createElement(Notice, { status: aiProviderReady && settings.ai_agent.frontend_chat_enabled ? 'success' : 'info', isDismissible: false }, aiProviderReady && settings.ai_agent.frontend_chat_enabled
+						? sprintf(__('Frontend chat messages will post to %s once these settings are saved.', 'adaptive-customer-engagement'), frontendChatEndpoint)
+						: __('Save the OpenAI key and enable the frontend chat to activate the website assistant.', 'adaptive-customer-engagement'))
+					),
+					createElement(SettingsPanel, {
+						title: __('Prompts and context', 'adaptive-customer-engagement'),
+						description: __('Define the base system behaviour and how the assistant should interpret the live site context it receives.', 'adaptive-customer-engagement'),
+						tone: 'soft',
+					},
+					createElement(TextareaControl, {
+						label: __('System prompt', 'adaptive-customer-engagement'),
+						help: __('This defines the assistant’s baseline behaviour and tone.', 'adaptive-customer-engagement'),
+						value: settings.ai_agent.system_prompt || '',
+						onChange: (next) => setAiAgent({ system_prompt: next }),
+					}),
+					createElement(TextareaControl, {
+						label: __('Context instructions', 'adaptive-customer-engagement'),
+						help: __('Use this to tell the assistant how to treat the retrieved site context, such as product tone, support boundaries, or answer format.', 'adaptive-customer-engagement'),
+						value: settings.ai_agent.context_instructions || '',
+						onChange: (next) => setAiAgent({ context_instructions: next }),
+					}),
+					createElement(SettingsToggleList, null,
+						createElement(ToggleControl, { label: __('Share session summaries', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_session_context, onChange: (next) => setAiAgent({ share_session_context: next }) }),
+						createElement(ToggleControl, { label: __('Share matched company context', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_company_context, onChange: (next) => setAiAgent({ share_company_context: next }) }),
+						createElement(ToggleControl, { label: __('Share number and routing context', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_number_context, onChange: (next) => setAiAgent({ share_number_context: next }) }),
+						createElement(ToggleControl, { label: __('Share WooCommerce interest summaries', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_woocommerce_context, onChange: (next) => setAiAgent({ share_woocommerce_context: next }) })
+					),
+					createElement(Notice, { status: 'info', isDismissible: false }, __('The plugin now uses WordPress-managed live site context for website chat instead of Amazon Connect or Amazon Lex bot handoff.', 'adaptive-customer-engagement'))
+					)
 				)
-				: createElement(Notice, { status: 'info', isDismissible: false }, __('Turn on the frontend AI chat when you are ready to show the plugin-managed assistant on the website.', 'adaptive-customer-engagement')),
-			createElement(TextareaControl, {
-				label: __('Opening message', 'adaptive-customer-engagement'),
-				help: __('This is the first assistant message visitors see when the chat opens.', 'adaptive-customer-engagement'),
-				value: settings.ai_agent.frontend_chat_greeting || '',
-				onChange: (next) => setAiAgent({ frontend_chat_greeting: next }),
-			}),
-			createElement(Notice, { status: aiProviderReady && settings.ai_agent.frontend_chat_enabled ? 'success' : 'info', isDismissible: false }, aiProviderReady && settings.ai_agent.frontend_chat_enabled
-				? sprintf(__('Frontend chat messages will post to %s once these settings are saved.', 'adaptive-customer-engagement'), frontendChatEndpoint)
-				: __('Save the OpenAI key and enable the frontend chat to activate the website assistant.', 'adaptive-customer-engagement'))
-			),
-			createElement(SettingsPanel, {
-				title: __('Prompts and context', 'adaptive-customer-engagement'),
-				description: __('Define the base system behaviour and how the assistant should interpret the live site context it receives.', 'adaptive-customer-engagement'),
-				tone: 'soft',
-			},
-			createElement(TextareaControl, {
-				label: __('System prompt', 'adaptive-customer-engagement'),
-				help: __('This defines the assistant’s baseline behaviour and tone.', 'adaptive-customer-engagement'),
-				value: settings.ai_agent.system_prompt || '',
-				onChange: (next) => setAiAgent({ system_prompt: next }),
-			}),
-			createElement(TextareaControl, {
-				label: __('Context instructions', 'adaptive-customer-engagement'),
-				help: __('Use this to tell the assistant how to treat the retrieved site context, such as product tone, support boundaries, or answer format.', 'adaptive-customer-engagement'),
-				value: settings.ai_agent.context_instructions || '',
-				onChange: (next) => setAiAgent({ context_instructions: next }),
-			}),
-			createElement(SettingsToggleList, null,
-				createElement(ToggleControl, { label: __('Share session summaries', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_session_context, onChange: (next) => setAiAgent({ share_session_context: next }) }),
-				createElement(ToggleControl, { label: __('Share matched company context', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_company_context, onChange: (next) => setAiAgent({ share_company_context: next }) }),
-				createElement(ToggleControl, { label: __('Share number and routing context', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_number_context, onChange: (next) => setAiAgent({ share_number_context: next }) }),
-				createElement(ToggleControl, { label: __('Share WooCommerce interest summaries', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_woocommerce_context, onChange: (next) => setAiAgent({ share_woocommerce_context: next }) })
-			),
-			createElement(Notice, { status: 'info', isDismissible: false }, __('The plugin now uses WordPress-managed live site context for website chat instead of Amazon Connect or Amazon Lex bot handoff.', 'adaptive-customer-engagement'))
-			)
+				: null
 		),
 	};
 
