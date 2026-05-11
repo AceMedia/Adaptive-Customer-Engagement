@@ -363,6 +363,13 @@ final class FrontendChatService {
 						'summary'     => sanitize_textarea_field( (string) ( $source['summary'] ?? '' ) ),
 						'image_url'   => esc_url_raw( (string) ( $source['image_url'] ?? '' ) ),
 						'source_type' => sanitize_key( (string) ( $source['source_type'] ?? '' ) ),
+						'commerce'    => array(
+							'price'           => sanitize_text_field( (string) ( $source['commerce']['price'] ?? '' ) ),
+							'variation_count' => absint( $source['commerce']['variation_count'] ?? 0 ),
+							'can_add_to_cart' => ! empty( $source['commerce']['can_add_to_cart'] ),
+							'add_to_cart_url' => esc_url_raw( (string) ( $source['commerce']['add_to_cart_url'] ?? '' ) ),
+							'view_url'        => esc_url_raw( (string) ( $source['commerce']['view_url'] ?? $source['url'] ?? '' ) ),
+						),
 					);
 				},
 				array_slice( $sources, 0, 5 )

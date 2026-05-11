@@ -176,7 +176,10 @@ It currently supports:
 - OpenAI-backed replies grounded in live WordPress and WooCommerce content
 - product-aware comparison answers, including size and capacity ranking where the catalogue provides those signals
 - inline linked titles in assistant replies when relevant sources are mentioned
-- a lead source card with thumbnail and short summary, plus a collapsed list of extra options
+- a lead source card with thumbnail, short summary, price display, and variation counts where available
+- product actions for viewing a product, viewing options, or adding simple products straight to the basket
+- a collapsed list of extra options with cleaner spacing for longer product-result sets
+- persistent chat state across page changes for the same visitor, including reopening the chat after product navigation
 - stored chat conversations and transcripts in the plugin reporting surfaces
 
 ## Setup and connection guidance

@@ -458,7 +458,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				margin: 10px 0 0;
 			}
 			.ace-ai-chat-source-lead {
-				margin-bottom: 2px;
+				margin-bottom: 6px;
+			}
+			.ace-ai-chat-source-more {
+				display: grid;
+				gap: 12px;
+				margin-top: 8px;
 			}
 			.ace-ai-chat-source-more[hidden] {
 				display: none;
@@ -472,6 +477,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				font: 700 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 				cursor: pointer;
 				text-decoration: underline;
+			}
+			.ace-ai-chat-source-meta {
+				display: block;
+				margin-top: 4px;
+				font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #334155;
 			}
 			.ace-ai-chat-source-card {
 				display: grid;
@@ -520,6 +531,30 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				margin-top: 4px;
 				font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 				color: #475569;
+			}
+			.ace-ai-chat-source-actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				margin-top: 8px;
+			}
+			.ace-ai-chat-source-action {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				padding: 8px 12px;
+				border-radius: 999px;
+				border: 1px solid rgba(37, 99, 235, 0.16);
+				background: #eff6ff;
+				color: #1d4ed8;
+				font: 700 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				text-decoration: none;
+				cursor: pointer;
+			}
+			.ace-ai-chat-source-action--secondary {
+				background: #ffffff;
+				color: #0f172a;
+				border-color: rgba(15, 23, 42, 0.12);
 			}
 			#ace-ai-chat-form {
 				box-sizing: border-box;
@@ -593,6 +628,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		conversationUuid: '',
 		messages: [],
 	};
+	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
 
 	launcher.id = 'ace-ai-chat-launcher';
 	launcher.type = 'button';
@@ -642,6 +678,69 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	const pushMessage = (message) => {
 		state.messages.push(message);
+		persistChatState();
+	};
+
+	const serialiseMessage = (message) => ({
+		role: message?.role === 'user' ? 'user' : 'assistant',
+		content: String(message?.content || ''),
+		sources: Array.isArray(message?.sources)
+			? message.sources.slice(0, 5).map((source) => ({
+				title: String(source?.title || ''),
+				url: String(source?.url || ''),
+				label: String(source?.label || ''),
+				summary: String(source?.summary || ''),
+				image_url: String(source?.image_url || ''),
+				source_type: String(source?.source_type || ''),
+				commerce: {
+					price: String(source?.commerce?.price || ''),
+					variation_count: Number(source?.commerce?.variation_count || 0),
+					can_add_to_cart: !!source?.commerce?.can_add_to_cart,
+					add_to_cart_url: String(source?.commerce?.add_to_cart_url || ''),
+					view_url: String(source?.commerce?.view_url || source?.url || ''),
+				},
+			}))
+			: [],
+	});
+
+	const persistChatState = () => {
+		try {
+			window.localStorage?.setItem(chatStateKey, JSON.stringify({
+				open: !!state.open,
+				started: !!state.started,
+				conversationUuid: state.conversationUuid || '',
+				messages: state.messages.slice(-20).map(serialiseMessage),
+			}));
+		} catch (error) {
+			// Ignore storage failures in the browser.
+		}
+	};
+
+	const restoreChatState = () => {
+		try {
+			const raw = window.localStorage?.getItem(chatStateKey);
+
+			if (!raw) {
+				return;
+			}
+
+			const saved = JSON.parse(raw);
+
+			if (!saved || typeof saved !== 'object') {
+				return;
+			}
+
+			state.open = !!saved.open;
+			state.started = !!saved.started;
+			state.conversationUuid = String(saved.conversationUuid || '');
+			state.messages = Array.isArray(saved.messages) ? saved.messages.map(serialiseMessage) : [];
+
+			if (!state.started && (state.messages.length || state.conversationUuid)) {
+				state.started = true;
+			}
+		} catch (error) {
+			// Ignore storage failures in the browser.
+		}
 	};
 
 	const updateInputHeight = () => {
@@ -754,21 +853,46 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		return `${summary.slice(0, 137).trim().replace(/[.,;:!?-]+$/u, '')}…`;
 	};
 
+	const buildSourceMeta = (source) => {
+		const meta = [];
+		const price = String(source?.commerce?.price || '').trim();
+		const variationCount = Number(source?.commerce?.variation_count || 0);
+
+		if (price) {
+			meta.push(price);
+		}
+
+		if (variationCount > 0) {
+			meta.push(`${variationCount} option${variationCount === 1 ? '' : 's'}`);
+		}
+
+		return meta.join(' · ');
+	};
+
+	const navigateWithChatState = (url) => {
+		if (!url) {
+			return;
+		}
+
+		state.open = true;
+		persistChatState();
+		window.location.assign(url);
+	};
+
 	const buildSourceCard = (source) => {
 		if (!source?.url || !source?.title) {
 			return null;
 		}
 
-		const card = document.createElement('a');
+		const card = document.createElement('div');
 		const thumb = document.createElement(source.image_url ? 'img' : 'div');
 		const copy = document.createElement('div');
 		const titleNode = document.createElement('strong');
+		const metaNode = document.createElement('span');
 		const summaryNode = document.createElement('span');
+		const actionsNode = document.createElement('div');
 
 		card.className = 'ace-ai-chat-source-card';
-		card.href = source.url;
-		card.target = '_blank';
-		card.rel = 'noopener noreferrer';
 
 		if (source.image_url) {
 			thumb.className = 'ace-ai-chat-source-thumb';
@@ -783,13 +907,42 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		copy.className = 'ace-ai-chat-source-copy';
 		titleNode.className = 'ace-ai-chat-source-title';
 		titleNode.textContent = source.title;
+		metaNode.className = 'ace-ai-chat-source-meta';
+		metaNode.textContent = buildSourceMeta(source);
 		summaryNode.className = 'ace-ai-chat-source-summary';
 		summaryNode.textContent = summariseSourceText(source);
+		actionsNode.className = 'ace-ai-chat-source-actions';
 
 		copy.appendChild(titleNode);
 
+		if (metaNode.textContent) {
+			copy.appendChild(metaNode);
+		}
+
 		if (summaryNode.textContent) {
 			copy.appendChild(summaryNode);
+		}
+
+		if (source?.commerce?.can_add_to_cart && source?.commerce?.add_to_cart_url) {
+			const addButton = document.createElement('button');
+			addButton.type = 'button';
+			addButton.className = 'ace-ai-chat-source-action';
+			addButton.textContent = 'Add to basket';
+			addButton.addEventListener('click', () => navigateWithChatState(source.commerce.add_to_cart_url));
+			actionsNode.appendChild(addButton);
+		}
+
+		if (source?.commerce?.view_url || source?.url) {
+			const viewButton = document.createElement('button');
+			viewButton.type = 'button';
+			viewButton.className = 'ace-ai-chat-source-action ace-ai-chat-source-action--secondary';
+			viewButton.textContent = source?.commerce?.variation_count > 0 ? 'View options' : 'View product';
+			viewButton.addEventListener('click', () => navigateWithChatState(source?.commerce?.view_url || source.url));
+			actionsNode.appendChild(viewButton);
+		}
+
+		if (actionsNode.childNodes.length) {
+			copy.appendChild(actionsNode);
 		}
 
 		card.appendChild(thumb);
@@ -864,10 +1017,13 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		messagesNode.scrollTop = messagesNode.scrollHeight;
 	};
 
+	restoreChatState();
+
 	const setOpen = (nextOpen) => {
 		state.open = nextOpen;
 		panel.hidden = !nextOpen;
 		launcher.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+		persistChatState();
 
 		if (nextOpen && !state.started) {
 			state.started = true;
@@ -975,16 +1131,22 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		} finally {
 			setPending(false);
 			renderMessages();
+			persistChatState();
 		}
 	};
 
-	pushMessage({
-		role: 'assistant',
-		content: chatConfig.greeting || `Hello, I am ${chatConfig.botName || chatConfig.title || 'the site assistant'}. Ask me about the company, products, or services and I will do my best to help.`,
-		sources: [],
-	});
+	if (!state.messages.length) {
+		pushMessage({
+			role: 'assistant',
+			content: chatConfig.greeting || `Hello, I am ${chatConfig.botName || chatConfig.title || 'the site assistant'}. Ask me about the company, products, or services and I will do my best to help.`,
+			sources: [],
+		});
+	}
 	renderMessages();
 	updateInputHeight();
+	if (state.open) {
+		setOpen(true);
+	}
 
 	launcher.addEventListener('click', () => setOpen(!state.open));
 	close.addEventListener('click', () => setOpen(false));

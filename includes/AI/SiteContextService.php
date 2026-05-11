@@ -680,6 +680,13 @@ final class SiteContextService {
 			)
 		);
 		$attributes = $this->get_product_attributes( $product, $post->ID );
+		$product_permalink = get_permalink( $post ) ?: '';
+		$is_variable       = $product->is_type( 'variable' );
+		$is_simple         = $product->is_type( 'simple' );
+		$variation_count   = $is_variable && method_exists( $product, 'get_children' ) ? count( $product->get_children() ) : 0;
+		$price_html        = sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) );
+		$can_add_to_cart   = $is_simple && ! $is_variable && $product->is_purchasable() && $product->is_in_stock() && '' !== $product_permalink;
+		$add_to_cart_url   = $can_add_to_cart ? add_query_arg( 'add-to-cart', (string) $product->get_id(), $product_permalink ) : '';
 		$measurements = array_merge(
 			array_values( $attributes ),
 			array(
@@ -694,7 +701,7 @@ final class SiteContextService {
 
 		return array_filter(
 			array(
-				'price'            => sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) ),
+				'price'            => $price_html,
 				'sku'              => sanitize_text_field( (string) $product->get_sku() ),
 				'in_stock'         => $product->is_in_stock(),
 				'stock_status'     => sanitize_key( (string) $product->get_stock_status() ),
@@ -703,6 +710,11 @@ final class SiteContextService {
 				'capacity_litres'  => $capacity_litres > 0 ? $capacity_litres : null,
 				'empty_weight_kg'  => $weight_kg > 0 ? $weight_kg : null,
 				'product_kind'     => $product_kind,
+				'product_type'     => sanitize_key( $product->get_type() ),
+				'variation_count'  => $variation_count,
+				'can_add_to_cart'  => $can_add_to_cart,
+				'add_to_cart_url'  => esc_url_raw( $add_to_cart_url ),
+				'view_url'         => esc_url_raw( $product_permalink ),
 			),
 			static function ( $value ): bool {
 				if ( is_array( $value ) ) {
@@ -891,6 +903,8 @@ final class SiteContextService {
 	 * @return array<string, mixed>
 	 */
 	private function format_source_document( array $document ): array {
+		$commerce = is_array( $document['commerce'] ?? null ) ? $document['commerce'] : array();
+
 		return array(
 			'id'           => (int) ( $document['id'] ?? 0 ),
 			'title'        => sanitize_text_field( (string) ( $document['title'] ?? '' ) ),
@@ -899,6 +913,13 @@ final class SiteContextService {
 			'source_label' => sanitize_text_field( (string) ( $document['source_label'] ?? '' ) ),
 			'summary'      => sanitize_textarea_field( (string) ( $document['summary'] ?? '' ) ),
 			'image_url'    => esc_url_raw( (string) ( $document['image_url'] ?? '' ) ),
+			'commerce'     => array(
+				'price'           => sanitize_text_field( (string) ( $commerce['price'] ?? '' ) ),
+				'variation_count' => absint( $commerce['variation_count'] ?? 0 ),
+				'can_add_to_cart' => ! empty( $commerce['can_add_to_cart'] ),
+				'add_to_cart_url' => esc_url_raw( (string) ( $commerce['add_to_cart_url'] ?? '' ) ),
+				'view_url'        => esc_url_raw( (string) ( $commerce['view_url'] ?? $document['url'] ?? '' ) ),
+			),
 		);
 	}
 
