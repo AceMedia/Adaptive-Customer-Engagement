@@ -100,6 +100,7 @@ final class Settings {
 				'number_summary_attribute'   => 'ace_number_summary',
 				'context_instructions'       => '',
 				'use_live_site_context'      => true,
+				'live_context_post_types'    => array(),
 				'show_source_links'          => true,
 				'keep_history'               => true,
 				'max_context_documents'      => 4,
@@ -255,6 +256,74 @@ final class Settings {
 	}
 
 	/**
+	 * Get the public searchable post types that can feed live chat context.
+	 *
+	 * @return array<int, array<string, string>>
+	 */
+	public static function get_available_site_context_post_types(): array {
+		$post_types = array();
+		$excluded   = array(
+			'attachment',
+			'revision',
+			'nav_menu_item',
+			'custom_css',
+			'customize_changeset',
+			'oembed_cache',
+			'user_request',
+			'wp_block',
+			'wp_navigation',
+			'wp_template',
+			'wp_template_part',
+			'wp_font_family',
+			'wp_font_face',
+			'product_variation',
+		);
+
+		foreach ( get_post_types( array( 'public' => true, 'exclude_from_search' => false ), 'objects' ) as $post_type => $post_type_object ) {
+			$post_type = sanitize_key( (string) $post_type );
+
+			if ( '' === $post_type || in_array( $post_type, $excluded, true ) || ! $post_type_object instanceof \WP_Post_Type ) {
+				continue;
+			}
+
+			$label = ! empty( $post_type_object->labels->singular_name ) ? $post_type_object->labels->singular_name : $post_type_object->label;
+			$label = sanitize_text_field( (string) $label );
+
+			$post_types[] = array(
+				'value' => $post_type,
+				'label' => '' !== $label ? $label : ucfirst( $post_type ),
+			);
+		}
+
+		usort(
+			$post_types,
+			static function ( array $left, array $right ): int {
+				return strcmp( (string) ( $left['label'] ?? '' ), (string) ( $right['label'] ?? '' ) );
+			}
+		);
+
+		return $post_types;
+	}
+
+	/**
+	 * Get the available site-context post type names.
+	 *
+	 * @return array<int, string>
+	 */
+	public static function get_available_site_context_post_type_names(): array {
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( array $post_type ): string {
+						return sanitize_key( (string) ( $post_type['value'] ?? '' ) );
+					},
+					self::get_available_site_context_post_types()
+				)
+			)
+		);
+	}
+
+	/**
 	 * Sanitize settings.
 	 *
 	 * @param array<string, mixed> $settings Settings payload.
@@ -269,6 +338,7 @@ final class Settings {
 		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$provider       = sanitize_key( $ai_agent['provider'] ?? $defaults['ai_agent']['provider'] );
 		$mode           = sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] );
+		$available_site_context_post_types = self::get_available_site_context_post_type_names();
 
 		if ( ! in_array( $provider, array( 'openai' ), true ) ) {
 			$provider = 'openai';
@@ -369,6 +439,17 @@ final class Settings {
 				'number_summary_attribute'  => sanitize_key( $ai_agent['number_summary_attribute'] ?? $defaults['ai_agent']['number_summary_attribute'] ),
 				'context_instructions'      => sanitize_textarea_field( $ai_agent['context_instructions'] ?? $defaults['ai_agent']['context_instructions'] ),
 				'use_live_site_context'     => rest_sanitize_boolean( $ai_agent['use_live_site_context'] ?? $defaults['ai_agent']['use_live_site_context'] ),
+				'live_context_post_types'   => array_values(
+					array_filter(
+						array_map(
+							'sanitize_key',
+							is_array( $ai_agent['live_context_post_types'] ?? null ) ? $ai_agent['live_context_post_types'] : $defaults['ai_agent']['live_context_post_types']
+						),
+						static function ( string $post_type ) use ( $available_site_context_post_types ): bool {
+							return in_array( $post_type, $available_site_context_post_types, true );
+						}
+					)
+				),
 				'show_source_links'         => rest_sanitize_boolean( $ai_agent['show_source_links'] ?? $defaults['ai_agent']['show_source_links'] ),
 				'keep_history'              => rest_sanitize_boolean( $ai_agent['keep_history'] ?? $defaults['ai_agent']['keep_history'] ),
 				'max_context_documents'     => max( 1, min( 8, absint( $ai_agent['max_context_documents'] ?? $defaults['ai_agent']['max_context_documents'] ) ) ),

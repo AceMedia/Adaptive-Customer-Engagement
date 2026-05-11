@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.1';
+	public const SCHEMA_VERSION        = '0.1.2';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -209,8 +209,13 @@ final class Schema {
 			message_count BIGINT UNSIGNED DEFAULT 0,
 			user_message_count BIGINT UNSIGNED DEFAULT 0,
 			assistant_message_count BIGINT UNSIGNED DEFAULT 0,
+			operator_message_count BIGINT UNSIGNED DEFAULT 0,
+			status VARCHAR(20) NOT NULL DEFAULT 'open',
+			handover_enabled TINYINT(1) DEFAULT 0,
 			started_at DATETIME NOT NULL,
 			last_message_at DATETIME NOT NULL,
+			ended_at DATETIME NULL,
+			ended_by VARCHAR(20) NULL,
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL,
 			PRIMARY KEY  (id),
@@ -219,7 +224,8 @@ final class Schema {
 			KEY company_id (company_id),
 			KEY last_message_at (last_message_at),
 			KEY provider (provider),
-			KEY model (model)
+			KEY model (model),
+			KEY status (status)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_messages' ) . " (

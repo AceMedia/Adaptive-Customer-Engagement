@@ -192,6 +192,8 @@ final class Plugin {
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
 			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
+			'syncEndpoint'      => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ),
+			'endEndpoint'       => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ),
 			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 			'title'             => $bot_name,
 			'botName'           => $bot_name,
@@ -200,6 +202,7 @@ final class Plugin {
 			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
 			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),
 			'maxHistoryMessages'=> max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? 8 ) ) ),
+			'pollIntervalMs'    => 5000,
 			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),
 		);
 	}

@@ -152,6 +152,26 @@ final class TrackingController {
 				'callback'            => array( $this, 'ai_chat_respond' ),
 			)
 		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/chat/conversation',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_chat_conversation' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/chat/end',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_chat_end' ),
+			)
+		);
 	}
 
 	/**
@@ -264,6 +284,78 @@ final class TrackingController {
 
 		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 		$response = $this->frontend_chat->respond( $payload );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new WP_REST_Response( $response );
+	}
+
+	/**
+	 * Read the latest stored state for a frontend chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_conversation( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-sync';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 90, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many chat refresh requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload = array(
+			'conversation_uuid' => sanitize_text_field( (string) $request->get_param( 'conversation_uuid' ) ),
+			'session_uuid'      => sanitize_text_field( (string) $request->get_param( 'session_uuid' ) ),
+			'visitor_uuid'      => sanitize_text_field( (string) $request->get_param( 'visitor_uuid' ) ),
+		);
+		$response = $this->frontend_chat->get_conversation_snapshot( $payload );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new WP_REST_Response( $response );
+	}
+
+	/**
+	 * End a frontend chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_end( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-end';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 12, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many chat end requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$response = $this->frontend_chat->end_conversation( $payload );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;

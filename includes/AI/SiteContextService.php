@@ -7,6 +7,8 @@
 
 namespace ACE\AdaptiveCustomerEngagement\AI;
 
+use ACE\AdaptiveCustomerEngagement\Settings;
+
 defined( 'ABSPATH' ) || exit;
 
 final class SiteContextService {
@@ -16,13 +18,9 @@ final class SiteContextService {
 	 * @return array<int, string>
 	 */
 	public function get_supported_post_types(): array {
-		$post_types = array( 'page', 'post' );
+		$post_types = Settings::get_available_site_context_post_type_names();
 
-		if ( post_type_exists( 'product' ) ) {
-			$post_types[] = 'product';
-		}
-
-		return $post_types;
+		return ! empty( $post_types ) ? $post_types : array( 'page', 'post' );
 	}
 
 	/**
@@ -42,12 +40,13 @@ final class SiteContextService {
 	/**
 	 * Search live site content for the most relevant documents.
 	 *
-	 * @param string            $query      User query.
-	 * @param int               $limit      Result limit.
-	 * @param array<int,string> $post_types Optional post-type filter.
+	 * @param string            $query          User query.
+	 * @param int               $limit          Result limit.
+	 * @param array<int,string> $post_types     Optional post-type filter.
+	 * @param bool              $allow_fallback Whether to fall back to low-confidence recency results.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public function search( string $query, int $limit = 5, array $post_types = array() ): array {
+	public function search( string $query, int $limit = 5, array $post_types = array(), bool $allow_fallback = true ): array {
 		$limit          = max( 1, min( 8, $limit ) );
 		$query          = $this->normalise_text( $query );
 		$post_types     = $this->sanitise_post_types( $post_types );
@@ -116,7 +115,7 @@ final class SiteContextService {
 			);
 		}
 
-		if ( empty( $documents ) ) {
+		if ( empty( $documents ) && $allow_fallback ) {
 			foreach ( get_posts( $args ) as $post ) {
 				if ( ! $post instanceof \WP_Post ) {
 					continue;
@@ -182,7 +181,26 @@ final class SiteContextService {
 			return $product_comparison;
 		}
 
-		$documents = $this->search( $this->expand_query_for_search( $question ), $limit );
+		$expanded_question = $this->expand_query_for_search( $question );
+		$documents         = array();
+
+		if ( $this->should_search_content_first( $question ) ) {
+			$documents = $this->search( $expanded_question, $limit, $this->get_non_product_post_types() );
+
+			if ( empty( $documents ) ) {
+				$documents = $this->search( $expanded_question, $limit );
+			}
+		} else {
+			$documents = $this->search( $expanded_question, $limit, array( 'product' ), false );
+
+			if ( empty( $documents ) ) {
+				$documents = $this->search( $expanded_question, $limit, $this->get_non_product_post_types() );
+			}
+
+			if ( empty( $documents ) ) {
+				$documents = $this->search( $expanded_question, $limit );
+			}
+		}
 
 		if ( empty( $documents ) ) {
 			return array(
@@ -219,7 +237,7 @@ final class SiteContextService {
 			return null;
 		}
 
-		if ( ! in_array( $post->post_type, $this->get_supported_post_types(), true ) ) {
+		if ( ! in_array( $post->post_type, $this->get_active_post_types(), true ) ) {
 			return null;
 		}
 
@@ -238,7 +256,7 @@ final class SiteContextService {
 		$limit = max( 1, min( 100, $limit ) );
 		$posts = get_posts(
 			array(
-				'post_type'           => $this->get_supported_post_types(),
+				'post_type'           => $this->get_active_post_types(),
 				'post_status'         => 'publish',
 				'posts_per_page'      => $limit,
 				'orderby'             => 'modified',
@@ -302,6 +320,7 @@ final class SiteContextService {
 			'title'        => $title,
 			'url'          => esc_url_raw( get_permalink( $post ) ?: '' ),
 			'source_type'  => sanitize_key( $post->post_type ),
+			'content_type' => sanitize_text_field( $type_label ),
 			'source_label' => sprintf( '%s: %s', $type_label, $title ),
 			'summary'      => sanitize_textarea_field( $summary ),
 			'excerpt'      => sanitize_textarea_field( $excerpt ),
@@ -409,8 +428,8 @@ final class SiteContextService {
 			$expanded .= ' products services solutions about';
 		}
 
-		if ( preg_match( '/\b(contact|phone|email|address|get in touch)\b/i', $query ) ) {
-			$expanded .= ' contact phone email address';
+		if ( preg_match( '/\b(contact|phone|email|address|get in touch|about|company|history|story|team|case stud(?:y|ies)|blog|news|article|post)\b/i', $query ) ) {
+			$expanded .= ' about company history story team contact phone email address page blog post article case study';
 		}
 
 		if ( preg_match( '/\b(price|cost|pricing|quote)\b/i', $query ) ) {
@@ -425,13 +444,54 @@ final class SiteContextService {
 	}
 
 	/**
+	 * Get the supported non-product content types.
+	 *
+	 * @return array<int, string>
+	 */
+	private function get_non_product_post_types(): array {
+		return array_values(
+			array_filter(
+				$this->get_supported_post_types(),
+				static function ( string $post_type ): bool {
+					return 'product' !== $post_type;
+				}
+			)
+		);
+	}
+
+	/**
+	 * Decide whether a question should search company/content sources before products.
+	 *
+	 * @param string $question User question.
+	 * @return bool
+	 */
+	private function should_search_content_first( string $question ): bool {
+		$question = $this->normalise_text( $question );
+
+		if ( '' === $question ) {
+			return false;
+		}
+
+		$is_content_question = (bool) preg_match(
+			'/\b(about|about us|company|history|story|team|contact|phone|email|address|get in touch|location|locations|blog|news|article|articles|post|posts|case stud(?:y|ies)|project|projects|portfolio|faq|support|returns?|delivery|shipping|warranty)\b/',
+			$question
+		);
+		$is_product_question = (bool) preg_match(
+			'/\b(product|products|bin|bins|container|containers|capacity|size|sizes|litre|litres|price|prices|cost|quote|buy|basket|cart|model|models|range|ranges|wheelie)\b/',
+			$question
+		);
+
+		return $is_content_question && ! $is_product_question;
+	}
+
+	/**
 	 * Sanitise a post-type filter.
 	 *
 	 * @param array<int,string> $post_types Raw post types.
 	 * @return array<int, string>
 	 */
 	private function sanitise_post_types( array $post_types ): array {
-		$supported = $this->get_supported_post_types();
+		$supported = $this->get_active_post_types();
 		$post_types = array_values(
 			array_filter(
 				array_map(
@@ -445,6 +505,30 @@ final class SiteContextService {
 		);
 
 		return ! empty( $post_types ) ? $post_types : $supported;
+	}
+
+	/**
+	 * Get the active post types selected for live chat context.
+	 *
+	 * @return array<int, string>
+	 */
+	private function get_active_post_types(): array {
+		$supported = $this->get_supported_post_types();
+		$settings  = Settings::get();
+		$ai_agent  = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$selected  = array_values(
+			array_filter(
+				array_map(
+					'sanitize_key',
+					is_array( $ai_agent['live_context_post_types'] ?? null ) ? $ai_agent['live_context_post_types'] : array()
+				),
+				static function ( string $post_type ) use ( $supported ): bool {
+					return in_array( $post_type, $supported, true );
+				}
+			)
+		);
+
+		return ! empty( $selected ) ? $selected : $supported;
 	}
 
 	/**
@@ -910,6 +994,7 @@ final class SiteContextService {
 			'title'        => sanitize_text_field( (string) ( $document['title'] ?? '' ) ),
 			'url'          => esc_url_raw( (string) ( $document['url'] ?? '' ) ),
 			'source_type'  => sanitize_key( (string) ( $document['source_type'] ?? '' ) ),
+			'content_type' => sanitize_text_field( (string) ( $document['content_type'] ?? '' ) ),
 			'source_label' => sanitize_text_field( (string) ( $document['source_label'] ?? '' ) ),
 			'summary'      => sanitize_textarea_field( (string) ( $document['summary'] ?? '' ) ),
 			'image_url'    => esc_url_raw( (string) ( $document['image_url'] ?? '' ) ),

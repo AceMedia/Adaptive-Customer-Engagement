@@ -417,6 +417,24 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				line-height: 1;
 				cursor: pointer;
 			}
+			#ace-ai-chat-header-actions {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			#ace-ai-chat-end {
+				border: 0;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.14);
+				color: #ffffff;
+				padding: 8px 12px;
+				font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+			}
+			#ace-ai-chat-end[disabled] {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
 			#ace-ai-chat-messages {
 				flex: 1;
 				padding: 16px;
@@ -444,6 +462,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				background: #ffffff;
 				color: #0f172a;
 				border: 1px solid rgba(15, 23, 42, 0.08);
+			}
+			.ace-ai-chat-message[data-role="operator"] .ace-ai-chat-bubble {
+				background: #f5f3ff;
+				color: #4c1d95;
+				border: 1px solid rgba(124, 58, 237, 0.16);
 			}
 			.ace-ai-chat-message[data-role="user"] {
 				text-align: right;
@@ -614,6 +637,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const header = document.createElement('div');
 	const titleWrap = document.createElement('div');
 	const title = document.createElement('strong');
+	const headerActions = document.createElement('div');
+	const endChat = document.createElement('button');
 	const close = document.createElement('button');
 	const messagesNode = document.createElement('div');
 	const form = document.createElement('form');
@@ -627,8 +652,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		pending: false,
 		conversationUuid: '',
 		messages: [],
+		conversationStatus: 'open',
+		handoverEnabled: false,
+		endedAt: '',
 	};
 	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
+	let syncTimer = null;
 
 	launcher.id = 'ace-ai-chat-launcher';
 	launcher.type = 'button';
@@ -646,9 +675,15 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	close.type = 'button';
 	close.setAttribute('aria-label', 'Close chat');
 	close.textContent = '×';
+	endChat.id = 'ace-ai-chat-end';
+	endChat.type = 'button';
+	endChat.textContent = 'End chat';
+	headerActions.id = 'ace-ai-chat-header-actions';
+	headerActions.appendChild(endChat);
+	headerActions.appendChild(close);
 
 	header.appendChild(titleWrap);
-	header.appendChild(close);
+	header.appendChild(headerActions);
 
 	messagesNode.id = 'ace-ai-chat-messages';
 	messagesNode.setAttribute('aria-live', 'polite');
@@ -682,13 +717,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 
 	const serialiseMessage = (message) => ({
-		role: message?.role === 'user' ? 'user' : 'assistant',
+		id: Number(message?.id || 0),
+		role: message?.role === 'user' ? 'user' : (message?.role === 'operator' ? 'operator' : 'assistant'),
 		content: String(message?.content || ''),
+		created_at: String(message?.created_at || ''),
+		is_error: !!message?.is_error,
 		sources: Array.isArray(message?.sources)
 			? message.sources.slice(0, 5).map((source) => ({
 				title: String(source?.title || ''),
 				url: String(source?.url || ''),
 				label: String(source?.label || ''),
+				content_type: String(source?.content_type || ''),
 				summary: String(source?.summary || ''),
 				image_url: String(source?.image_url || ''),
 				source_type: String(source?.source_type || ''),
@@ -709,6 +748,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				open: !!state.open,
 				started: !!state.started,
 				conversationUuid: state.conversationUuid || '',
+				conversationStatus: state.conversationStatus || 'open',
+				handoverEnabled: !!state.handoverEnabled,
+				endedAt: state.endedAt || '',
 				messages: state.messages.slice(-20).map(serialiseMessage),
 			}));
 		} catch (error) {
@@ -733,6 +775,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			state.open = !!saved.open;
 			state.started = !!saved.started;
 			state.conversationUuid = String(saved.conversationUuid || '');
+			state.conversationStatus = String(saved.conversationStatus || 'open');
+			state.handoverEnabled = !!saved.handoverEnabled;
+			state.endedAt = String(saved.endedAt || '');
 			state.messages = Array.isArray(saved.messages) ? saved.messages.map(serialiseMessage) : [];
 
 			if (!state.started && (state.messages.length || state.conversationUuid)) {
@@ -756,6 +801,76 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		input.style.height = `${nextHeight}px`;
 		input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+	};
+
+	const scrollMessagesToBottom = () => {
+		const run = () => {
+			messagesNode.scrollTop = messagesNode.scrollHeight;
+		};
+
+		window.requestAnimationFrame(() => {
+			run();
+			window.setTimeout(run, 40);
+		});
+	};
+
+	const getDefaultMetaText = () => (chatConfig.showSources
+		? 'Replies can include links to relevant company and product information.'
+		: 'Ask about the company, products, or services.');
+
+	const updateChatMeta = () => {
+		if (state.conversationStatus === 'ended') {
+			meta.textContent = 'This chat has ended. Open the chat again to start a new conversation.';
+		} else if (state.handoverEnabled) {
+			meta.textContent = 'A member of the team can reply here while this chat is in handover.';
+		} else {
+			meta.textContent = getDefaultMetaText();
+		}
+
+		endChat.disabled = !state.started || state.pending || state.conversationStatus === 'ended';
+		input.disabled = state.pending || state.conversationStatus === 'ended';
+		send.disabled = state.pending || state.conversationStatus === 'ended';
+	};
+
+	const applyConversationSnapshot = (snapshot) => {
+		const conversation = snapshot?.conversation || {};
+		const messages = Array.isArray(snapshot?.messages) ? snapshot.messages.map(serialiseMessage) : null;
+
+		if (conversation && typeof conversation === 'object') {
+			state.conversationUuid = String(conversation.conversation_uuid || state.conversationUuid || '');
+			state.conversationStatus = String(conversation.status || state.conversationStatus || 'open');
+			state.handoverEnabled = !!conversation.handover_enabled;
+			state.endedAt = String(conversation.ended_at || '');
+			state.started = !!state.conversationUuid || !!state.started;
+		}
+
+		if (messages) {
+			state.messages = messages;
+		}
+
+		persistChatState();
+		updateChatMeta();
+	};
+
+	const resetConversationState = ({ keepOpen = false } = {}) => {
+		state.open = keepOpen;
+		state.started = false;
+		state.pending = false;
+		state.conversationUuid = '';
+		state.conversationStatus = 'open';
+		state.handoverEnabled = false;
+		state.endedAt = '';
+		state.messages = [];
+		send.textContent = 'Send';
+		panel.hidden = !keepOpen;
+		launcher.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
+		pushMessage({
+			role: 'assistant',
+			content: chatConfig.greeting || `Hello, I am ${chatConfig.botName || chatConfig.title || 'the site assistant'}. Ask me about the company, products, or services and I will do my best to help.`,
+			sources: [],
+		});
+		updateChatMeta();
+		renderMessages();
 	};
 
 	const normaliseSourceTitle = (title) => String(title || '').trim().toLowerCase();
@@ -879,6 +994,43 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		window.location.assign(url);
 	};
 
+	const getSourceTypeLabel = (source) => {
+		const contentType = String(source?.content_type || '').trim();
+
+		if (contentType) {
+			return contentType;
+		}
+
+		if (String(source?.label || '').includes(':')) {
+			return String(source.label).split(':')[0].trim();
+		}
+
+		switch (String(source?.source_type || '').trim()) {
+			case 'product':
+				return 'Product';
+			case 'page':
+				return 'Page';
+			case 'post':
+				return 'Article';
+			default:
+				return 'Content';
+		}
+	};
+
+	const getSourceViewLabel = (source) => {
+		if (source?.source_type === 'product') {
+			return source?.commerce?.variation_count > 0 ? 'View options' : 'View product';
+		}
+
+		const typeLabel = getSourceTypeLabel(source).toLowerCase();
+
+		if (typeLabel === 'post' || typeLabel === 'article' || typeLabel === 'blog post' || typeLabel === 'news') {
+			return 'Read article';
+		}
+
+		return `View ${typeLabel || 'content'}`;
+	};
+
 	const buildSourceCard = (source) => {
 		if (!source?.url || !source?.title) {
 			return null;
@@ -899,6 +1051,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			thumb.src = source.image_url;
 			thumb.alt = source.title;
 			thumb.loading = 'lazy';
+			thumb.addEventListener('load', scrollMessagesToBottom);
 		} else {
 			thumb.className = 'ace-ai-chat-source-thumb-placeholder';
 			thumb.textContent = String(source.title || '').trim().charAt(0).toUpperCase() || '•';
@@ -936,7 +1089,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			const viewButton = document.createElement('button');
 			viewButton.type = 'button';
 			viewButton.className = 'ace-ai-chat-source-action ace-ai-chat-source-action--secondary';
-			viewButton.textContent = source?.commerce?.variation_count > 0 ? 'View options' : 'View product';
+			viewButton.textContent = getSourceViewLabel(source);
 			viewButton.addEventListener('click', () => navigateWithChatState(source?.commerce?.view_url || source.url));
 			actionsNode.appendChild(viewButton);
 		}
@@ -1014,16 +1167,101 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			messagesNode.appendChild(item);
 		});
 
-		messagesNode.scrollTop = messagesNode.scrollHeight;
+		scrollMessagesToBottom();
 	};
 
 	restoreChatState();
+
+	const syncConversation = async () => {
+		if (!state.conversationUuid || state.pending) {
+			return;
+		}
+
+		const headers = {};
+
+		if (chatConfig.restNonce) {
+			headers['X-WP-Nonce'] = chatConfig.restNonce;
+		}
+
+		const params = new URLSearchParams({
+			conversation_uuid: state.conversationUuid,
+			session_uuid: sessionUuid || '',
+			visitor_uuid: visitorUuid || '',
+		});
+		const response = await fetch(`${chatConfig.syncEndpoint || `${config.root}${config.namespace}/ai/chat/conversation`}?${params.toString()}`, {
+			method: 'GET',
+			credentials: 'same-origin',
+			headers,
+		});
+
+		if (!response.ok) {
+			return;
+		}
+
+		applyConversationSnapshot(await response.json());
+		renderMessages();
+	};
+
+	const stopSync = () => {
+		if (syncTimer) {
+			window.clearInterval(syncTimer);
+			syncTimer = null;
+		}
+	};
+
+	const startSync = () => {
+		stopSync();
+
+		if (!state.started || state.conversationStatus === 'ended') {
+			return;
+		}
+
+		syncTimer = window.setInterval(() => {
+			if (state.open) {
+				syncConversation().catch(() => {});
+			}
+		}, Number(chatConfig.pollIntervalMs || 5000));
+	};
+
+	const endCurrentConversation = async () => {
+		if (!state.started || !state.conversationUuid || state.pending) {
+			resetConversationState({ keepOpen: false });
+			return;
+		}
+
+		try {
+			const headers = {
+				'Content-Type': 'application/json',
+			};
+
+			if (chatConfig.restNonce) {
+				headers['X-WP-Nonce'] = chatConfig.restNonce;
+			}
+
+			await fetch(chatConfig.endEndpoint || `${config.root}${config.namespace}/ai/chat/end`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers,
+				body: JSON.stringify({
+					conversation_uuid: state.conversationUuid,
+					session_uuid: sessionUuid || '',
+					visitor_uuid: visitorUuid || '',
+				}),
+			});
+		} catch (error) {
+			// Ignore end-chat transport failures and reset the local state anyway.
+		}
+
+		stopSync();
+		resetConversationState({ keepOpen: false });
+	};
 
 	const setOpen = (nextOpen) => {
 		state.open = nextOpen;
 		panel.hidden = !nextOpen;
 		launcher.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
 		persistChatState();
+		updateChatMeta();
 
 		if (nextOpen && !state.started) {
 			state.started = true;
@@ -1044,15 +1282,22 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			}, pageContext));
 			input.focus();
 			updateInputHeight();
+			startSync();
+		} else if (nextOpen) {
+			updateInputHeight();
+			scrollMessagesToBottom();
+			syncConversation().catch(() => {});
+			startSync();
+		} else {
+			stopSync();
 		}
 	};
 
 	const setPending = (nextPending) => {
 		state.pending = nextPending;
-		input.disabled = nextPending;
-		send.disabled = nextPending;
 		send.textContent = nextPending ? 'Sending…' : 'Send';
 		updateInputHeight();
+		updateChatMeta();
 	};
 
 	const buildHistory = () => state.messages
@@ -1117,11 +1362,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				throw new Error(data?.message || 'The site assistant could not reply just now.');
 			}
 
-			pushMessage({
-				role: 'assistant',
-				content: data?.message || 'Sorry, I could not prepare a reply just now.',
-				sources: Array.isArray(data?.sources) ? data.sources : [],
-			});
+			if (data?.conversation || Array.isArray(data?.messages)) {
+				applyConversationSnapshot(data);
+			}
+
+			if (!Array.isArray(data?.messages) && data?.message) {
+				pushMessage({
+					role: 'assistant',
+					content: data?.message || 'Sorry, I could not prepare a reply just now.',
+					sources: Array.isArray(data?.sources) ? data.sources : [],
+				});
+			}
 		} catch (error) {
 			pushMessage({
 				role: 'assistant',
@@ -1136,12 +1387,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 
 	if (!state.messages.length) {
-		pushMessage({
-			role: 'assistant',
-			content: chatConfig.greeting || `Hello, I am ${chatConfig.botName || chatConfig.title || 'the site assistant'}. Ask me about the company, products, or services and I will do my best to help.`,
-			sources: [],
-		});
+		resetConversationState({ keepOpen: false });
 	}
+	updateChatMeta();
 	renderMessages();
 	updateInputHeight();
 	if (state.open) {
@@ -1150,6 +1398,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	launcher.addEventListener('click', () => setOpen(!state.open));
 	close.addEventListener('click', () => setOpen(false));
+	endChat.addEventListener('click', () => {
+		endCurrentConversation().catch(() => {});
+	});
 	form.addEventListener('submit', (event) => {
 		event.preventDefault();
 		const content = input.value.trim();

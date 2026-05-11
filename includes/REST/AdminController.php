@@ -268,6 +268,26 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
+			'/admin/chats/(?P<id>\d+)/status',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_status' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/(?P<id>\d+)/reply',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_reply' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/admin/numbers/(?P<id>\d+)',
 			array(
 				array(
@@ -757,11 +777,112 @@ final class AdminController {
 			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
 		}
 
-		return new WP_REST_Response(
+		return new WP_REST_Response( $this->build_chat_detail_response( $conversation ) );
+	}
+
+	/**
+	 * Update handover/end status for a chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_status( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$action  = sanitize_key( (string) ( $payload['action'] ?? '' ) );
+
+		switch ( $action ) {
+			case 'handover':
+				$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], true );
+				break;
+			case 'resume_ai':
+				if ( ! empty( $conversation['ended_at'] ) ) {
+					return new WP_Error( 'ace_chat_already_ended', __( 'This chat has already ended and cannot be handed back to the assistant.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+				}
+				$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], false );
+				break;
+			case 'end':
+				$conversation = $this->chat_conversations->end_conversation( (int) $conversation['id'], 'admin' );
+				break;
+			default:
+				return new WP_Error( 'ace_chat_action_invalid', __( 'The requested chat action is not supported.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_update_failed', __( 'The chat conversation could not be updated.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		return new WP_REST_Response( $this->build_chat_detail_response( $conversation ) );
+	}
+
+	/**
+	 * Store an operator reply against a chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_reply( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		if ( ! empty( $conversation['ended_at'] ) ) {
+			return new WP_Error( 'ace_chat_already_ended', __( 'This chat has already ended, so no more replies can be sent.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+		}
+
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$message = sanitize_textarea_field( (string) ( $payload['message'] ?? '' ) );
+
+		if ( '' === $message ) {
+			return new WP_Error( 'ace_chat_reply_required', __( 'Please enter a reply before sending it to the customer.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( empty( $conversation['handover_enabled'] ) ) {
+			$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], true ) ?: $conversation;
+		}
+
+		$this->chat_messages->create(
 			array(
-				'conversation' => $conversation,
-				'messages'     => $this->chat_messages->get_by_conversation( (int) $conversation['id'] ),
+				'conversation_id' => (int) $conversation['id'],
+				'session_id'      => (int) ( $conversation['session_id'] ?? 0 ),
+				'company_id'      => (int) ( $conversation['company_id'] ?? 0 ),
+				'message_role'    => 'operator',
+				'message_text'    => $message,
+				'sources'         => array(),
+				'model'           => 'human',
+				'is_error'        => false,
 			)
+		);
+		$this->chat_conversations->record_message( (int) $conversation['id'], 'operator', 'human' );
+
+		$conversation = $this->chat_conversations->find( (int) $conversation['id'] );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_reply_failed', __( 'The operator reply could not be stored.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		return new WP_REST_Response( $this->build_chat_detail_response( $conversation ) );
+	}
+
+	/**
+	 * Build a complete chat detail payload.
+	 *
+	 * @param array<string, mixed> $conversation Conversation row.
+	 * @return array<string, mixed>
+	 */
+	private function build_chat_detail_response( array $conversation ): array {
+		return array(
+			'conversation' => $conversation,
+			'messages'     => $this->chat_messages->get_by_conversation( (int) $conversation['id'] ),
 		);
 	}
 
@@ -939,7 +1060,7 @@ final class AdminController {
 	 * @return WP_REST_Response
 	 */
 	public function get_settings(): WP_REST_Response {
-		return new WP_REST_Response( Settings::get() );
+		return new WP_REST_Response( $this->build_settings_response( Settings::get() ) );
 	}
 
 	/**
@@ -953,7 +1074,19 @@ final class AdminController {
 		$payload = is_array( $payload ) ? $payload : array();
 		$payload = $this->maybe_enrich_connect_settings( $payload );
 
-		return new WP_REST_Response( Settings::update( $payload ) );
+		return new WP_REST_Response( $this->build_settings_response( Settings::update( $payload ) ) );
+	}
+
+	/**
+	 * Add settings metadata needed by the admin UI.
+	 *
+	 * @param array<string, mixed> $settings Sanitised settings.
+	 * @return array<string, mixed>
+	 */
+	private function build_settings_response( array $settings ): array {
+		$settings['available_site_context_post_types'] = Settings::get_available_site_context_post_types();
+
+		return $settings;
 	}
 
 	/**

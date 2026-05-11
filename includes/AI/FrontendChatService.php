@@ -105,16 +105,34 @@ final class FrontendChatService {
 			)
 		);
 
-		if ( ! empty( $thread['id'] ) ) {
-			$this->store_message(
-				(int) $thread['id'],
-				(int) ( $session['id'] ?? 0 ),
-				(int) ( $session['company_id'] ?? 0 ),
-				'user',
-				$message,
-				array(),
-				$model,
-				false
+		if ( empty( $thread['id'] ) ) {
+			return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		if ( ChatConversationRepository::STATUS_ENDED === ( $thread['status'] ?? '' ) ) {
+			return new WP_Error( 'ace_ai_chat_ended', __( 'This chat session has already ended. Please start a new conversation.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+		}
+
+		$this->store_message(
+			(int) $thread['id'],
+			(int) ( $session['id'] ?? 0 ),
+			(int) ( $session['company_id'] ?? 0 ),
+			'user',
+			$message,
+			array(),
+			$model,
+			false
+		);
+
+		if ( ! empty( $thread['handover_enabled'] ) || ChatConversationRepository::STATUS_HANDOVER === ( $thread['status'] ?? '' ) ) {
+			$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+
+			return array(
+				'message'      => '',
+				'sources'      => array(),
+				'model'        => '',
+				'conversation' => $this->normalise_conversation( $thread ),
+				'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
 			);
 		}
 
@@ -211,23 +229,69 @@ final class FrontendChatService {
 
 		$normalised_sources = $this->normalise_sources( $sources );
 
-		if ( ! empty( $thread['id'] ) ) {
-			$this->store_message(
-				(int) $thread['id'],
-				(int) ( $session['id'] ?? 0 ),
-				(int) ( $session['company_id'] ?? 0 ),
-				'assistant',
-				sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
-				$normalised_sources,
-				sanitize_text_field( (string) ( $response['model'] ?? $model ) ),
-				false
-			);
+		$this->store_message(
+			(int) $thread['id'],
+			(int) ( $session['id'] ?? 0 ),
+			(int) ( $session['company_id'] ?? 0 ),
+			'assistant',
+			sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
+			$normalised_sources,
+			sanitize_text_field( (string) ( $response['model'] ?? $model ) ),
+			false
+		);
+
+		$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+
+		return array(
+			'message'      => sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
+			'sources'      => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
+			'model'        => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
+			'conversation' => $this->normalise_conversation( $thread ),
+			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
+		);
+	}
+
+	/**
+	 * Get a frontend-safe snapshot of a conversation.
+	 *
+	 * @param array<string, mixed> $payload Request payload.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	public function get_conversation_snapshot( array $payload ) {
+		$conversation = $this->find_accessible_conversation( $payload );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_ai_chat_not_found', __( 'The chat conversation could not be found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
 		}
 
 		return array(
-			'message' => sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
-			'sources' => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
-			'model'   => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
+			'conversation' => $this->normalise_conversation( $conversation ),
+			'messages'     => $this->normalise_conversation_messages( (int) $conversation['id'] ),
+		);
+	}
+
+	/**
+	 * End a frontend chat conversation.
+	 *
+	 * @param array<string, mixed> $payload Request payload.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	public function end_conversation( array $payload ) {
+		$conversation = $this->find_accessible_conversation( $payload );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_ai_chat_not_found', __( 'The chat conversation could not be found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		$conversation = $this->chat_conversations->end_conversation( (int) $conversation['id'], 'visitor' );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_ai_chat_end_failed', __( 'The chat conversation could not be ended.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		return array(
+			'conversation' => $this->normalise_conversation( $conversation ),
+			'messages'     => $this->normalise_conversation_messages( (int) $conversation['id'] ),
 		);
 	}
 
@@ -255,6 +319,80 @@ final class FrontendChatService {
 			'ace_ai_chat_temporarily_unavailable',
 			__( 'The site assistant is currently offline for maintenance. Please try again shortly.', 'adaptive-customer-engagement' ),
 			array( 'status' => 503 )
+		);
+	}
+
+	/**
+	 * Find a conversation the current visitor is allowed to access.
+	 *
+	 * @param array<string, mixed> $payload Request payload.
+	 * @return array<string, mixed>|null
+	 */
+	private function find_accessible_conversation( array $payload ): ?array {
+		$conversation_uuid = sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? '' ) );
+		$visitor_uuid      = sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) );
+		$session_uuid      = sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) );
+
+		if ( '' === $conversation_uuid ) {
+			return null;
+		}
+
+		$conversation = $this->chat_conversations->find_by_uuid( $conversation_uuid );
+
+		if ( ! $conversation ) {
+			return null;
+		}
+
+		$matches_visitor = '' !== $visitor_uuid && $visitor_uuid === sanitize_text_field( (string) ( $conversation['visitor_uuid'] ?? '' ) );
+		$matches_session = '' !== $session_uuid && $session_uuid === sanitize_text_field( (string) ( $conversation['session_uuid'] ?? '' ) );
+
+		if ( ! $matches_visitor && ! $matches_session ) {
+			return null;
+		}
+
+		return $this->chat_conversations->find( (int) $conversation['id'] );
+	}
+
+	/**
+	 * Build a frontend-safe conversation snapshot.
+	 *
+	 * @param array<string, mixed> $conversation Raw conversation row.
+	 * @return array<string, mixed>
+	 */
+	private function normalise_conversation( array $conversation ): array {
+		return array(
+			'id'               => (int) ( $conversation['id'] ?? 0 ),
+			'conversation_uuid'=> sanitize_text_field( (string) ( $conversation['conversation_uuid'] ?? '' ) ),
+			'status'           => sanitize_key( (string) ( $conversation['status'] ?? ChatConversationRepository::STATUS_OPEN ) ),
+			'handover_enabled' => ! empty( $conversation['handover_enabled'] ),
+			'ended_at'         => sanitize_text_field( (string) ( $conversation['ended_at'] ?? '' ) ),
+			'ended_by'         => sanitize_key( (string) ( $conversation['ended_by'] ?? '' ) ),
+			'last_message_at'  => sanitize_text_field( (string) ( $conversation['last_message_at'] ?? '' ) ),
+			'message_count'    => absint( $conversation['message_count'] ?? 0 ),
+		);
+	}
+
+	/**
+	 * Build frontend-safe stored messages for a conversation.
+	 *
+	 * @param int $conversation_id Conversation ID.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function normalise_conversation_messages( int $conversation_id ): array {
+		return array_values(
+			array_map(
+				function ( array $message ): array {
+					return array(
+						'id'      => (int) ( $message['id'] ?? 0 ),
+						'role'    => sanitize_key( (string) ( $message['message_role'] ?? '' ) ),
+						'content' => sanitize_textarea_field( (string) ( $message['message_text'] ?? '' ) ),
+						'sources' => $this->normalise_sources( is_array( $message['sources'] ?? null ) ? $message['sources'] : array() ),
+						'created_at' => sanitize_text_field( (string) ( $message['created_at'] ?? '' ) ),
+						'is_error' => ! empty( $message['is_error'] ),
+					);
+				},
+				$this->chat_messages->get_by_conversation( $conversation_id )
+			)
 		);
 	}
 
@@ -360,6 +498,7 @@ final class FrontendChatService {
 						'title'       => sanitize_text_field( (string) ( $source['title'] ?? '' ) ),
 						'url'         => esc_url_raw( (string) ( $source['url'] ?? '' ) ),
 						'label'       => sanitize_text_field( (string) ( $source['source_label'] ?? $source['source_type'] ?? '' ) ),
+						'content_type' => sanitize_text_field( (string) ( $source['content_type'] ?? '' ) ),
 						'summary'     => sanitize_textarea_field( (string) ( $source['summary'] ?? '' ) ),
 						'image_url'   => esc_url_raw( (string) ( $source['image_url'] ?? '' ) ),
 						'source_type' => sanitize_key( (string) ( $source['source_type'] ?? '' ) ),

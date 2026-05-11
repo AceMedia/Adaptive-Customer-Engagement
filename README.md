@@ -180,6 +180,10 @@ It currently supports:
 - product actions for viewing a product, viewing options, or adding simple products straight to the basket
 - a collapsed list of extra options with cleaner spacing for longer product-result sets
 - persistent chat state across page changes for the same visitor, including reopening the chat after product navigation
+- live context post-type detection with a selectable allowlist in the AI settings screen
+- explicit end-chat handling for visitors, plus consistent auto-scroll when restored or newly updated
+- handover-aware chat state so the team can take over a live conversation and stop the AI replying over the top
+- a two-way admin chats detail screen where staff can take over, reply to the customer, return the thread to the AI assistant, or end the conversation
 - stored chat conversations and transcripts in the plugin reporting surfaces
 
 ## Setup and connection guidance

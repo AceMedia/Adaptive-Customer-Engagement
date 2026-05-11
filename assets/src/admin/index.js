@@ -1,5 +1,5 @@
 import apiFetch from '@wordpress/api-fetch';
-import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
+import { Button, Card, CardBody, CheckboxControl, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
 import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { BarChart } from '@mui/x-charts/BarChart';
@@ -1663,7 +1663,7 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 			createElement(
 				'tr',
 				null,
-				['Last message', 'Provider', 'Model', 'Company', 'Session', 'Messages', 'First question', 'Actions'].map((label) =>
+				['Last message', 'Status', 'Provider', 'Model', 'Company', 'Session', 'Messages', 'First question', 'Actions'].map((label) =>
 					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
 				)
 			)
@@ -1692,6 +1692,7 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 							)
 							: (item.last_message_at || item.started_at || '—')
 					),
+					createElement('td', null, item.status || __('Open', 'adaptive-customer-engagement')),
 					createElement('td', null, item.provider || '—'),
 					createElement('td', null, item.model || '—'),
 					createElement(
@@ -1721,15 +1722,19 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 	);
 }
 
-function ChatDetailPanel({ detail, onClose }) {
+function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, busy = false }) {
 	const conversation = detail?.conversation || {};
 	const messages = detail?.messages || [];
+	const [replyText, setReplyText] = useState('');
 	const detailMetrics = [
 		{ label: __('Messages', 'adaptive-customer-engagement'), value: conversation.message_count || messages.length || 0 },
 		{ label: __('User messages', 'adaptive-customer-engagement'), value: conversation.user_message_count || 0 },
 		{ label: __('Assistant messages', 'adaptive-customer-engagement'), value: conversation.assistant_message_count || 0 },
+		{ label: __('Team replies', 'adaptive-customer-engagement'), value: conversation.operator_message_count || 0 },
 		{ label: __('Errors', 'adaptive-customer-engagement'), value: messages.filter((item) => !!item.is_error).length },
 	];
+	const isEnded = !!conversation.ended_at || conversation.status === 'ended';
+	const isHandover = !!conversation.handover_enabled || conversation.status === 'handover';
 
 	return createElement(
 		'div',
@@ -1739,6 +1744,7 @@ function ChatDetailPanel({ detail, onClose }) {
 			title: conversation.conversation_uuid || __('Chat conversation', 'adaptive-customer-engagement'),
 			description: __('Review the stored transcript, linked session, and company context for this frontend assistant conversation.', 'adaptive-customer-engagement'),
 			meta: [
+				{ label: __('Status', 'adaptive-customer-engagement'), value: conversation.status || __('Open', 'adaptive-customer-engagement') },
 				{ label: __('Provider', 'adaptive-customer-engagement'), value: conversation.provider || '—' },
 				{ label: __('Model', 'adaptive-customer-engagement'), value: conversation.model || '—' },
 				{ label: __('Company', 'adaptive-customer-engagement'), value: conversation.company_name || '—' },
@@ -1747,6 +1753,53 @@ function ChatDetailPanel({ detail, onClose }) {
 			onClose,
 		}),
 		createElement(DetailMetricGrid, { items: detailMetrics }),
+		createElement(
+			Card,
+			null,
+			createElement(
+				CardBody,
+				null,
+				createElement('h3', { style: { marginTop: 0 } }, __('Handover and replies', 'adaptive-customer-engagement')),
+				isEnded
+					? createElement(Notice, { status: 'warning', isDismissible: false }, __('This chat has ended. The stored transcript remains available, but no further replies can be sent.', 'adaptive-customer-engagement'))
+					: createElement(Notice, { status: isHandover ? 'success' : 'info', isDismissible: false }, isHandover
+						? __('Handover is active. Team replies sent here will appear back in the customer chat window.', 'adaptive-customer-engagement')
+						: __('The assistant is still handling this chat. Take over the conversation here if you want the team to reply directly.', 'adaptive-customer-engagement')),
+				createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' } },
+					!isEnded && !isHandover
+						? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Take over chat', 'adaptive-customer-engagement'))
+						: null,
+					!isEnded && isHandover
+						? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
+						: null,
+					!isEnded
+						? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('end'), isBusy: busy, disabled: busy }, __('End chat', 'adaptive-customer-engagement'))
+						: null
+				),
+				!isEnded && isHandover
+					? createElement(Fragment, null,
+						createElement(TextareaControl, {
+							label: __('Reply to customer', 'adaptive-customer-engagement'),
+							help: __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement'),
+							value: replyText,
+							onChange: setReplyText,
+						}),
+						createElement(Button, {
+							variant: 'primary',
+							onClick: async () => {
+								if (!onReply || !String(replyText || '').trim()) {
+									return;
+								}
+								await onReply(replyText);
+								setReplyText('');
+							},
+							isBusy: busy,
+							disabled: busy || !String(replyText || '').trim(),
+						}, __('Send reply', 'adaptive-customer-engagement'))
+					)
+					: null
+			)
+		),
 		createElement(
 			Card,
 			null,
@@ -1765,10 +1818,12 @@ function ChatDetailPanel({ detail, onClose }) {
 							['Session UUID', conversation.session_uuid || '—'],
 							['Visitor UUID', conversation.visitor_uuid || '—'],
 							['Company', conversation.company_name || '—'],
+							['Handover', isHandover ? __('Active', 'adaptive-customer-engagement') : __('Inactive', 'adaptive-customer-engagement')],
 							['Page title', conversation.page_title || '—'],
 							['Page URL', conversation.page_url || '—'],
 							['Started', conversation.started_at || '—'],
 							['Last message', conversation.last_message_at || '—'],
+							['Ended', conversation.ended_at || '—'],
 						].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
 					)
 				)
@@ -1799,7 +1854,7 @@ function ChatDetailPanel({ detail, onClose }) {
 									},
 								},
 								createElement('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' } },
-									createElement('strong', null, message.message_role || 'message'),
+									createElement('strong', null, message.message_role === 'operator' ? __('Team', 'adaptive-customer-engagement') : (message.message_role || 'message')),
 									createElement('span', { style: { color: '#64748b' } }, message.created_at || '—')
 								),
 								createElement('p', { style: { margin: '0 0 8px' } }, message.message_text || '—'),
@@ -1830,6 +1885,7 @@ function ChatDetailPanel({ detail, onClose }) {
 function ChatsView({ active, route }) {
 	const [data, setData] = useState(null);
 	const [detail, setDetail] = useState(null);
+	const [detailBusy, setDetailBusy] = useState(false);
 	const [segments, setSegments] = useState([]);
 	const [segmentName, setSegmentName] = useState('');
 	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
@@ -1902,6 +1958,33 @@ function ChatsView({ active, route }) {
 	if (detail) {
 		return createElement(ChatDetailPanel, {
 			detail,
+			busy: detailBusy,
+			onStatusChange: async (action) => {
+				setDetailBusy(true);
+				try {
+					const response = await request(`/admin/chats/${detail?.conversation?.id}/status`, {
+						method: 'POST',
+						data: { action },
+					});
+					setDetail(response);
+					await load(filters, pagination.page);
+				} finally {
+					setDetailBusy(false);
+				}
+			},
+			onReply: async (message) => {
+				setDetailBusy(true);
+				try {
+					const response = await request(`/admin/chats/${detail?.conversation?.id}/reply`, {
+						method: 'POST',
+						data: { message },
+					});
+					setDetail(response);
+					await load(filters, pagination.page);
+				} finally {
+					setDetailBusy(false);
+				}
+			},
 			onClose: () => {
 				setDetail(null);
 				clearQueryParam('ace_chat');
@@ -4165,9 +4248,28 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
 	const currentOpenAiKey = String(settings?.ai_agent?.openai_api_key || '').trim();
 	const aiEnabled = !!settings?.ai_agent?.enabled;
+	const availableSiteContextPostTypes = Array.isArray(settings?.available_site_context_post_types) ? settings.available_site_context_post_types : [];
+	const selectedSiteContextPostTypes = Array.isArray(settings?.ai_agent?.live_context_post_types) ? settings.ai_agent.live_context_post_types : [];
+	const effectiveSiteContextPostTypes = selectedSiteContextPostTypes.length
+		? selectedSiteContextPostTypes
+		: availableSiteContextPostTypes.map((entry) => entry.value);
 	const setAiAgent = (next) => setSettings((current) => (current
 		? { ...current, ai_agent: { ...(current.ai_agent || {}), ...next } }
 		: current));
+	const toggleSiteContextPostType = (postType, checked) => {
+		const fallbackSelection = availableSiteContextPostTypes.map((entry) => entry.value);
+		const currentSelection = selectedSiteContextPostTypes.length ? selectedSiteContextPostTypes : fallbackSelection;
+		const nextSelection = checked
+			? currentSelection.concat(postType)
+			: currentSelection.filter((entry) => entry !== postType);
+		const uniqueSelection = Array.from(new Set(nextSelection)).filter((entry) => fallbackSelection.includes(entry));
+
+		if (!checked && currentSelection.length <= 1) {
+			return;
+		}
+
+		setAiAgent({ live_context_post_types: uniqueSelection });
+	};
 
 	useEffect(() => {
 		if (active && !settings) {
@@ -5043,6 +5145,25 @@ function SettingsView({ section = 'settings', active }) {
 							createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 12, value: settings.ai_agent.max_history_messages ?? 8, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
 						)
 						: createElement(Notice, { status: 'info', isDismissible: false }, __('Turn on the frontend AI chat when you are ready to show the plugin-managed assistant on the website.', 'adaptive-customer-engagement')),
+					settings.ai_agent.frontend_chat_enabled && availableSiteContextPostTypes.length
+						? createElement(SettingsPanel, {
+							title: __('Live context content types', 'adaptive-customer-engagement'),
+							description: __('Choose which public WordPress content types the frontend chat can search when grounding replies. Product questions can still be prioritised within the selected content types.', 'adaptive-customer-engagement'),
+							tone: 'soft',
+						},
+						createElement('div', { className: 'ace-admin-settings-toggle-list' },
+							availableSiteContextPostTypes.map((postType) =>
+								createElement(CheckboxControl, {
+									key: postType.value,
+									label: postType.label,
+									checked: effectiveSiteContextPostTypes.includes(postType.value),
+									onChange: (next) => toggleSiteContextPostType(postType.value, next),
+								})
+							)
+						),
+						createElement(Notice, { status: 'info', isDismissible: false }, __('Leave the default selection in place to search all detected public content types. At least one content type must remain selected.', 'adaptive-customer-engagement'))
+						)
+						: null,
 					createElement(TextareaControl, {
 						label: __('Opening message', 'adaptive-customer-engagement'),
 						help: __('This is the first assistant message visitors see when the chat opens.', 'adaptive-customer-engagement'),

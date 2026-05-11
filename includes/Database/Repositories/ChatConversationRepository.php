@@ -13,6 +13,10 @@ use ACE\AdaptiveCustomerEngagement\Database\Schema;
 defined( 'ABSPATH' ) || exit;
 
 final class ChatConversationRepository {
+	public const STATUS_OPEN     = 'open';
+	public const STATUS_HANDOVER = 'handover';
+	public const STATUS_ENDED    = 'ended';
+
 	/**
 	 * Create or update a conversation shell.
 	 *
@@ -71,6 +75,9 @@ final class ChatConversationRepository {
 					'message_count'          => 0,
 					'user_message_count'     => 0,
 					'assistant_message_count'=> 0,
+					'operator_message_count' => 0,
+					'status'                 => self::STATUS_OPEN,
+					'handover_enabled'       => 0,
 					'started_at'             => $now,
 					'last_message_at'        => $now,
 					'created_at'             => $now,
@@ -101,9 +108,10 @@ final class ChatConversationRepository {
 
 		$wpdb->query(
 			$wpdb->prepare(
-				'UPDATE ' . Schema::table_name( 'chat_conversations' ) . ' SET message_count = message_count + 1, user_message_count = user_message_count + %d, assistant_message_count = assistant_message_count + %d, model = %s, last_message_at = %s, updated_at = %s WHERE id = %d',
+				'UPDATE ' . Schema::table_name( 'chat_conversations' ) . ' SET message_count = message_count + 1, user_message_count = user_message_count + %d, assistant_message_count = assistant_message_count + %d, operator_message_count = operator_message_count + %d, model = %s, last_message_at = %s, updated_at = %s WHERE id = %d',
 				'user' === $role ? 1 : 0,
 				'assistant' === $role ? 1 : 0,
+				'operator' === $role ? 1 : 0,
 				sanitize_text_field( $model ),
 				$now,
 				$now,
@@ -139,6 +147,84 @@ final class ChatConversationRepository {
 		);
 
 		return is_array( $row ) ? $row : null;
+	}
+
+	/**
+	 * Update a conversation state.
+	 *
+	 * @param int                  $conversation_id Conversation ID.
+	 * @param array<string, mixed> $data            State payload.
+	 * @return array<string, mixed>|null
+	 */
+	public function update_state( int $conversation_id, array $data ): ?array {
+		global $wpdb;
+
+		if ( $conversation_id <= 0 ) {
+			return null;
+		}
+
+		$status = sanitize_key( (string) ( $data['status'] ?? self::STATUS_OPEN ) );
+
+		if ( ! in_array( $status, array( self::STATUS_OPEN, self::STATUS_HANDOVER, self::STATUS_ENDED ), true ) ) {
+			$status = self::STATUS_OPEN;
+		}
+
+		$handover_enabled = ! empty( $data['handover_enabled'] );
+		$ended_at         = isset( $data['ended_at'] ) ? sanitize_text_field( (string) $data['ended_at'] ) : '';
+		$ended_by         = isset( $data['ended_by'] ) ? sanitize_key( (string) $data['ended_by'] ) : '';
+		$now              = current_time( 'mysql', true );
+
+		$wpdb->update(
+			Schema::table_name( 'chat_conversations' ),
+			array(
+				'status'           => $status,
+				'handover_enabled' => $handover_enabled ? 1 : 0,
+				'ended_at'         => '' !== $ended_at ? $ended_at : null,
+				'ended_by'         => '' !== $ended_by ? $ended_by : null,
+				'updated_at'       => $now,
+			),
+			array( 'id' => $conversation_id )
+		);
+
+		return $this->find( $conversation_id );
+	}
+
+	/**
+	 * Start or stop human handover for a conversation.
+	 *
+	 * @param int  $conversation_id Conversation ID.
+	 * @param bool $enabled         Whether handover is enabled.
+	 * @return array<string, mixed>|null
+	 */
+	public function set_handover( int $conversation_id, bool $enabled ): ?array {
+		return $this->update_state(
+			$conversation_id,
+			array(
+				'status'           => $enabled ? self::STATUS_HANDOVER : self::STATUS_OPEN,
+				'handover_enabled' => $enabled,
+				'ended_at'         => '',
+				'ended_by'         => '',
+			)
+		);
+	}
+
+	/**
+	 * Mark a conversation as ended.
+	 *
+	 * @param int    $conversation_id Conversation ID.
+	 * @param string $ended_by        Actor ending the conversation.
+	 * @return array<string, mixed>|null
+	 */
+	public function end_conversation( int $conversation_id, string $ended_by ): ?array {
+		return $this->update_state(
+			$conversation_id,
+			array(
+				'status'           => self::STATUS_ENDED,
+				'handover_enabled' => false,
+				'ended_at'         => current_time( 'mysql', true ),
+				'ended_by'         => $ended_by,
+			)
+		);
 	}
 
 	/**
