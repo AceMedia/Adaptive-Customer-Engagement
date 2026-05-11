@@ -1023,6 +1023,16 @@ final class AdminController {
 		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
 		$api_key  = sanitize_text_field( (string) ( $payload['api_key'] ?? $ai_agent['openai_api_key'] ?? '' ) );
 
+		if ( '' === trim( $api_key ) ) {
+			return new WP_REST_Response(
+				array(
+					'active'          => false,
+					'models'          => array(),
+					'preferred_model' => '',
+				)
+			);
+		}
+
 		$result = ( new OpenAIClient() )->list_models( $api_key );
 
 		if ( is_wp_error( $result ) ) {

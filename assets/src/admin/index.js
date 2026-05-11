@@ -211,7 +211,7 @@ function hasEnrichmentConfig(settings = {}) {
 }
 
 function hasOpenAiConfig(settings = {}) {
-	return !!settings?.openai_api_key;
+	return !!String(settings?.openai_api_key || '').trim();
 }
 
 function getApiErrorMessage(error, fallback) {
@@ -4163,7 +4163,7 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsData, setOpenAiModelsData] = useState(null);
 	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
-	const currentOpenAiKey = settings?.ai_agent?.openai_api_key || '';
+	const currentOpenAiKey = String(settings?.ai_agent?.openai_api_key || '').trim();
 	const aiEnabled = !!settings?.ai_agent?.enabled;
 	const setAiAgent = (next) => setSettings((current) => (current
 		? { ...current, ai_agent: { ...(current.ai_agent || {}), ...next } }
@@ -4213,6 +4213,8 @@ function SettingsView({ section = 'settings', active }) {
 	}, [currentOpenAiKey]);
 
 	const refreshOpenAiModels = async (apiKey = currentOpenAiKey) => {
+		apiKey = String(apiKey || '').trim();
+
 		if (!apiKey) {
 			setOpenAiModelsData(null);
 			setOpenAiModelsKey('');
