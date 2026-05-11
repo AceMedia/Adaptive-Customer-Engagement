@@ -516,6 +516,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		open: false,
 		started: false,
 		pending: false,
+		conversationUuid: '',
 		messages: [],
 	};
 
@@ -620,6 +621,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		if (nextOpen && !state.started) {
 			state.started = true;
+			state.conversationUuid = window.crypto?.randomUUID?.() || `ace-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 			sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
 				event_type: 'chat_start',
 				event_name: 'frontend_ai_chat_started',
@@ -629,6 +631,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				referrer: document.referrer,
 				utm: getUtm(),
 				metadata: {
+					conversation_uuid: state.conversationUuid,
 					provider: chatConfig.provider || 'openai',
 					model: chatConfig.model || '',
 				},
@@ -687,6 +690,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				body: JSON.stringify({
 					message: content,
 					history: chatConfig.keepHistory ? history : [],
+					conversation_uuid: state.conversationUuid || '',
 					session_uuid: sessionUuid || '',
 					visitor_uuid: visitorUuid || '',
 					page_url: window.location.href,

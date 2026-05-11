@@ -14,7 +14,10 @@ use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Schema;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
@@ -61,11 +64,17 @@ final class Plugin {
 	 * @return void
 	 */
 	public function init(): void {
+		if ( get_option( Schema::SCHEMA_VERSION_OPTION ) !== Schema::SCHEMA_VERSION ) {
+			Schema::install();
+		}
+
 		$session_repository = new SessionRepository();
 		$event_repository   = new EventRepository();
 		$number_repository  = new NumberRepository();
 		$company_repository = new CompanyRepository();
 		$call_repository    = new CallRepository();
+		$chat_conversations = new ChatConversationRepository();
+		$chat_messages      = new ChatMessageRepository();
 		$privacy            = new Privacy();
 		$enrichment_service = new EnrichmentService(
 			new ProviderRegistry(),
@@ -87,9 +96,9 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service,
 			$site_context,
-			new FrontendChatService( new OpenAIClient(), $site_context )
+			new FrontendChatService( new OpenAIClient(), $site_context, $session_repository, $chat_conversations, $chat_messages )
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data, $connect_client );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client );
 		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );
@@ -97,6 +106,7 @@ final class Plugin {
 		add_action( 'admin_post_ace_export_sessions', array( $admin, 'export_sessions' ) );
 		add_action( 'admin_post_ace_export_companies', array( $admin, 'export_companies' ) );
 		add_action( 'admin_post_ace_export_calls', array( $admin, 'export_calls' ) );
+		add_action( 'admin_post_ace_export_chats', array( $admin, 'export_chats' ) );
 		add_action( 'admin_post_ace_export_commerce', array( $admin, 'export_commerce' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );

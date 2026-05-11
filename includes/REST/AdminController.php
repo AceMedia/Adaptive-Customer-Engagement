@@ -11,6 +11,8 @@ use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
@@ -70,6 +72,20 @@ final class AdminController {
 	private $calls;
 
 	/**
+	 * Chat conversation repository.
+	 *
+	 * @var ChatConversationRepository
+	 */
+	private $chat_conversations;
+
+	/**
+	 * Chat message repository.
+	 *
+	 * @var ChatMessageRepository
+	 */
+	private $chat_messages;
+
+	/**
 	 * Privacy helper.
 	 *
 	 * @var Privacy
@@ -109,15 +125,17 @@ final class AdminController {
 	 *
 	 * @param SessionRepository $sessions Session repository.
 	 * @param EventRepository   $events   Event repository.
-	 * @param NumberRepository  $numbers  Number repository.
-	 * @param Privacy           $privacy  Privacy helper.
+	 * @param NumberRepository         $numbers            Number repository.
+	 * @param Privacy                  $privacy            Privacy helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect ) {
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect ) {
 		$this->sessions           = $sessions;
 		$this->events             = $events;
 		$this->numbers            = $numbers;
 		$this->companies          = $companies;
 		$this->calls              = $calls;
+		$this->chat_conversations = $chat_conversations;
+		$this->chat_messages      = $chat_messages;
 		$this->privacy            = $privacy;
 		$this->lead_scorer        = new LeadScorer();
 		$this->enrichment_service = $enrichment_service;
@@ -225,6 +243,26 @@ final class AdminController {
 				'methods'             => 'GET',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'call_detail' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chats' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/(?P<id>\d+)',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_detail' ),
 			)
 		);
 
@@ -526,6 +564,8 @@ final class AdminController {
 					'likely_business_visits' => $this->sessions->count_likely_business( $filters ),
 					'stored_calls'           => $this->calls->count_calls( $call_filters ),
 					'matched_calls'          => $this->calls->count_matched_filtered( $call_filters ),
+					'chat_conversations'     => $this->chat_conversations->count_conversations(),
+					'chat_messages'          => $this->chat_conversations->count_messages(),
 				),
 				'top_pages'          => $this->events->get_top_pages( 6, $filters ),
 				'top_sources'        => $this->sessions->get_top_sources( 8, $filters ),
@@ -534,11 +574,13 @@ final class AdminController {
 				'recent_calls'       => $this->calls->get_calls( 20, $call_filters ),
 				'numbers'            => $numbers,
 				'hot_companies'      => array_map( array( $this, 'decorate_company_summary' ), $this->companies->get_hot_companies() ),
+				'recent_chats'       => $this->chat_conversations->get_conversations( 10 ),
 				'sample_data'        => $this->sample_data->get_status(),
 				'segment_shortcuts'  => array(
 					'sessions'  => Settings::get_reporting_segments( 'sessions' ),
 					'companies' => Settings::get_reporting_segments( 'companies' ),
 					'calls'     => Settings::get_reporting_segments( 'calls' ),
+					'chats'     => Settings::get_reporting_segments( 'chats' ),
 					'commerce'  => Settings::get_reporting_segments( 'commerce' ),
 				),
 			)
@@ -596,6 +638,7 @@ final class AdminController {
 				'session'  => $this->decorate_session_summary( $session ),
 				'events'   => $events,
 				'calls'    => $this->calls->get_calls_by_session( $session_id, 12 ),
+				'chats'    => $this->chat_conversations->get_by_session( $session_id, 12 ),
 				'commerce' => $this->events->get_session_woocommerce_interest( $session_id ),
 			)
 		);
@@ -659,9 +702,67 @@ final class AdminController {
 
 		$company = $this->decorate_company_summary( $company );
 		$company['recent_calls'] = $this->calls->get_calls_by_company( (int) $company['id'], 12 );
+		$company['recent_chats'] = $this->chat_conversations->get_by_company( (int) $company['id'], 12 );
 		$company['commerce'] = $this->events->get_company_woocommerce_interest( (int) $company['id'] );
 
 		return new WP_REST_Response( $company );
+	}
+
+	/**
+	 * Chats reporting data.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function chats( WP_REST_Request $request ): WP_REST_Response {
+		$filters  = $this->get_chat_filters( $request );
+		$page     = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page = min( 100, max( 1, (int) $request->get_param( 'per_page' ) ?: 25 ) );
+		$total    = $this->chat_conversations->count_conversations( $filters );
+		$pages    = max( 1, (int) ceil( $total / $per_page ) );
+
+		return new WP_REST_Response(
+			array(
+				'metrics'    => array(
+					'conversations' => $total,
+					'messages'      => $this->chat_conversations->count_messages(),
+				),
+				'items'      => $this->chat_conversations->get_conversations( $per_page, $filters, ( $page - 1 ) * $per_page ),
+				'filters'    => array(
+					'providers' => $this->chat_conversations->get_providers(),
+					'models'    => $this->chat_conversations->get_models(),
+					'active'    => $filters,
+				),
+				'segments'   => Settings::get_reporting_segments( 'chats' ),
+				'pagination' => array(
+					'page'        => $page,
+					'per_page'    => $per_page,
+					'total'       => $total,
+					'total_pages' => $pages,
+				),
+			)
+		);
+	}
+
+	/**
+	 * Chat conversation detail data.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_detail( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'conversation' => $conversation,
+				'messages'     => $this->chat_messages->get_by_conversation( (int) $conversation['id'] ),
+			)
+		);
 	}
 
 	/**
@@ -2457,6 +2558,40 @@ final class AdminController {
 	}
 
 	/**
+	 * Export filtered chat conversations as CSV.
+	 *
+	 * @return void
+	 */
+	public function export_chats(): void {
+		$this->assert_export_access();
+
+		$filters = $this->get_chat_filters_from_array( $_GET ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$total   = $this->chat_conversations->count_conversations( $filters );
+		$items   = $total > 0 ? $this->chat_conversations->get_conversations( $total, $filters, 0 ) : array();
+
+		$this->stream_csv(
+			'ace-chats-export-' . gmdate( 'Ymd-His' ) . '.csv',
+			array(
+				'conversation_uuid'       => 'Conversation UUID',
+				'session_uuid'            => 'Session UUID',
+				'visitor_uuid'            => 'Visitor UUID',
+				'company_name'            => 'Company',
+				'provider'                => 'Provider',
+				'model'                   => 'Model',
+				'message_count'           => 'Messages',
+				'user_message_count'      => 'User messages',
+				'assistant_message_count' => 'Assistant messages',
+				'page_title'              => 'Page title',
+				'page_url'                => 'Page URL',
+				'first_user_message'      => 'First user message',
+				'started_at'              => 'Started',
+				'last_message_at'         => 'Last message',
+			),
+			$items
+		);
+	}
+
+	/**
 	 * Export WooCommerce reporting datasets as CSV.
 	 *
 	 * @return void
@@ -2561,7 +2696,7 @@ final class AdminController {
 			return new WP_Error( 'ace_segment_name_required', __( 'Please provide a name for the saved segment.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
-		if ( ! in_array( $segment['view'], array( 'sessions', 'companies', 'calls', 'commerce' ), true ) ) {
+		if ( ! in_array( $segment['view'], array( 'sessions', 'companies', 'calls', 'chats', 'commerce' ), true ) ) {
 			return new WP_Error( 'ace_segment_view_invalid', __( 'Please provide a valid reporting view.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
@@ -4076,6 +4211,40 @@ final class AdminController {
 			'date_to'    => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
 			'match_only' => rest_sanitize_boolean( $values['match_only'] ?? false ) ? '1' : '',
 			'connect_import_only' => rest_sanitize_boolean( $values['connect_import_only'] ?? false ) ? '1' : '',
+		);
+	}
+
+	/**
+	 * Read chat filters from the request.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return array<string, string>
+	 */
+	private function get_chat_filters( WP_REST_Request $request ): array {
+		return $this->get_chat_filters_from_array(
+			array(
+				'search'    => $request->get_param( 'search' ),
+				'provider'  => $request->get_param( 'provider' ),
+				'model'     => $request->get_param( 'model' ),
+				'date_from' => $request->get_param( 'date_from' ),
+				'date_to'   => $request->get_param( 'date_to' ),
+			)
+		);
+	}
+
+	/**
+	 * Sanitize chat filters from a raw array.
+	 *
+	 * @param array<string, mixed> $values Raw values.
+	 * @return array<string, string>
+	 */
+	private function get_chat_filters_from_array( array $values ): array {
+		return array(
+			'search'    => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
+			'provider'  => sanitize_key( (string) ( $values['provider'] ?? '' ) ),
+			'model'     => sanitize_text_field( (string) ( $values['model'] ?? '' ) ),
+			'date_from' => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
+			'date_to'   => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
 		);
 	}
 

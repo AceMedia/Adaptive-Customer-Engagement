@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.0';
+	public const SCHEMA_VERSION        = '0.1.1';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -195,6 +195,52 @@ final class Schema {
 			KEY company_name (company_name)
 		) {$collate};";
 
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_conversations' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			conversation_uuid CHAR(36) NOT NULL,
+			session_id BIGINT UNSIGNED NULL,
+			session_uuid CHAR(36) NULL,
+			visitor_uuid CHAR(36) NULL,
+			company_id BIGINT UNSIGNED NULL,
+			page_url TEXT NULL,
+			page_title TEXT NULL,
+			provider VARCHAR(50) NOT NULL DEFAULT 'openai',
+			model VARCHAR(100) NULL,
+			message_count BIGINT UNSIGNED DEFAULT 0,
+			user_message_count BIGINT UNSIGNED DEFAULT 0,
+			assistant_message_count BIGINT UNSIGNED DEFAULT 0,
+			started_at DATETIME NOT NULL,
+			last_message_at DATETIME NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY conversation_uuid (conversation_uuid),
+			KEY session_id (session_id),
+			KEY company_id (company_id),
+			KEY last_message_at (last_message_at),
+			KEY provider (provider),
+			KEY model (model)
+		) {$collate};";
+
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_messages' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			conversation_id BIGINT UNSIGNED NOT NULL,
+			session_id BIGINT UNSIGNED NULL,
+			company_id BIGINT UNSIGNED NULL,
+			message_role VARCHAR(20) NOT NULL,
+			message_text LONGTEXT NULL,
+			sources LONGTEXT NULL,
+			model VARCHAR(100) NULL,
+			is_error TINYINT(1) DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			KEY conversation_id (conversation_id),
+			KEY session_id (session_id),
+			KEY company_id (company_id),
+			KEY message_role (message_role),
+			KEY created_at (created_at)
+		) {$collate};";
+
 		foreach ( $tables as $table_sql ) {
 			dbDelta( $table_sql );
 		}
@@ -228,6 +274,8 @@ final class Schema {
 			self::table_name( 'numbers' ),
 			self::table_name( 'calls' ),
 			self::table_name( 'enrichment_cache' ),
+			self::table_name( 'chat_conversations' ),
+			self::table_name( 'chat_messages' ),
 		);
 	}
 

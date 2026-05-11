@@ -7,6 +7,9 @@
 
 namespace ACE\AdaptiveCustomerEngagement\AI;
 
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use WP_Error;
 
@@ -28,14 +31,41 @@ final class FrontendChatService {
 	private $site_context;
 
 	/**
+	 * Session repository.
+	 *
+	 * @var SessionRepository
+	 */
+	private $sessions;
+
+	/**
+	 * Chat conversation repository.
+	 *
+	 * @var ChatConversationRepository
+	 */
+	private $chat_conversations;
+
+	/**
+	 * Chat message repository.
+	 *
+	 * @var ChatMessageRepository
+	 */
+	private $chat_messages;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param OpenAIClient      $openai       OpenAI client.
-	 * @param SiteContextService $site_context Site context helper.
+	 * @param OpenAIClient             $openai             OpenAI client.
+	 * @param SiteContextService       $site_context       Site context helper.
+	 * @param SessionRepository        $sessions           Session repository.
+	 * @param ChatConversationRepository $chat_conversations Chat conversation repository.
+	 * @param ChatMessageRepository    $chat_messages      Chat message repository.
 	 */
-	public function __construct( OpenAIClient $openai, SiteContextService $site_context ) {
-		$this->openai       = $openai;
-		$this->site_context = $site_context;
+	public function __construct( OpenAIClient $openai, SiteContextService $site_context, SessionRepository $sessions, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages ) {
+		$this->openai             = $openai;
+		$this->site_context       = $site_context;
+		$this->sessions           = $sessions;
+		$this->chat_conversations = $chat_conversations;
+		$this->chat_messages      = $chat_messages;
 	}
 
 	/**
@@ -48,17 +78,45 @@ final class FrontendChatService {
 		$settings = Settings::get();
 		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
 		$message  = sanitize_textarea_field( (string) ( $payload['message'] ?? '' ) );
+		$model    = sanitize_text_field( (string) ( $ai_agent['openai_model'] ?? 'gpt-4.1-mini' ) );
 
 		if ( '' === $message ) {
 			return new WP_Error( 'ace_ai_message_required', __( 'Please enter a message before sending it to the assistant.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
-		$site     = $this->site_context->get_site_identity();
-		$sources  = array();
-		$context  = array();
-		$limit    = max( 1, min( 8, absint( $ai_agent['max_context_documents'] ?? 4 ) ) );
-		$page_url = esc_url_raw( (string) ( $payload['page_url'] ?? '' ) );
+		$site       = $this->site_context->get_site_identity();
+		$sources    = array();
+		$context    = array();
+		$limit      = max( 1, min( 8, absint( $ai_agent['max_context_documents'] ?? 4 ) ) );
+		$page_url   = esc_url_raw( (string) ( $payload['page_url'] ?? '' ) );
 		$page_title = sanitize_text_field( (string) ( $payload['page_title'] ?? '' ) );
+		$session    = ! empty( $payload['session_uuid'] ) ? $this->sessions->find_by_uuid( sanitize_text_field( (string) $payload['session_uuid'] ) ) : null;
+		$thread     = $this->chat_conversations->create_or_touch(
+			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) ),
+			array(
+				'session_id'   => (int) ( $session['id'] ?? 0 ),
+				'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
+				'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
+				'company_id'   => (int) ( $session['company_id'] ?? 0 ),
+				'page_url'     => $page_url,
+				'page_title'   => $page_title,
+				'provider'     => 'openai',
+				'model'        => $model,
+			)
+		);
+
+		if ( ! empty( $thread['id'] ) ) {
+			$this->store_message(
+				(int) $thread['id'],
+				(int) ( $session['id'] ?? 0 ),
+				(int) ( $session['company_id'] ?? 0 ),
+				'user',
+				$message,
+				array(),
+				$model,
+				false
+			);
+		}
 
 		$context[] = sprintf(
 			"Site name: %s\nSite description: %s\nSite URL: %s\nSite language: %s",
@@ -122,21 +180,79 @@ final class FrontendChatService {
 			$messages,
 			array(
 				'api_key'             => $ai_agent['openai_api_key'] ?? '',
-				'model'               => $ai_agent['openai_model'] ?? 'gpt-4.1-mini',
+				'model'               => $model,
 				'temperature'         => $ai_agent['openai_temperature'] ?? 0.2,
 				'max_response_tokens' => $ai_agent['openai_max_response_tokens'] ?? 700,
 			)
 		);
 
 		if ( is_wp_error( $response ) ) {
+			if ( ! empty( $thread['id'] ) ) {
+				$this->store_message(
+					(int) $thread['id'],
+					(int) ( $session['id'] ?? 0 ),
+					(int) ( $session['company_id'] ?? 0 ),
+					'assistant',
+					$response->get_error_message(),
+					array(),
+					$model,
+					true
+				);
+			}
+
 			return $response;
+		}
+
+		$normalised_sources = $this->normalise_sources( $sources );
+
+		if ( ! empty( $thread['id'] ) ) {
+			$this->store_message(
+				(int) $thread['id'],
+				(int) ( $session['id'] ?? 0 ),
+				(int) ( $session['company_id'] ?? 0 ),
+				'assistant',
+				sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
+				$normalised_sources,
+				sanitize_text_field( (string) ( $response['model'] ?? $model ) ),
+				false
+			);
 		}
 
 		return array(
 			'message' => sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
-			'sources' => ! empty( $ai_agent['show_source_links'] ) ? $this->normalise_sources( $sources ) : array(),
+			'sources' => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
 			'model'   => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
 		);
+	}
+
+	/**
+	 * Store a chat message and refresh conversation totals.
+	 *
+	 * @param int                             $conversation_id Conversation ID.
+	 * @param int                             $session_id      Session ID.
+	 * @param int                             $company_id      Company ID.
+	 * @param string                          $role            Message role.
+	 * @param string                          $text            Message text.
+	 * @param array<int, array<string,string>> $sources        Sources.
+	 * @param string                          $model           Model name.
+	 * @param bool                            $is_error        Whether this is an error message.
+	 * @return void
+	 */
+	private function store_message( int $conversation_id, int $session_id, int $company_id, string $role, string $text, array $sources, string $model, bool $is_error ): void {
+		$this->chat_messages->create(
+			array(
+				'conversation_id' => $conversation_id,
+				'session_id'      => $session_id,
+				'company_id'      => $company_id,
+				'message_role'    => $role,
+				'message_text'    => $text,
+				'sources'         => $sources,
+				'model'           => $model,
+				'is_error'        => $is_error,
+			)
+		);
+
+		$this->chat_conversations->record_message( $conversation_id, $role, $model );
 	}
 
 	/**
