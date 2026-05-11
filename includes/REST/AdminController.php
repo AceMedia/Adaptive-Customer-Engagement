@@ -268,11 +268,41 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
+			'/admin/settings/export',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'export_settings' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/settings/import',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'import_settings' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/chat-widget/token',
 			array(
 				'methods'             => 'POST',
 				'permission_callback' => '__return_true',
 				'callback'            => array( $this, 'create_connect_widget_token' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/chat-widget/start',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'start_connect_widget_chat' ),
 			)
 		);
 
@@ -310,6 +340,53 @@ final class AdminController {
 					'permission_callback' => array( $this, 'can_manage' ),
 					'callback'            => array( $this, 'create_connect_assistant' ),
 				),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/connect/lex-bots',
+			array(
+				array(
+					'methods'             => 'GET',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'connect_lex_bots' ),
+				),
+				array(
+					'methods'             => 'POST',
+					'permission_callback' => array( $this, 'can_manage' ),
+					'callback'            => array( $this, 'create_connect_lex_bot' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/connect/lex-bots/disconnect',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'disconnect_connect_lex_bot' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/connect/lex-bots/cleanup',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'cleanup_connect_lex_bots' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/connect/bot-knowledge/seed',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'seed_connect_bot_knowledge' ),
 			)
 		);
 
@@ -852,6 +929,60 @@ final class AdminController {
 	}
 
 	/**
+	 * Export the saved plugin configuration.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function export_settings(): WP_REST_Response {
+		$settings = Settings::get();
+
+		return new WP_REST_Response(
+			array(
+				'format'      => 'adaptive-customer-engagement-settings',
+				'plugin'      => 'adaptive-customer-engagement',
+				'version'     => defined( 'ACE_PLUGIN_VERSION' ) ? sanitize_text_field( (string) ACE_PLUGIN_VERSION ) : '',
+				'exported_at' => gmdate( 'c' ),
+				'settings'    => $settings,
+			)
+		);
+	}
+
+	/**
+	 * Import plugin configuration from an exported settings payload.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function import_settings( WP_REST_Request $request ) {
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+
+		$imported_settings = array();
+
+		if ( isset( $payload['settings'] ) && is_array( $payload['settings'] ) ) {
+			$imported_settings = $payload['settings'];
+		} elseif ( isset( $payload['config'] ) && is_array( $payload['config'] ) ) {
+			$imported_settings = $payload['config'];
+		} elseif ( isset( $payload['enabled'] ) || isset( $payload['tracking'] ) || isset( $payload['privacy'] ) || isset( $payload['enrichment'] ) || isset( $payload['amazon_connect'] ) || isset( $payload['ai_agent'] ) ) {
+			$imported_settings = $payload;
+		}
+
+		if ( empty( $imported_settings ) ) {
+			return new WP_Error( 'ace_settings_import_invalid', __( 'The uploaded file does not contain a valid Adaptive Customer Engagement settings export.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$imported_settings = $this->maybe_enrich_connect_settings( $imported_settings );
+		$updated_settings  = Settings::update( $imported_settings );
+
+		return new WP_REST_Response(
+			array(
+				'settings'    => $updated_settings,
+				'imported_at' => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
 	 * Create a JWT for a secured Amazon Connect chat widget.
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -892,6 +1023,94 @@ final class AdminController {
 		return new WP_REST_Response(
 			array(
 				'token' => $token,
+			)
+		);
+	}
+
+	/**
+	 * Start a hosted widget chat through the plugin backend so the selected flow is honoured.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function start_connect_widget_chat( WP_REST_Request $request ) {
+		$settings       = Settings::get();
+		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$admin_only     = ! empty( $ai_agent['frontend_test_admin_only'] );
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_test_enabled'] ) ) {
+			return new WP_Error( 'ace_connect_widget_disabled', __( 'The frontend test chat is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( $admin_only && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_connect_widget_forbidden', __( 'This chat starter is only available to logged-in administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$chat_contact_flow_id = sanitize_text_field( (string) ( $amazon_connect['chat_contact_flow_id'] ?? '' ) );
+
+		if ( '' === $chat_contact_flow_id ) {
+			return new WP_Error( 'ace_connect_chat_flow_missing', __( 'Choose the Amazon Connect chat contact flow in the plugin settings before launching the widget.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$user    = wp_get_current_user();
+		$name    = '';
+
+		if ( $user instanceof \WP_User && $user->exists() ) {
+			$name = $user->display_name ?: $user->user_login;
+		}
+
+		if ( '' === $name ) {
+			$name = get_bloginfo( 'name' ) ?: __( 'Website visitor', 'adaptive-customer-engagement' );
+		}
+
+		$attributes = $this->sanitize_connect_widget_attributes(
+			array(
+				'ace_session_id' => $payload['session_uuid'] ?? '',
+				'ace_visitor_id' => $payload['visitor_uuid'] ?? '',
+				'ace_page_url'   => $payload['page_url'] ?? '',
+				'ace_page_title' => $payload['page_title'] ?? '',
+			)
+		);
+		$result     = $this->connect->start_chat_contact(
+			$chat_contact_flow_id,
+			$name,
+			$attributes,
+			array(
+				'text/plain',
+				'text/markdown',
+			),
+			wp_generate_uuid4()
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$start_chat_result = array(
+			'ContactId'       => sanitize_text_field( (string) ( $result['ContactId'] ?? '' ) ),
+			'ParticipantId'   => sanitize_text_field( (string) ( $result['ParticipantId'] ?? '' ) ),
+			'ParticipantToken'=> sanitize_text_field( (string) ( $result['ParticipantToken'] ?? '' ) ),
+		);
+
+		if ( '' === $start_chat_result['ContactId'] || '' === $start_chat_result['ParticipantId'] || '' === $start_chat_result['ParticipantToken'] ) {
+			return new WP_Error( 'ace_connect_start_chat_invalid', __( 'Amazon Connect did not return a complete chat session payload.', 'adaptive-customer-engagement' ), array( 'status' => 502 ) );
+		}
+
+		if ( ! empty( $result['ContinuedFromContactId'] ) ) {
+			$start_chat_result['ContinuedFromContactId'] = sanitize_text_field( (string) $result['ContinuedFromContactId'] );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'data' => array(
+					'startChatResult'    => $start_chat_result,
+					'featurePermissions' => array(
+						'MESSAGING_MARKDOWN' => true,
+						'ATTACHMENTS'        => false,
+					),
+				),
 			)
 		);
 	}
@@ -988,6 +1207,627 @@ final class AdminController {
 	}
 
 	/**
+	 * Read Amazon Lex V2 bots and related bot resources.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function connect_lex_bots( WP_REST_Request $request ): WP_REST_Response {
+		$settings       = Settings::get();
+		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$selected_bot   = sanitize_text_field( (string) ( $request->get_param( 'bot_id' ) ?: ( $amazon_connect['lex_bot_id'] ?? '' ) ) );
+		$selected_locale = sanitize_text_field( (string) ( $request->get_param( 'locale_id' ) ?: ( $amazon_connect['lex_bot_locale_id'] ?? '' ) ) );
+		$inventory      = $this->get_connect_lex_bot_inventory( $amazon_connect, $selected_bot, $selected_locale );
+
+		return new WP_REST_Response(
+			array(
+				'items'            => $inventory['items'],
+				'aliases'          => $inventory['aliases'],
+				'locales'          => $inventory['locales'],
+				'intents'          => $inventory['intents'],
+				'selected'         => $inventory['selected'],
+				'console_url'      => $inventory['console_url'],
+				'connected_count'  => count( $inventory['items'] ),
+				'connected_bot'    => $inventory['connected_bot'],
+				'can_create'       => empty( $inventory['selected']['bot_id'] ),
+				'error'            => $inventory['error'],
+				'errors'           => $inventory['errors'],
+			)
+		);
+	}
+
+	/**
+	 * Create an Amazon Lex V2 bot from the plugin knowledge base.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function create_connect_lex_bot( WP_REST_Request $request ) {
+		$payload          = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$settings         = Settings::get();
+		$amazon_connect   = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$ai_agent         = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$name             = sanitize_text_field( (string) ( $payload['name'] ?? '' ) );
+		$description      = sanitize_textarea_field( (string) ( $payload['description'] ?? '' ) );
+		$provided_role_arn = sanitize_text_field( (string) ( $payload['role_arn'] ?? '' ) );
+		$stored_role_arn   = sanitize_text_field( (string) ( $amazon_connect['lex_bot_role_arn'] ?? '' ) );
+		$role_arn          = '' !== $provided_role_arn ? $provided_role_arn : $stored_role_arn;
+		$stored_locale_id  = sanitize_text_field( (string) ( $amazon_connect['lex_bot_locale_id'] ?? '' ) );
+		$locale_id         = sanitize_text_field( (string) ( $payload['locale_id'] ?? ( '' !== $stored_locale_id ? $stored_locale_id : 'en_GB' ) ) );
+		$link_to_settings = ! array_key_exists( 'link_to_settings', $payload ) || rest_sanitize_boolean( $payload['link_to_settings'] );
+		$create_chat_flow = ! array_key_exists( 'create_chat_flow', $payload ) || rest_sanitize_boolean( $payload['create_chat_flow'] );
+		$chat_flow_message = sanitize_textarea_field( (string) ( $payload['chat_flow_message'] ?? __( 'Hello, I am the site assistant. Ask me anything about this website and I will do my best to help.', 'adaptive-customer-engagement' ) ) );
+		$chat_flow_failure_message = sanitize_textarea_field( (string) ( $payload['chat_flow_failure_message'] ?? __( 'Sorry, the site assistant is unavailable just now. Please try again later.', 'adaptive-customer-engagement' ) ) );
+		$provisioned_role = null;
+		$role_source      = '' !== $provided_role_arn ? 'provided' : ( '' !== $stored_role_arn ? 'saved' : 'generated' );
+		$knowledge_entries = $this->sanitize_bot_knowledge_entries_payload(
+			is_array( $payload['knowledge_entries'] ?? null ) ? $payload['knowledge_entries'] : ( is_array( $ai_agent['bot_knowledge_entries'] ?? null ) ? $ai_agent['bot_knowledge_entries'] : array() )
+		);
+
+		if ( '' === $name ) {
+			return new WP_Error( 'ace_connect_lex_bot_name_required', __( 'Please provide a bot name before creating the Lex bot.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( '' === $role_arn || $this->is_service_linked_lex_role_arn( $role_arn ) ) {
+			if ( '' !== $role_arn && $this->is_service_linked_lex_role_arn( $role_arn ) ) {
+				$role_source = 'generated';
+			}
+
+			$provisioned_role = $this->connect->ensure_lex_bot_role();
+
+			if ( is_wp_error( $provisioned_role ) ) {
+				return $provisioned_role;
+			}
+
+			$role_arn = sanitize_text_field( (string) ( $provisioned_role['role_arn'] ?? '' ) );
+			$role_source = 'generated';
+		}
+
+		if ( '' === $role_arn ) {
+			return new WP_Error( 'ace_connect_lex_bot_role_required', __( 'The plugin could not determine a dedicated IAM role ARN for this Lex bot.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( '' !== $provided_role_arn && $this->is_service_linked_lex_role_arn( $role_arn ) ) {
+			return new WP_Error( 'ace_connect_lex_bot_role_invalid', __( 'The selected ARN is a Lex service-linked role from an existing bot. Please use a dedicated Lex bot role ARN for creating a new bot from WordPress.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( empty( $knowledge_entries ) ) {
+			return new WP_Error( 'ace_connect_lex_bot_knowledge_required', __( 'Add at least one enabled knowledge entry before creating the Lex bot.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$enabled_knowledge_entries = array_values(
+			array_filter(
+				$knowledge_entries,
+				static function ( array $entry ): bool {
+					return ! empty( $entry['enabled'] );
+				}
+			)
+		);
+
+		if ( empty( $enabled_knowledge_entries ) ) {
+			return new WP_Error( 'ace_connect_lex_bot_enabled_knowledge_required', __( 'Enable at least one knowledge entry before creating the Lex bot.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$bot = $this->connect->create_lex_bot( $name, $role_arn, $description, $locale_id );
+
+		if ( is_wp_error( $bot ) ) {
+			return $bot;
+		}
+
+		$bot_id = sanitize_text_field( (string) ( $bot['botId'] ?? '' ) );
+
+		if ( '' === $bot_id ) {
+			return new WP_Error( 'ace_connect_lex_bot_create_failed', __( 'Amazon Lex did not return a bot ID for the newly created bot.', 'adaptive-customer-engagement' ) );
+		}
+
+		$bot_ready = $this->connect->wait_for_lex_bot_status( $bot_id );
+
+		if ( is_wp_error( $bot_ready ) ) {
+			return $bot_ready;
+		}
+
+		$locale = $this->connect->create_lex_bot_locale(
+			$bot_id,
+			$locale_id,
+			sprintf(
+				/* translators: %s: site name */
+				__( 'Primary %s locale managed by Adaptive Customer Engagement.', 'adaptive-customer-engagement' ),
+				wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES )
+			)
+		);
+
+		if ( is_wp_error( $locale ) ) {
+			return $locale;
+		}
+
+		$locale_ready = $this->connect->wait_for_lex_bot_locale_status( $bot_id, $locale_id );
+
+		if ( is_wp_error( $locale_ready ) ) {
+			return $locale_ready;
+		}
+
+		$created_intents = array();
+
+		foreach ( $enabled_knowledge_entries as $index => $entry ) {
+			$intent_name = $this->build_lex_knowledge_intent_name( (string) $entry['question'], $index + 1 );
+			$intent      = $this->connect->create_lex_intent(
+				$bot_id,
+				$locale_id,
+				$intent_name,
+				(string) $entry['answer'],
+				$this->build_lex_sample_utterances( $entry ),
+				(string) $entry['question']
+			);
+
+			if ( is_wp_error( $intent ) ) {
+				return $intent;
+			}
+
+			$intent['intentName'] = $intent_name;
+			$created_intents[]    = $intent;
+		}
+
+		$build = $this->connect->build_lex_bot_locale( $bot_id, $locale_id );
+
+		if ( is_wp_error( $build ) ) {
+			return new WP_Error(
+				'ace_connect_lex_bot_build_failed',
+				sprintf(
+					/* translators: %s: AWS error message. */
+					__( 'The Amazon Lex bot was created but its locale build could not be started: %s', 'adaptive-customer-engagement' ),
+					$build->get_error_message()
+				),
+				array(
+					'status' => 502,
+					'bot_id' => $bot_id,
+				)
+			);
+		}
+
+		$locale_built = $this->connect->wait_for_lex_bot_locale_status( $bot_id, $locale_id, array( 'Built', 'ReadyExpressTesting' ), 20, 3000000 );
+
+		if ( is_wp_error( $locale_built ) ) {
+			return $locale_built;
+		}
+
+		$version = $this->connect->create_lex_bot_version(
+			$bot_id,
+			$locale_id,
+			sprintf(
+				/* translators: %s: site name */
+				__( 'Published website chat version for %s.', 'adaptive-customer-engagement' ),
+				wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES )
+			)
+		);
+
+		if ( is_wp_error( $version ) ) {
+			return $version;
+		}
+
+		$bot_version = sanitize_text_field( (string) ( $version['botVersion'] ?? '' ) );
+
+		if ( '' === $bot_version ) {
+			return new WP_Error( 'ace_connect_lex_bot_version_create_failed', __( 'Amazon Lex did not return a published bot version for the new site bot.', 'adaptive-customer-engagement' ) );
+		}
+
+		$version_ready = $this->connect->wait_for_lex_bot_version_status( $bot_id, $bot_version );
+
+		if ( is_wp_error( $version_ready ) ) {
+			return $version_ready;
+		}
+
+		$published_alias = $this->connect->create_lex_bot_alias(
+			$bot_id,
+			$bot_version,
+			'WebsiteChat',
+			$locale_id,
+			array(
+				'managed-by'           => 'adaptive-customer-engagement',
+				'environment'          => 'wordpress-plugin',
+				'AmazonConnectEnabled' => 'true',
+			),
+			__( 'Published website chat alias managed by Adaptive Customer Engagement.', 'adaptive-customer-engagement' )
+		);
+
+		if ( is_wp_error( $published_alias ) ) {
+			return $published_alias;
+		}
+
+		$published_alias_id = sanitize_text_field( (string) ( $published_alias['botAliasId'] ?? '' ) );
+
+		if ( '' === $published_alias_id ) {
+			return new WP_Error( 'ace_connect_lex_bot_alias_create_failed', __( 'Amazon Lex did not return a published alias for the new site bot.', 'adaptive-customer-engagement' ) );
+		}
+
+		$preferred_alias = $this->connect->wait_for_lex_bot_alias_status( $bot_id, $published_alias_id );
+
+		if ( is_wp_error( $preferred_alias ) ) {
+			return $preferred_alias;
+		}
+
+		$aliases = $this->connect->list_lex_bot_aliases( $bot_id );
+		$locales = $this->connect->list_lex_bot_locales( $bot_id );
+		$intents = $this->connect->list_lex_intents( $bot_id, $locale_id );
+		$account_id      = preg_match( '/^arn:aws:iam::([0-9]{12}):/', $role_arn, $role_matches ) ? sanitize_text_field( (string) $role_matches[1] ) : '';
+		$bot_arn         = $this->connect->build_lex_v2_bot_arn(
+			$bot_id,
+			$account_id,
+			sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) )
+		);
+		$alias_arn       = $this->connect->build_lex_v2_alias_arn(
+			$bot_id,
+			$published_alias_id,
+			$account_id,
+			sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) )
+		);
+		$tag_result      = '' !== $bot_arn
+			? $this->connect->ensure_lex_connect_tags(
+				$bot_arn,
+				array(
+					'managed-by'           => 'adaptive-customer-engagement',
+					'environment'          => 'wordpress-plugin',
+					'locale'               => $locale_id,
+					'AmazonConnectEnabled' => 'true',
+				),
+				$alias_arn,
+				array(
+					'managed-by'           => 'adaptive-customer-engagement',
+					'environment'          => 'wordpress-plugin',
+					'AmazonConnectEnabled' => 'true',
+				)
+			)
+			: new WP_Error( 'ace_connect_lex_bot_arn_missing', __( 'The plugin could not determine the Lex bot ARN to apply the Amazon Connect tags.', 'adaptive-customer-engagement' ) );
+
+		if ( is_wp_error( $tag_result ) ) {
+			return new WP_Error(
+				'ace_connect_lex_bot_tag_failed',
+				sprintf(
+					/* translators: %s: AWS error message. */
+					__( 'The Amazon Lex bot was created but could not be tagged for Amazon Connect: %s', 'adaptive-customer-engagement' ),
+					$tag_result->get_error_message()
+				),
+				array(
+					'status' => 502,
+					'bot_id' => $bot_id,
+				)
+			);
+		}
+
+		$connect_association = '' !== $alias_arn ? $this->connect->associate_lex_v2_bot( $alias_arn ) : new WP_Error( 'ace_connect_lex_alias_arn_missing', __( 'The plugin could not determine the Lex alias ARN to associate with Amazon Connect.', 'adaptive-customer-engagement' ) );
+		$selected_intent = isset( $created_intents[0]['intentName'] ) ? sanitize_text_field( (string) $created_intents[0]['intentName'] ) : '';
+		$chat_flow          = null;
+		$updated_settings = null;
+		$creation_message = '';
+
+		if ( $create_chat_flow && '' !== $alias_arn ) {
+			$bot_name_for_flow = sanitize_text_field( (string) ( $bot['botName'] ?? $name ) );
+			$generated_flow    = $this->connect->create_contact_flow(
+				sprintf(
+					/* translators: %s: bot name */
+					__( '%s Website Chat', 'adaptive-customer-engagement' ),
+					$bot_name_for_flow
+				),
+				sprintf(
+					/* translators: %s: bot name */
+					__( 'Website chat flow managed by Adaptive Customer Engagement for the %s bot.', 'adaptive-customer-engagement' ),
+					$bot_name_for_flow
+				),
+				$this->build_lex_chat_contact_flow_content( $chat_flow_message, $alias_arn, $chat_flow_failure_message ),
+				'CONTACT_FLOW'
+			);
+
+			$chat_flow = is_wp_error( $generated_flow )
+				? array(
+					'success' => false,
+					'error'   => $generated_flow->get_error_message(),
+				)
+				: array(
+					'success' => true,
+					'item'    => $this->sanitize_connect_contact_flow( $generated_flow ),
+				);
+		}
+
+		if ( $link_to_settings ) {
+			$settings['amazon_connect']['lex_bot_role_arn']    = $role_arn;
+			$settings['amazon_connect']['lex_bot_id']          = $bot_id;
+			$settings['amazon_connect']['lex_bot_locale_id']   = $locale_id;
+			$settings['amazon_connect']['lex_bot_alias_id']    = $published_alias_id;
+			$settings['amazon_connect']['lex_bot_intent_name'] = $selected_intent;
+			if ( ! empty( $chat_flow['success'] ) && ! empty( $chat_flow['item']['Id'] ) ) {
+				$settings['amazon_connect']['chat_contact_flow_id'] = sanitize_text_field( (string) $chat_flow['item']['Id'] );
+			}
+			$settings['ai_agent']['bot_knowledge_entries']     = $knowledge_entries;
+			$updated_settings                                  = Settings::update( $this->maybe_enrich_connect_lex_settings( $settings ) );
+		}
+
+		$bots = $this->connect->list_lex_bots();
+		$creation_message = $this->build_lex_bot_creation_message( $chat_flow, $connect_association, $provisioned_role );
+		$creation_checks  = array(
+			array(
+				'key'    => 'bot',
+				'label'  => __( 'Bot created', 'adaptive-customer-engagement' ),
+				'status' => 'complete',
+				'value'  => $bot_id,
+			),
+			array(
+				'key'    => 'locale',
+				'label'  => __( 'Locale built', 'adaptive-customer-engagement' ),
+				'status' => 'complete',
+				'value'  => $locale_id,
+			),
+			array(
+				'key'    => 'version',
+				'label'  => __( 'Version published', 'adaptive-customer-engagement' ),
+				'status' => 'complete',
+				'value'  => $bot_version,
+			),
+			array(
+				'key'    => 'alias',
+				'label'  => __( 'Website alias ready', 'adaptive-customer-engagement' ),
+				'status' => 'complete',
+				'value'  => sanitize_text_field( (string) ( $preferred_alias['botAliasName'] ?? 'WebsiteChat' ) ),
+			),
+			array(
+				'key'    => 'tags',
+				'label'  => __( 'Connect tags applied', 'adaptive-customer-engagement' ),
+				'status' => 'complete',
+				'value'  => __( 'AmazonConnectEnabled=true', 'adaptive-customer-engagement' ),
+			),
+			array(
+				'key'    => 'association',
+				'label'  => __( 'Associated with Amazon Connect', 'adaptive-customer-engagement' ),
+				'status' => is_wp_error( $connect_association ) ? 'warning' : 'complete',
+				'value'  => is_wp_error( $connect_association ) ? $connect_association->get_error_message() : sanitize_text_field( $alias_arn ),
+			),
+			array(
+				'key'    => 'chat_flow',
+				'label'  => __( 'Website chat flow', 'adaptive-customer-engagement' ),
+				'status' => empty( $create_chat_flow ) ? 'skipped' : ( ! empty( $chat_flow['success'] ) ? 'complete' : 'warning' ),
+				'value'  => empty( $create_chat_flow )
+					? __( 'Skipped', 'adaptive-customer-engagement' )
+					: ( ! empty( $chat_flow['success'] )
+						? sanitize_text_field( (string) ( $chat_flow['item']['Name'] ?? $chat_flow['item']['Id'] ?? '' ) )
+						: sanitize_text_field( (string) ( $chat_flow['error'] ?? __( 'Unknown flow error.', 'adaptive-customer-engagement' ) ) ) ),
+			),
+		);
+
+		return new WP_REST_Response(
+			array(
+				'message'          => $creation_message,
+				'item'             => $this->sanitize_connect_lex_bot( $bot ),
+				'items'            => $this->get_connect_lex_bot_inventory( $updated_settings['amazon_connect'] ?? $amazon_connect, $bot_id, $locale_id )['items'],
+				'aliases'          => is_wp_error( $aliases ) ? array() : array_map( array( $this, 'sanitize_connect_lex_bot_alias' ), $aliases ),
+				'locales'          => is_wp_error( $locales ) ? array() : array_map( array( $this, 'sanitize_connect_lex_bot_locale' ), $locales ),
+				'intents'          => is_wp_error( $intents ) ? array_map( array( $this, 'sanitize_connect_lex_intent' ), $created_intents ) : array_map( array( $this, 'sanitize_connect_lex_intent' ), $intents ),
+				'knowledge_entries'=> $knowledge_entries,
+				'provisioned_role' => is_array( $provisioned_role ) ? $provisioned_role : null,
+				'connect_association' => is_wp_error( $connect_association )
+					? array(
+						'success' => false,
+						'error'   => $connect_association->get_error_message(),
+						'alias_arn' => $alias_arn,
+					)
+					: array(
+						'success' => true,
+						'alias_arn' => $alias_arn,
+					),
+				'build'            => $locale_built,
+				'version'          => $version_ready,
+				'published_alias'  => $this->sanitize_connect_lex_bot_alias( $preferred_alias ),
+				'chat_flow'        => $chat_flow,
+				'creation_checks'  => $creation_checks,
+				'inferred'         => array(
+					'locale_id'   => $locale_id,
+					'role_arn'    => $role_arn,
+					'role_source' => $role_source,
+					'alias_name'  => sanitize_text_field( (string) ( $preferred_alias['botAliasName'] ?? 'WebsiteChat' ) ),
+					'connect_region' => sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) ),
+					'instance_id' => sanitize_text_field( (string) ( $amazon_connect['instance_id'] ?? '' ) ),
+				),
+				'settings'         => $updated_settings,
+			),
+			201
+		);
+	}
+
+	/**
+	 * Build a human-friendly creation summary for a managed Lex bot.
+	 *
+	 * @param array<string, mixed>|null $chat_flow            Generated chat flow summary.
+	 * @param true|WP_Error             $connect_association Connect association result.
+	 * @param array<string, mixed>|null $provisioned_role     Provisioned role details.
+	 * @return string
+	 */
+	private function build_lex_bot_creation_message( ?array $chat_flow, $connect_association, ?array $provisioned_role ): string {
+		if ( ! empty( $chat_flow['success'] ) ) {
+			return __( 'Amazon Lex bot created, associated with Amazon Connect, and linked into a website chat flow.', 'adaptive-customer-engagement' );
+		}
+
+		if ( ! empty( $chat_flow['error'] ) ) {
+			return sprintf(
+				/* translators: %s: flow error message */
+				__( 'Amazon Lex bot created, but the website chat flow could not be generated yet: %s', 'adaptive-customer-engagement' ),
+				sanitize_text_field( (string) $chat_flow['error'] )
+			);
+		}
+
+		if ( is_wp_error( $connect_association ) ) {
+			return sprintf(
+				/* translators: %s: association error message */
+				__( 'Amazon Lex bot created, but Amazon Connect could not attach it to the Connect bots list yet: %s', 'adaptive-customer-engagement' ),
+				$connect_association->get_error_message()
+			);
+		}
+
+		if ( is_array( $provisioned_role ) && ! empty( $provisioned_role['created'] ) ) {
+			return sprintf(
+				/* translators: %s: IAM role name */
+				__( 'Amazon Lex bot created, and Adaptive Customer Engagement also prepared the dedicated IAM role %s for it.', 'adaptive-customer-engagement' ),
+				sanitize_text_field( (string) ( $provisioned_role['role_name'] ?? __( 'for this bot', 'adaptive-customer-engagement' ) ) )
+			);
+		}
+
+		return __( 'Amazon Lex bot created and associated with the Amazon Connect bots list.', 'adaptive-customer-engagement' );
+	}
+
+	/**
+	 * Disconnect the plugin from the currently selected Connect bot without removing it from Connect.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function disconnect_connect_lex_bot( WP_REST_Request $request ): WP_REST_Response {
+		$settings = Settings::get();
+
+		if ( ! isset( $settings['amazon_connect'] ) || ! is_array( $settings['amazon_connect'] ) ) {
+			$settings['amazon_connect'] = array();
+		}
+
+		$settings['amazon_connect']['lex_bot_id']          = '';
+		$settings['amazon_connect']['lex_bot_alias_id']    = '';
+		$settings['amazon_connect']['lex_bot_locale_id']   = 'en_GB';
+		$settings['amazon_connect']['lex_bot_intent_name'] = '';
+		$settings['amazon_connect']['lex_bot_console_url'] = '';
+		$settings['amazon_connect']['chat_contact_flow_id'] = '';
+		$updated_settings                                   = Settings::update( $settings );
+		$inventory                                          = $this->get_connect_lex_bot_inventory( $updated_settings['amazon_connect'] );
+
+		return new WP_REST_Response(
+			array(
+				'message'  => __( 'The site bot has been disconnected from the plugin settings. It remains available in Amazon Connect for later reconnection or cleanup.', 'adaptive-customer-engagement' ),
+				'settings' => $updated_settings,
+				'items'    => $inventory['items'],
+				'selected' => $inventory['selected'],
+			)
+		);
+	}
+
+	/**
+	 * Remove all other Connect-linked Lex bots, keeping the selected site bot.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function cleanup_connect_lex_bots( WP_REST_Request $request ) {
+		$payload        = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$settings       = Settings::get();
+		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$keep_bot_id    = sanitize_text_field( (string) ( $payload['keep_bot_id'] ?? ( $amazon_connect['lex_bot_id'] ?? '' ) ) );
+		$configs        = $this->connect->list_connect_lex_v2_bots();
+
+		if ( '' === $keep_bot_id ) {
+			return new WP_Error( 'ace_connect_cleanup_keep_bot_required', __( 'Select the site bot to keep before cleaning up the other Amazon Connect bots.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( is_wp_error( $configs ) ) {
+			return $configs;
+		}
+
+		$bot_configs   = array_values( array_filter( array_map( array( $this, 'sanitize_connect_lex_bot_config' ), $configs ) ) );
+		$deleted_bots  = array();
+		$kept_bots     = array();
+		$errors        = array();
+		$deleted_ids   = array();
+
+		foreach ( $bot_configs as $config ) {
+			if ( $keep_bot_id === $config['bot_id'] ) {
+				$kept_bots[] = $config;
+				continue;
+			}
+
+			$disassociated = $this->connect->disassociate_lex_v2_bot( $config['alias_arn'] );
+
+			if ( is_wp_error( $disassociated ) ) {
+				$errors[] = sprintf(
+					/* translators: 1: bot ID, 2: error message */
+					__( 'Could not disconnect bot %1$s from Amazon Connect: %2$s', 'adaptive-customer-engagement' ),
+					$config['bot_id'],
+					$disassociated->get_error_message()
+				);
+				continue;
+			}
+
+			if ( ! in_array( $config['bot_id'], $deleted_ids, true ) ) {
+				$deleted_ids[] = $config['bot_id'];
+				$deleted       = $this->connect->delete_lex_bot( $config['bot_id'] );
+
+				if ( is_wp_error( $deleted ) ) {
+					$errors[] = sprintf(
+						/* translators: 1: bot ID, 2: error message */
+						__( 'Could not delete bot %1$s from Amazon Lex: %2$s', 'adaptive-customer-engagement' ),
+						$config['bot_id'],
+						$deleted->get_error_message()
+					);
+					continue;
+				}
+			}
+
+			$deleted_bots[] = $config;
+		}
+
+		$inventory = $this->get_connect_lex_bot_inventory( $amazon_connect, $keep_bot_id, sanitize_text_field( (string) ( $amazon_connect['lex_bot_locale_id'] ?? '' ) ) );
+
+		return new WP_REST_Response(
+			array(
+				'message'      => empty( $errors )
+					? __( 'Amazon Connect bot cleanup completed. Only the selected site bot remains connected.', 'adaptive-customer-engagement' )
+					: __( 'Amazon Connect bot cleanup finished with some warnings.', 'adaptive-customer-engagement' ),
+				'deleted_bots' => $deleted_bots,
+				'kept_bots'    => $kept_bots,
+				'errors'       => $errors,
+				'items'        => $inventory['items'],
+				'selected'     => $inventory['selected'],
+			)
+		);
+	}
+
+	/**
+	 * Seed bot knowledge entries from the site's published content.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function seed_connect_bot_knowledge( WP_REST_Request $request ): WP_REST_Response {
+		$payload   = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$limit     = min( 12, max( 3, absint( $payload['limit'] ?? 8 ) ) );
+		$post_types = array( 'page', 'post' );
+
+		if ( post_type_exists( 'product' ) ) {
+			$post_types[] = 'product';
+		}
+
+		$posts = get_posts(
+			array(
+				'post_type'           => $post_types,
+				'post_status'         => 'publish',
+				'posts_per_page'      => $limit,
+				'orderby'             => 'modified',
+				'order'               => 'DESC',
+				'suppress_filters'    => false,
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		$items = array();
+
+		foreach ( $posts as $post ) {
+			$entry = $this->build_seeded_bot_knowledge_entry( $post );
+
+			if ( empty( $entry ) ) {
+				continue;
+			}
+
+			$items[] = $entry;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'items' => $items,
+			)
+		);
+	}
+
+	/**
 	 * Read Amazon Connect contact flows.
 	 *
 	 * @return WP_REST_Response
@@ -1056,6 +1896,15 @@ final class AdminController {
 		$dtmf_sequence       = sanitize_text_field( (string) ( $payload['dtmf_sequence'] ?? '' ) );
 		$resume_after_disconnect = rest_sanitize_boolean( $payload['resume_after_disconnect'] ?? false );
 		$set_as_default = rest_sanitize_boolean( $payload['set_as_default'] ?? false );
+		$set_as_chat_flow = rest_sanitize_boolean( $payload['set_as_chat_flow'] ?? ( 'lex_chat' === $template_type ) );
+		$settings         = Settings::get();
+		$amazon_connect   = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$inventory        = $this->get_connect_lex_bot_inventory(
+			$amazon_connect,
+			sanitize_text_field( (string) ( $amazon_connect['lex_bot_id'] ?? '' ) ),
+			sanitize_text_field( (string) ( $amazon_connect['lex_bot_locale_id'] ?? '' ) )
+		);
+		$lex_alias_arn    = sanitize_text_field( (string) ( $payload['lex_bot_alias_arn'] ?? ( $inventory['selected']['alias_arn'] ?? '' ) ) );
 
 		if ( '' === $name ) {
 			return new WP_Error( 'ace_connect_flow_name_required', __( 'Please provide a flow name.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
@@ -1073,12 +1922,18 @@ final class AdminController {
 			return new WP_Error( 'ace_connect_forward_number_required', __( 'Please provide a valid E.164 destination number for the call-forwarding template.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
+		if ( 'lex_chat' === $template_type && '' === $lex_alias_arn ) {
+			return new WP_Error( 'ace_connect_lex_chat_alias_required', __( 'Connect the site bot first so the plugin knows which Amazon Lex alias the website chat flow should invoke.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
 		if ( '' !== $caller_id_number && ! preg_match( '/^\+[1-9]\d{1,14}$/', $caller_id_number ) ) {
 			return new WP_Error( 'ace_connect_invalid_caller_id', __( 'Please provide a valid E.164 caller ID number or leave it blank.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
 		if ( 'queue_transfer' === $template_type ) {
 			$content = $this->build_queue_transfer_contact_flow_content( $message, $queue_id, $failure_message, $queue_flow_id );
+		} elseif ( 'lex_chat' === $template_type ) {
+			$content = $this->build_lex_chat_contact_flow_content( $message, $lex_alias_arn, $failure_message );
 		} elseif ( 'customer_queue' === $template_type ) {
 			$content = $this->build_customer_queue_flow_content( $message );
 		} elseif ( 'call_forward' === $template_type ) {
@@ -1102,16 +1957,21 @@ final class AdminController {
 
 		$sanitized_flow = $this->sanitize_connect_contact_flow( $flow );
 
-		if ( $set_as_default && ! empty( $sanitized_flow['Id'] ) ) {
-			$settings                                      = Settings::get();
-			$settings['amazon_connect']['default_contact_flow_id'] = $sanitized_flow['Id'];
-			Settings::update( $settings );
+		if ( ! empty( $sanitized_flow['Id'] ) ) {
+			if ( $set_as_default ) {
+				$settings['amazon_connect']['default_contact_flow_id'] = $sanitized_flow['Id'];
+			}
+			if ( $set_as_chat_flow ) {
+				$settings['amazon_connect']['chat_contact_flow_id'] = $sanitized_flow['Id'];
+			}
 		}
+
+		$updated_settings = ( $set_as_default || $set_as_chat_flow ) ? Settings::update( $settings ) : null;
 
 		return new WP_REST_Response(
 			array(
 				'item'     => $sanitized_flow,
-				'settings' => $set_as_default ? Settings::get() : null,
+				'settings' => $updated_settings,
 			),
 			201
 		);
@@ -2580,7 +3440,7 @@ final class AdminController {
 					'Identifier'  => $fallback_action_id,
 					'Type'        => 'MessageParticipant',
 					'Transitions' => array(
-						'NextAction' => $disconnect_action_id,
+						'NextAction' => $bot_action_id,
 						'Errors'     => array(),
 						'Conditions' => array(),
 					),
@@ -2649,6 +3509,108 @@ final class AdminController {
 					'Parameters'  => array(
 						'Text' => $message,
 					),
+				),
+			),
+		);
+
+		return wp_json_encode( $content );
+	}
+
+	/**
+	 * Build a website chat flow that invokes the selected Lex V2 bot.
+	 *
+	 * @param string $message         Greeting shown before the bot takes over.
+	 * @param string $alias_arn       Lex V2 alias ARN.
+	 * @param string $failure_message Fallback text if the bot cannot be invoked.
+	 * @return string
+	 */
+	private function build_lex_chat_contact_flow_content( string $message, string $alias_arn, string $failure_message ): string {
+		$bot_action_id        = wp_generate_uuid4();
+		$fallback_action_id   = wp_generate_uuid4();
+		$disconnect_action_id = wp_generate_uuid4();
+		$fallback_text        = '' !== $failure_message ? $failure_message : __( 'Sorry, the site assistant is unavailable just now. Please try again later.', 'adaptive-customer-engagement' );
+		$content              = array(
+			'Version'     => '2019-10-30',
+			'StartAction' => $bot_action_id,
+			'Metadata'    => array(
+				'EntryPointPosition' => array(
+					'x' => 88,
+					'y' => 100,
+				),
+				'ActionMetadata'     => array(
+					$bot_action_id        => array( 'Position' => array( 'x' => 240, 'y' => 98 ) ),
+					$fallback_action_id   => array( 'Position' => array( 'x' => 780, 'y' => 280 ) ),
+					$disconnect_action_id => array( 'Position' => array( 'x' => 1040, 'y' => 190 ) ),
+				),
+			),
+			'Actions'     => array(
+				array(
+					'Identifier'  => $bot_action_id,
+					'Type'        => 'ConnectParticipantWithLexBot',
+					'Transitions' => array(
+						'NextAction' => $bot_action_id,
+						'Errors'     => array(
+							array(
+								'NextAction' => $fallback_action_id,
+								'ErrorType'  => 'InputTimeLimitExceeded',
+							),
+							array(
+								'NextAction' => $bot_action_id,
+								'ErrorType'  => 'NoMatchingCondition',
+							),
+							array(
+								'NextAction' => $fallback_action_id,
+								'ErrorType'  => 'NoMatchingError',
+							),
+						),
+						'Conditions' => array(
+							array(
+								'NextAction' => $disconnect_action_id,
+								'Condition'  => array(
+									'Operator' => 'Equals',
+									'Operands' => array(
+										'AMAZON.StopIntent',
+									),
+								),
+							),
+							array(
+								'NextAction' => $disconnect_action_id,
+								'Condition'  => array(
+									'Operator' => 'Equals',
+									'Operands' => array(
+										'AMAZON.CancelIntent',
+									),
+								),
+							),
+						),
+					),
+					'Parameters'  => array(
+						'Text'                 => $message,
+						'LexV2Bot'             => array(
+							'AliasArn' => $alias_arn,
+						),
+						'LexTimeoutSeconds'    => array(
+							'Text' => '300',
+						),
+					),
+				),
+				array(
+					'Identifier'  => $fallback_action_id,
+					'Type'        => 'MessageParticipant',
+					'Transitions' => array(
+						'NextAction' => $disconnect_action_id,
+						'Errors'     => array(),
+						'Conditions' => array(),
+					),
+					'Parameters'  => array(
+						'Text' => $fallback_text,
+					),
+				),
+				array(
+					'Identifier'  => $disconnect_action_id,
+					'Type'        => 'DisconnectParticipant',
+					'Transitions' => new \stdClass(),
+					'Parameters'  => new \stdClass(),
 				),
 			),
 		);
@@ -2791,6 +3753,234 @@ final class AdminController {
 			'description'   => sanitize_text_field( (string) ( $item['description'] ?? '' ) ),
 			'status'        => sanitize_text_field( (string) ( $item['status'] ?? '' ) ),
 			'type'          => sanitize_text_field( (string) ( $item['type'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Sanitize an Amazon Lex V2 bot payload.
+	 *
+	 * @param array<string, mixed> $item Raw bot.
+	 * @return array<string, mixed>
+	 */
+	private function sanitize_connect_lex_bot( array $item ): array {
+		return array(
+			'botId'            => sanitize_text_field( (string) ( $item['botId'] ?? '' ) ),
+			'botName'          => sanitize_text_field( (string) ( $item['botName'] ?? '' ) ),
+			'botStatus'        => sanitize_text_field( (string) ( $item['botStatus'] ?? '' ) ),
+			'botType'          => sanitize_text_field( (string) ( $item['botType'] ?? '' ) ),
+			'description'      => sanitize_textarea_field( (string) ( $item['description'] ?? '' ) ),
+			'latestBotVersion' => sanitize_text_field( (string) ( $item['latestBotVersion'] ?? '' ) ),
+			'roleArn'          => sanitize_text_field( (string) ( $item['roleArn'] ?? '' ) ),
+			'aliasArn'         => sanitize_text_field( (string) ( $item['aliasArn'] ?? '' ) ),
+			'connectedToConnect' => ! empty( $item['connectedToConnect'] ),
+		);
+	}
+
+	/**
+	 * Sanitize a Connect bot-association payload.
+	 *
+	 * @param array<string, mixed> $item Raw Connect bot config.
+	 * @return array<string, string>
+	 */
+	private function sanitize_connect_lex_bot_config( array $item ): array {
+		$alias_arn = sanitize_text_field( (string) ( $item['LexV2Bot']['AliasArn'] ?? '' ) );
+		$parsed    = $this->parse_connect_lex_v2_alias_arn( $alias_arn );
+
+		if ( '' === $alias_arn || '' === $parsed['bot_id'] ) {
+			return array();
+		}
+
+		return array(
+			'alias_arn'   => $alias_arn,
+			'bot_id'      => $parsed['bot_id'],
+			'alias_id'    => $parsed['alias_id'],
+			'region'      => $parsed['region'],
+			'account_id'  => $parsed['account_id'],
+		);
+	}
+
+	/**
+	 * Sanitize an Amazon Lex V2 bot alias payload.
+	 *
+	 * @param array<string, mixed> $item Raw alias.
+	 * @return array<string, mixed>
+	 */
+	private function sanitize_connect_lex_bot_alias( array $item ): array {
+		return array(
+			'botAliasId'     => sanitize_text_field( (string) ( $item['botAliasId'] ?? '' ) ),
+			'botAliasName'   => sanitize_text_field( (string) ( $item['botAliasName'] ?? '' ) ),
+			'botAliasStatus' => sanitize_text_field( (string) ( $item['botAliasStatus'] ?? '' ) ),
+			'botVersion'     => sanitize_text_field( (string) ( $item['botVersion'] ?? '' ) ),
+			'description'    => sanitize_textarea_field( (string) ( $item['description'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Sanitize an Amazon Lex V2 locale payload.
+	 *
+	 * @param array<string, mixed> $item Raw locale.
+	 * @return array<string, mixed>
+	 */
+	private function sanitize_connect_lex_bot_locale( array $item ): array {
+		return array(
+			'localeId'        => sanitize_text_field( (string) ( $item['localeId'] ?? '' ) ),
+			'localeName'      => sanitize_text_field( (string) ( $item['localeName'] ?? '' ) ),
+			'botLocaleStatus' => sanitize_text_field( (string) ( $item['botLocaleStatus'] ?? '' ) ),
+			'description'     => sanitize_textarea_field( (string) ( $item['description'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Sanitize an Amazon Lex V2 intent payload.
+	 *
+	 * @param array<string, mixed> $item Raw intent.
+	 * @return array<string, mixed>
+	 */
+	private function sanitize_connect_lex_intent( array $item ): array {
+		return array(
+			'intentId'              => sanitize_text_field( (string) ( $item['intentId'] ?? '' ) ),
+			'intentName'            => sanitize_text_field( (string) ( $item['intentName'] ?? '' ) ),
+			'intentDisplayName'     => sanitize_text_field( (string) ( $item['intentDisplayName'] ?? '' ) ),
+			'description'           => sanitize_textarea_field( (string) ( $item['description'] ?? '' ) ),
+			'parentIntentSignature' => sanitize_text_field( (string) ( $item['parentIntentSignature'] ?? '' ) ),
+		);
+	}
+
+	/**
+	 * Build the Connect-backed Lex bot inventory used by the admin UI.
+	 *
+	 * @param array<string, mixed> $amazon_connect Saved Connect settings.
+	 * @param string               $selected_bot   Selected bot ID.
+	 * @param string               $selected_locale Selected locale ID.
+	 * @return array<string, mixed>
+	 */
+	private function get_connect_lex_bot_inventory( array $amazon_connect, string $selected_bot = '', string $selected_locale = '' ): array {
+		$configs        = $this->connect->list_connect_lex_v2_bots();
+		$items          = array();
+		$aliases        = array();
+		$locales        = array();
+		$intents        = array();
+		$bot_details    = array();
+		$selected_assoc = array();
+		$errors         = array(
+			'bots'    => is_wp_error( $configs ) ? $configs->get_error_message() : '',
+			'bot'     => '',
+			'aliases' => '',
+			'locales' => '',
+			'intents' => '',
+		);
+		$bot_configs    = is_wp_error( $configs ) ? array() : array_values( array_filter( array_map( array( $this, 'sanitize_connect_lex_bot_config' ), $configs ) ) );
+
+		if ( '' === $selected_bot && ! empty( $bot_configs ) ) {
+			$preferred_bot = $this->get_preferred_lex_bot(
+				array_map(
+					static function ( array $config ): array {
+						return array(
+							'botId' => $config['bot_id'],
+						);
+					},
+					$bot_configs
+				)
+			);
+
+			$selected_bot = sanitize_text_field( (string) ( $preferred_bot['botId'] ?? $bot_configs[0]['bot_id'] ) );
+		}
+
+		foreach ( $bot_configs as $config ) {
+			$details = $this->connect->describe_lex_bot( $config['bot_id'] );
+			$item    = array(
+				'botId'              => $config['bot_id'],
+				'botName'            => $config['bot_id'],
+				'botStatus'          => '',
+				'botType'            => 'Bot',
+				'description'        => '',
+				'latestBotVersion'   => '',
+				'roleArn'            => '',
+				'aliasArn'           => $config['alias_arn'],
+				'connectedToConnect' => true,
+			);
+
+			if ( ! is_wp_error( $details ) ) {
+				$item = array_merge(
+					$item,
+					$this->sanitize_connect_lex_bot( $details ),
+					array(
+						'aliasArn'           => $config['alias_arn'],
+						'connectedToConnect' => true,
+					)
+				);
+			}
+
+			if ( $selected_bot === $config['bot_id'] ) {
+				$selected_assoc = $config;
+				$bot_details    = is_wp_error( $details ) ? array() : $details;
+				$errors['bot']  = is_wp_error( $details ) ? $details->get_error_message() : '';
+			}
+
+			$items[] = $item;
+		}
+
+		if ( empty( $selected_assoc ) && ! empty( $bot_configs ) ) {
+			$selected_assoc = $bot_configs[0];
+			$selected_bot   = $selected_assoc['bot_id'];
+			$bot_details    = $this->connect->describe_lex_bot( $selected_bot );
+			$errors['bot']  = is_wp_error( $bot_details ) ? $bot_details->get_error_message() : '';
+			$bot_details    = is_wp_error( $bot_details ) ? array() : $bot_details;
+		}
+
+		if ( '' !== $selected_bot ) {
+			$aliases          = $this->connect->list_lex_bot_aliases( $selected_bot );
+			$errors['aliases'] = is_wp_error( $aliases ) ? $aliases->get_error_message() : '';
+			$locales          = $this->connect->list_lex_bot_locales( $selected_bot );
+			$errors['locales'] = is_wp_error( $locales ) ? $locales->get_error_message() : '';
+
+			if ( '' === $selected_locale && ! is_wp_error( $locales ) ) {
+				$selected_locale = $this->get_preferred_lex_locale_id( $locales, sanitize_text_field( (string) ( $amazon_connect['lex_bot_locale_id'] ?? '' ) ) );
+			}
+
+			if ( '' !== $selected_locale ) {
+				$intents          = $this->connect->list_lex_intents( $selected_bot, $selected_locale );
+				$errors['intents'] = is_wp_error( $intents ) ? $intents->get_error_message() : '';
+			}
+		}
+
+		$selected_intent = sanitize_text_field( (string) ( $amazon_connect['lex_bot_intent_name'] ?? '' ) );
+
+		if ( '' === $selected_intent && ! is_wp_error( $intents ) ) {
+			$selected_intent = $this->get_preferred_lex_intent_name( $intents );
+		}
+
+		$selected_role_arn = sanitize_text_field( (string) ( $amazon_connect['lex_bot_role_arn'] ?? ( $bot_details['roleArn'] ?? '' ) ) );
+		$selected_alias_id = sanitize_text_field( (string) ( $selected_assoc['alias_id'] ?? ( $amazon_connect['lex_bot_alias_id'] ?? '' ) ) );
+		$selected_role_warning = '';
+
+		if ( $this->is_service_linked_lex_role_arn( $selected_role_arn ) ) {
+			$selected_role_warning = __( 'The detected role is a Lex service-linked role from an existing bot. Use a dedicated Lex bot role ARN for creating a new bot from WordPress instead of reusing that service-linked role.', 'adaptive-customer-engagement' );
+			$selected_role_arn     = '';
+		}
+
+		$console_url = $this->build_lex_bot_console_url( $amazon_connect, $selected_bot, $selected_locale, $selected_intent );
+		$selected    = array(
+			'bot_id'      => $selected_bot,
+			'alias_id'    => $selected_alias_id,
+			'alias_arn'   => sanitize_text_field( (string) ( $selected_assoc['alias_arn'] ?? '' ) ),
+			'locale_id'   => $selected_locale,
+			'intent_name' => $selected_intent,
+			'role_arn'    => $selected_role_arn,
+			'role_warning'=> $selected_role_warning,
+			'console_url' => $console_url,
+		);
+
+		return array(
+			'items'         => array_map( array( $this, 'sanitize_connect_lex_bot' ), $items ),
+			'aliases'       => is_wp_error( $aliases ) ? array() : array_map( array( $this, 'sanitize_connect_lex_bot_alias' ), $aliases ),
+			'locales'       => is_wp_error( $locales ) ? array() : array_map( array( $this, 'sanitize_connect_lex_bot_locale' ), $locales ),
+			'intents'       => is_wp_error( $intents ) ? array() : array_map( array( $this, 'sanitize_connect_lex_intent' ), $intents ),
+			'selected'      => $selected,
+			'connected_bot' => '' !== $selected_bot ? $this->sanitize_connect_lex_bot( $bot_details ) : array(),
+			'console_url'   => $console_url,
+			'errors'        => $errors,
+			'error'         => implode( ' ', array_filter( $errors ) ),
 		);
 	}
 
@@ -2953,19 +4143,19 @@ final class AdminController {
 
 		$amazon_connect = $payload['amazon_connect'];
 
-		if ( empty( $amazon_connect['region'] ) || ! empty( $amazon_connect['use_iam_role'] ) ) {
-			return $payload;
+		if ( empty( $amazon_connect['region'] ) ) {
+			return $this->maybe_enrich_connect_lex_settings( $payload );
 		}
 
-		if ( empty( $amazon_connect['access_key_id'] ) || empty( $amazon_connect['secret_access_key'] ) ) {
-			return $payload;
+		if ( ! $this->has_connect_request_credentials( $amazon_connect ) ) {
+			return $this->maybe_enrich_connect_lex_settings( $payload );
 		}
 
 		$instance_id  = sanitize_text_field( (string) ( $amazon_connect['instance_id'] ?? '' ) );
 		$instance_url = esc_url_raw( (string) ( $amazon_connect['instance_url'] ?? '' ) );
 
 		if ( '' === $instance_id && '' === $instance_url ) {
-			return $payload;
+			return $this->maybe_enrich_connect_lex_settings( $payload );
 		}
 
 		$discovered = array();
@@ -2985,7 +4175,7 @@ final class AdminController {
 		}
 
 		if ( is_wp_error( $discovered ) || empty( $discovered ) ) {
-			return $payload;
+			return $this->maybe_enrich_connect_lex_settings( $payload );
 		}
 
 		$resolved_instance_id  = sanitize_text_field( (string) ( $discovered['Id'] ?? $instance_id ) );
@@ -2999,7 +4189,7 @@ final class AdminController {
 			$payload['amazon_connect']['instance_url'] = $resolved_instance_url;
 		}
 
-		return $payload;
+		return $this->maybe_enrich_connect_lex_settings( $payload );
 	}
 
 	/**
@@ -3031,6 +4221,462 @@ final class AdminController {
 		}
 
 		return array();
+	}
+
+	/**
+	 * Backfill Lex bot details from a saved console URL and live bot metadata.
+	 *
+	 * @param array<string, mixed> $payload Settings payload.
+	 * @return array<string, mixed>
+	 */
+	private function maybe_enrich_connect_lex_settings( array $payload ): array {
+		if ( ! isset( $payload['amazon_connect'] ) || ! is_array( $payload['amazon_connect'] ) ) {
+			return $payload;
+		}
+
+		$amazon_connect = $payload['amazon_connect'];
+		$console_url    = esc_url_raw( (string) ( $amazon_connect['lex_bot_console_url'] ?? '' ) );
+
+		if ( '' !== $console_url ) {
+			$parsed = $this->parse_lex_bot_console_url( $console_url );
+
+			if ( ! empty( $parsed['bot_id'] ) ) {
+				$payload['amazon_connect']['lex_bot_id'] = $parsed['bot_id'];
+			}
+
+			if ( ! empty( $parsed['locale_id'] ) ) {
+				$payload['amazon_connect']['lex_bot_locale_id'] = $parsed['locale_id'];
+			}
+
+			if ( ! empty( $parsed['intent_name'] ) ) {
+				$payload['amazon_connect']['lex_bot_intent_name'] = $parsed['intent_name'];
+			}
+		}
+
+		if ( empty( $amazon_connect['region'] ) ) {
+			return $payload;
+		}
+
+		if ( ! $this->has_connect_request_credentials( $amazon_connect ) ) {
+			return $payload;
+		}
+
+		$bot_id = sanitize_text_field( (string) ( $payload['amazon_connect']['lex_bot_id'] ?? '' ) );
+
+		if ( '' === $bot_id ) {
+			return $payload;
+		}
+
+		$bot = $this->connect->describe_lex_bot( $bot_id );
+
+		if ( is_wp_error( $bot ) || empty( $bot['botId'] ) ) {
+			return $payload;
+		}
+
+		if ( empty( $payload['amazon_connect']['lex_bot_role_arn'] ) && ! empty( $bot['roleArn'] ) && ! $this->is_service_linked_lex_role_arn( (string) $bot['roleArn'] ) ) {
+			$payload['amazon_connect']['lex_bot_role_arn'] = sanitize_text_field( (string) $bot['roleArn'] );
+		}
+
+		$aliases = $this->connect->list_lex_bot_aliases( $bot_id );
+
+		if ( ! is_wp_error( $aliases ) && empty( $payload['amazon_connect']['lex_bot_alias_id'] ) ) {
+			$preferred_alias = $this->get_preferred_lex_bot_alias( $aliases );
+
+			if ( ! empty( $preferred_alias['botAliasId'] ) ) {
+				$payload['amazon_connect']['lex_bot_alias_id'] = sanitize_text_field( (string) $preferred_alias['botAliasId'] );
+			}
+		}
+
+		$locales = $this->connect->list_lex_bot_locales( $bot_id );
+
+		if ( ! is_wp_error( $locales ) && empty( $payload['amazon_connect']['lex_bot_locale_id'] ) ) {
+			$payload['amazon_connect']['lex_bot_locale_id'] = $this->get_preferred_lex_locale_id( $locales, 'en_GB' );
+		}
+
+		$locale_id = sanitize_text_field( (string) ( $payload['amazon_connect']['lex_bot_locale_id'] ?? '' ) );
+
+		if ( '' !== $locale_id && empty( $payload['amazon_connect']['lex_bot_intent_name'] ) ) {
+			$intents = $this->connect->list_lex_intents( $bot_id, $locale_id );
+
+			if ( ! is_wp_error( $intents ) ) {
+				$preferred_intent = $this->get_preferred_lex_intent_name( $intents );
+
+				if ( '' !== $preferred_intent ) {
+					$payload['amazon_connect']['lex_bot_intent_name'] = $preferred_intent;
+				}
+			}
+		}
+
+		$payload['amazon_connect']['lex_bot_console_url'] = $this->build_lex_bot_console_url(
+			$payload['amazon_connect'],
+			sanitize_text_field( (string) ( $payload['amazon_connect']['lex_bot_id'] ?? '' ) ),
+			sanitize_text_field( (string) ( $payload['amazon_connect']['lex_bot_locale_id'] ?? '' ) ),
+			sanitize_text_field( (string) ( $payload['amazon_connect']['lex_bot_intent_name'] ?? '' ) )
+		);
+
+		return $payload;
+	}
+
+	/**
+	 * Parse a Lex bot console URL.
+	 *
+	 * @param string $console_url Lex console URL.
+	 * @return array{bot_id:string,locale_id:string,intent_name:string}
+	 */
+	private function parse_lex_bot_console_url( string $console_url ): array {
+		$parts  = wp_parse_url( $console_url );
+		$path   = isset( $parts['path'] ) ? trim( (string) $parts['path'], '/' ) : '';
+		$result = array(
+			'bot_id'      => '',
+			'locale_id'   => '',
+			'intent_name' => '',
+		);
+
+		if ( '' === $path ) {
+			return $result;
+		}
+
+		if ( preg_match( '#bots/configuration/([^/]+)/locale/([^/]+)/intent/([^/]+)#i', $path, $matches ) ) {
+			$result['bot_id']      = sanitize_text_field( urldecode( $matches[1] ) );
+			$result['locale_id']   = sanitize_text_field( urldecode( $matches[2] ) );
+			$result['intent_name'] = sanitize_text_field( urldecode( $matches[3] ) );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Parse a Connect-associated Lex V2 alias ARN.
+	 *
+	 * @param string $alias_arn Alias ARN.
+	 * @return array{account_id:string,region:string,bot_id:string,alias_id:string}
+	 */
+	private function parse_connect_lex_v2_alias_arn( string $alias_arn ): array {
+		$alias_arn = sanitize_text_field( $alias_arn );
+		$result    = array(
+			'account_id' => '',
+			'region'     => '',
+			'bot_id'     => '',
+			'alias_id'   => '',
+		);
+
+		if ( preg_match( '#^arn:aws:lex:([^:]+):([0-9]{12}):bot-alias/([^/]+)/([^/]+)$#', $alias_arn, $matches ) ) {
+			$result['region']     = sanitize_text_field( (string) $matches[1] );
+			$result['account_id'] = sanitize_text_field( (string) $matches[2] );
+			$result['bot_id']     = sanitize_text_field( (string) $matches[3] );
+			$result['alias_id']   = sanitize_text_field( (string) $matches[4] );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Build a Lex bot console URL from the saved Connect instance.
+	 *
+	 * @param array<string, mixed> $amazon_connect Saved Connect settings.
+	 * @param string               $bot_id         Bot ID.
+	 * @param string               $locale_id      Locale ID.
+	 * @param string               $intent_name    Intent name.
+	 * @return string
+	 */
+	private function build_lex_bot_console_url( array $amazon_connect, string $bot_id, string $locale_id, string $intent_name ): string {
+		$instance_url = esc_url_raw( (string) ( $amazon_connect['instance_url'] ?? '' ) );
+		$bot_id       = sanitize_text_field( $bot_id );
+		$locale_id    = sanitize_text_field( $locale_id );
+		$intent_name  = sanitize_text_field( $intent_name );
+
+		if ( '' === $instance_url || '' === $bot_id ) {
+			return '';
+		}
+
+		$parts  = wp_parse_url( $instance_url );
+		$scheme = sanitize_text_field( (string) ( $parts['scheme'] ?? 'https' ) );
+		$host   = sanitize_text_field( (string) ( $parts['host'] ?? '' ) );
+
+		if ( '' === $host ) {
+			return '';
+		}
+
+		$path = '/bots/configuration/' . rawurlencode( $bot_id );
+
+		if ( '' !== $locale_id ) {
+			$path .= '/locale/' . rawurlencode( $locale_id );
+		}
+
+		if ( '' !== $intent_name ) {
+			$path .= '/intent/' . rawurlencode( $intent_name );
+		}
+
+		return esc_url_raw( $scheme . '://' . $host . $path );
+	}
+
+	/**
+	 * Check whether Connect API credentials are available in either supported mode.
+	 *
+	 * @param array<string, mixed> $amazon_connect Saved Connect settings.
+	 * @return bool
+	 */
+	private function has_connect_request_credentials( array $amazon_connect ): bool {
+		$has_access_keys = ! empty( $amazon_connect['access_key_id'] ) && ! empty( $amazon_connect['secret_access_key'] );
+
+		return $has_access_keys || ! empty( $amazon_connect['use_iam_role'] );
+	}
+
+	/**
+	 * Check whether a role ARN is a Lex service-linked role that should not be reused for bot creation.
+	 *
+	 * @param string $role_arn Role ARN.
+	 * @return bool
+	 */
+	private function is_service_linked_lex_role_arn( string $role_arn ): bool {
+		$role_arn = sanitize_text_field( $role_arn );
+
+		if ( '' === $role_arn ) {
+			return false;
+		}
+
+		return false !== strpos( $role_arn, ':role/aws-service-role/lexv2.amazonaws.com/' )
+			|| false !== strpos( $role_arn, ':role/aws-service-role/channels.lexv2.amazonaws.com/' )
+			|| false !== strpos( $role_arn, 'AWSServiceRoleForLexV2' );
+	}
+
+	/**
+	 * Pick the most useful Lex bot.
+	 *
+	 * @param array<int, array<string, mixed>> $bots Bot list.
+	 * @return array<string, mixed>
+	 */
+	private function get_preferred_lex_bot( array $bots ): array {
+		foreach ( $bots as $bot ) {
+			$status = strtoupper( sanitize_text_field( (string) ( $bot['botStatus'] ?? '' ) ) );
+
+			if ( 'AVAILABLE' === $status ) {
+				return $bot;
+			}
+		}
+
+		return isset( $bots[0] ) && is_array( $bots[0] ) ? $bots[0] : array();
+	}
+
+	/**
+	 * Pick the most useful Lex bot alias.
+	 *
+	 * @param array<int, array<string, mixed>> $aliases Alias list.
+	 * @return array<string, mixed>
+	 */
+	private function get_preferred_lex_bot_alias( array $aliases ): array {
+		foreach ( $aliases as $alias ) {
+			$status = strtoupper( sanitize_text_field( (string) ( $alias['botAliasStatus'] ?? '' ) ) );
+			$alias_id = sanitize_text_field( (string) ( $alias['botAliasId'] ?? '' ) );
+
+			if ( 'AVAILABLE' === $status && 'TSTALIASID' !== strtoupper( $alias_id ) ) {
+				return $alias;
+			}
+		}
+
+		foreach ( $aliases as $alias ) {
+			$status = strtoupper( sanitize_text_field( (string) ( $alias['botAliasStatus'] ?? '' ) ) );
+
+			if ( 'AVAILABLE' === $status ) {
+				return $alias;
+			}
+		}
+
+		return isset( $aliases[0] ) && is_array( $aliases[0] ) ? $aliases[0] : array();
+	}
+
+	/**
+	 * Pick the preferred Lex locale ID.
+	 *
+	 * @param array<int, array<string, mixed>> $locales       Locale list.
+	 * @param string                           $preferred_id Preferred locale ID.
+	 * @return string
+	 */
+	private function get_preferred_lex_locale_id( array $locales, string $preferred_id = 'en_GB' ): string {
+		$preferred_id = sanitize_text_field( $preferred_id );
+
+		foreach ( $locales as $locale ) {
+			$locale_id = sanitize_text_field( (string) ( $locale['localeId'] ?? '' ) );
+
+			if ( '' !== $preferred_id && $locale_id === $preferred_id ) {
+				return $locale_id;
+			}
+		}
+
+		return isset( $locales[0]['localeId'] ) ? sanitize_text_field( (string) $locales[0]['localeId'] ) : '';
+	}
+
+	/**
+	 * Pick a useful Lex intent name.
+	 *
+	 * @param array<int, array<string, mixed>> $intents Intent list.
+	 * @return string
+	 */
+	private function get_preferred_lex_intent_name( array $intents ): string {
+		foreach ( $intents as $intent ) {
+			$name   = sanitize_text_field( (string) ( $intent['intentName'] ?? '' ) );
+			$parent = sanitize_text_field( (string) ( $intent['parentIntentSignature'] ?? '' ) );
+
+			if ( false !== stripos( $name, 'FALLB' ) || false !== stripos( $parent, 'Fallback' ) ) {
+				return '' !== $name ? $name : $parent;
+			}
+		}
+
+		return isset( $intents[0]['intentName'] ) ? sanitize_text_field( (string) $intents[0]['intentName'] ) : '';
+	}
+
+	/**
+	 * Sanitise bot knowledge entry payloads.
+	 *
+	 * @param array<int, mixed> $entries Raw entries.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function sanitize_bot_knowledge_entries_payload( array $entries ): array {
+		$sanitized = array();
+
+		foreach ( $entries as $entry ) {
+			if ( ! is_array( $entry ) ) {
+				continue;
+			}
+
+			$question = sanitize_text_field( (string) ( $entry['question'] ?? '' ) );
+			$answer   = sanitize_textarea_field( (string) ( $entry['answer'] ?? '' ) );
+
+			if ( '' === $question || '' === $answer ) {
+				continue;
+			}
+
+			$sanitized[] = array(
+				'id'           => sanitize_text_field( (string) ( $entry['id'] ?? wp_generate_uuid4() ) ),
+				'question'     => $question,
+				'answer'       => $answer,
+				'source_type'  => sanitize_key( (string) ( $entry['source_type'] ?? 'manual' ) ),
+				'source_id'    => absint( $entry['source_id'] ?? 0 ),
+				'source_label' => sanitize_text_field( (string) ( $entry['source_label'] ?? '' ) ),
+				'url'          => esc_url_raw( (string) ( $entry['url'] ?? '' ) ),
+				'enabled'      => ! array_key_exists( 'enabled', $entry ) || rest_sanitize_boolean( $entry['enabled'] ),
+			);
+
+			if ( count( $sanitized ) >= 25 ) {
+				break;
+			}
+		}
+
+		return $sanitized;
+	}
+
+	/**
+	 * Build a seeded knowledge entry from a published post.
+	 *
+	 * @param \WP_Post $post Post object.
+	 * @return array<string, mixed>
+	 */
+	private function build_seeded_bot_knowledge_entry( \WP_Post $post ): array {
+		$title = sanitize_text_field( get_the_title( $post ) );
+
+		if ( '' === $title ) {
+			return array();
+		}
+
+		$answer = $this->build_seeded_bot_knowledge_answer( $post );
+
+		if ( '' === $answer ) {
+			return array();
+		}
+
+		$post_type_obj = get_post_type_object( $post->post_type );
+		$type_label    = $post_type_obj && ! empty( $post_type_obj->labels->singular_name ) ? sanitize_text_field( $post_type_obj->labels->singular_name ) : ucfirst( $post->post_type );
+		$question      = 'product' === $post->post_type
+			? sprintf(
+				/* translators: %s: product title */
+				__( 'Tell me about %s', 'adaptive-customer-engagement' ),
+				$title
+			)
+			: sprintf(
+				/* translators: %s: page or post title */
+				__( 'What should I know about %s?', 'adaptive-customer-engagement' ),
+				$title
+			);
+
+		return array(
+			'id'           => 'seed-' . $post->ID,
+			'question'     => $question,
+			'answer'       => $answer,
+			'source_type'  => sanitize_key( $post->post_type ),
+			'source_id'    => (int) $post->ID,
+			'source_label' => sprintf( '%s: %s', $type_label, $title ),
+			'url'          => esc_url_raw( get_permalink( $post ) ?: '' ),
+			'enabled'      => true,
+		);
+	}
+
+	/**
+	 * Build a concise answer from published content.
+	 *
+	 * @param \WP_Post $post Post object.
+	 * @return string
+	 */
+	private function build_seeded_bot_knowledge_answer( \WP_Post $post ): string {
+		$content = has_excerpt( $post ) ? (string) $post->post_excerpt : (string) $post->post_content;
+		$content = wp_strip_all_tags( strip_shortcodes( $content ) );
+		$content = trim( preg_replace( '/\s+/', ' ', $content ) ?: '' );
+
+		if ( '' === $content ) {
+			return '';
+		}
+
+		return wp_trim_words( $content, 45, '…' );
+	}
+
+	/**
+	 * Build a safe Lex intent name for a knowledge entry.
+	 *
+	 * @param string $question Knowledge question.
+	 * @param int    $index    Entry index.
+	 * @return string
+	 */
+	private function build_lex_knowledge_intent_name( string $question, int $index ): string {
+		$question = remove_accents( $question );
+		$slug     = preg_replace( '/[^A-Za-z0-9]+/', '_', $question ) ?: '';
+		$slug     = trim( $slug, '_' );
+
+		if ( '' === $slug ) {
+			$slug = 'Answer';
+		}
+
+		$name = sprintf( 'Faq_%02d_%s', max( 1, $index ), $slug );
+
+		return substr( $name, 0, 100 );
+	}
+
+	/**
+	 * Build sample utterances for a knowledge entry.
+	 *
+	 * @param array<string, mixed> $entry Knowledge entry.
+	 * @return array<int, string>
+	 */
+	private function build_lex_sample_utterances( array $entry ): array {
+		$question     = sanitize_text_field( (string) ( $entry['question'] ?? '' ) );
+		$source_label = sanitize_text_field( (string) ( $entry['source_label'] ?? '' ) );
+		$plain        = trim( preg_replace( '/[?!.]+$/', '', $question ) ?: '' );
+		$title        = $source_label;
+
+		if ( false !== strpos( $source_label, ': ' ) ) {
+			$parts = explode( ': ', $source_label, 2 );
+			$title = sanitize_text_field( (string) ( $parts[1] ?? $source_label ) );
+		}
+
+		$utterances = array_filter(
+			array(
+				$question,
+				$plain,
+				'' !== $title ? sprintf( __( 'Tell me about %s', 'adaptive-customer-engagement' ), $title ) : '',
+				'' !== $title ? sprintf( __( 'I need help with %s', 'adaptive-customer-engagement' ), $title ) : '',
+				'' !== $title ? sprintf( __( 'What is %s?', 'adaptive-customer-engagement' ), $title ) : '',
+			)
+		);
+
+		return array_values( array_slice( array_unique( $utterances ), 0, 5 ) );
 	}
 
 	/**

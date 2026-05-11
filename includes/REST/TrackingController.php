@@ -7,7 +7,9 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
+use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\BotDetector;
@@ -79,6 +81,13 @@ final class TrackingController {
 	private $enrichment_service;
 
 	/**
+	 * Live site-context helper.
+	 *
+	 * @var SiteContextService
+	 */
+	private $site_context;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionManager $session_manager Session manager.
@@ -88,7 +97,7 @@ final class TrackingController {
 	 * @param Privacy        $privacy         Privacy helper.
 	 * @param BotDetector    $bot_detector    Bot detector.
 	 */
-	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector, EnrichmentService $enrichment_service ) {
+	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector, EnrichmentService $enrichment_service, SiteContextService $site_context ) {
 		$this->session_manager = $session_manager;
 		$this->event_logger    = $event_logger;
 		$this->number_resolver = $number_resolver;
@@ -96,6 +105,7 @@ final class TrackingController {
 		$this->privacy         = $privacy;
 		$this->bot_detector    = $bot_detector;
 		$this->enrichment_service = $enrichment_service;
+		$this->site_context    = $site_context;
 	}
 
 	/**
@@ -121,6 +131,36 @@ final class TrackingController {
 				'methods'             => 'GET',
 				'permission_callback' => '__return_true',
 				'callback'            => array( $this, 'resolve_number' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/bot/site-context/search',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'bot_site_context_search' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/bot/site-context/answer',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'bot_site_context_answer' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/bot/site-context/document/(?P<id>\d+)',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'bot_site_context_document' ),
 			)
 		);
 	}
@@ -210,6 +250,115 @@ final class TrackingController {
 	}
 
 	/**
+	 * Search live site context for bot runtimes.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function bot_site_context_search( WP_REST_Request $request ) {
+		$authorised = $this->authorise_bot_runtime_request( $request );
+
+		if ( is_wp_error( $authorised ) ) {
+			return $authorised;
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|bot-context-search';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 120, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many requests.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload   = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$query     = sanitize_text_field( (string) ( $payload['query'] ?? '' ) );
+		$limit     = max( 1, min( 8, absint( $payload['limit'] ?? 5 ) ) );
+		$post_types = array_values(
+			array_filter(
+				array_map(
+					'sanitize_key',
+					is_array( $payload['post_types'] ?? null ) ? $payload['post_types'] : array()
+				)
+			)
+		);
+
+		return new WP_REST_Response(
+			array(
+				'site'                => $this->site_context->get_site_identity(),
+				'query'               => $query,
+				'documents'           => $this->site_context->search( $query, $limit, $post_types ),
+				'context_instructions'=> sanitize_textarea_field( (string) ( Settings::get()['ai_agent']['context_instructions'] ?? '' ) ),
+				'generated_at'        => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
+	 * Build a direct live-content answer for bot runtimes.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function bot_site_context_answer( WP_REST_Request $request ) {
+		$authorised = $this->authorise_bot_runtime_request( $request );
+
+		if ( is_wp_error( $authorised ) ) {
+			return $authorised;
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|bot-context-answer';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 120, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many requests.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$query   = sanitize_text_field( (string) ( $payload['query'] ?? '' ) );
+		$limit   = max( 1, min( 5, absint( $payload['limit'] ?? 3 ) ) );
+		$answer  = $this->site_context->answer_question( $query, $limit );
+
+		return new WP_REST_Response(
+			array(
+				'site'                => $this->site_context->get_site_identity(),
+				'query'               => $query,
+				'answer'              => $answer['answer'],
+				'sources'             => $answer['sources'],
+				'confidence'          => $answer['confidence'],
+				'fallback'            => $answer['fallback'],
+				'context_instructions'=> sanitize_textarea_field( (string) ( Settings::get()['ai_agent']['context_instructions'] ?? '' ) ),
+				'generated_at'        => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
+	 * Fetch a single site document for bot runtimes.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function bot_site_context_document( WP_REST_Request $request ) {
+		$authorised = $this->authorise_bot_runtime_request( $request );
+
+		if ( is_wp_error( $authorised ) ) {
+			return $authorised;
+		}
+
+		$document = $this->site_context->get_document( absint( $request['id'] ) );
+
+		if ( empty( $document ) ) {
+			return new WP_Error( 'ace_bot_document_not_found', __( 'The requested site document could not be found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'site'                => $this->site_context->get_site_identity(),
+				'document'            => $document,
+				'context_instructions'=> sanitize_textarea_field( (string) ( Settings::get()['ai_agent']['context_instructions'] ?? '' ) ),
+				'generated_at'        => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
 	 * Sanitize a tracking payload.
 	 *
 	 * @param mixed $payload Raw payload.
@@ -255,5 +404,32 @@ final class TrackingController {
 				$metadata
 			),
 		);
+	}
+
+	/**
+	 * Authorise a bot-runtime request by capability or shared secret.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return true|WP_Error
+	 */
+	private function authorise_bot_runtime_request( WP_REST_Request $request ) {
+		if ( current_user_can( Capabilities::MANAGE ) ) {
+			return true;
+		}
+
+		$settings = Settings::get();
+		$secret   = sanitize_text_field( (string) ( $settings['amazon_connect']['webhook_secret'] ?? '' ) );
+
+		if ( '' === $secret ) {
+			return new WP_Error( 'ace_bot_runtime_secret_missing', __( 'Save a webhook secret before exposing the live site-context bot API.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$provided_secret = sanitize_text_field( (string) ( $request->get_header( 'x-ace-webhook-secret' ) ?: $request->get_param( 'secret' ) ) );
+
+		if ( '' === $provided_secret || ! hash_equals( $secret, $provided_secret ) ) {
+			return new WP_Error( 'ace_bot_runtime_forbidden', __( 'The bot runtime secret is invalid.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		return true;
 	}
 }

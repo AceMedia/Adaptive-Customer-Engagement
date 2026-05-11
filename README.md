@@ -36,6 +36,7 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 
 - Setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, AI, and phone-number management
 - Amazon Connect setup fields for region, instance ID, S3 export bucket/prefix, flow log group, credentials strategy, and contact flow IDs
+- Secure live site-context endpoints for bot runtimes, so current pages, posts, and WooCommerce products can be searched and answered from WordPress itself instead of relying only on pre-generated FAQ intents
 - A setup-style phone-numbers screen for adding, editing, routing, and reviewing tracked numbers, including default-number handling and Amazon Connect identifiers
 - Live Amazon Connect number visibility inside the phone-number setup screen, so already claimed instance numbers can be reviewed alongside local routing rules
 - Amazon Connect number search and claim actions in wp-admin, with newly claimed numbers loaded straight into a local routing-rule draft
@@ -55,7 +56,7 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 This repository does **not** yet implement:
 
 - Amazon Connect call imports, call matching, outbound callbacks, or dialler workflows
-- AI chat, voice chat, handoff, or assistant creation tools
+- a completed Amazon Connect-to-Lex live runtime handoff for the hosted widget
 - CRM exports or automated export workflows
 - Order-level revenue attribution or ecommerce conversion stitching beyond interest reporting
 
@@ -171,6 +172,14 @@ The WooCommerce screen surfaces **repeat product and category interest**, plus t
 The setup screens now cover tracking, privacy, enrichment, AI, Amazon Connect, and phone numbers more clearly, with consistent introductions, section spacing, and guidance links for the relevant API keys, instance IDs, phone number identifiers, and provider documentation.
 
 The **Amazon Connect** page also acts as a pre-flight screen for later testing, so the region, instance ID, S3 export bucket/prefix, flow log group, credentials mode, and contact flow IDs can be stored in one place while the remaining readiness gaps are checked.
+
+The plugin also now exposes **live bot runtime endpoints** under the REST API:
+
+- `POST /wp-json/adaptive-customer-engagement/v1/bot/site-context/answer`
+- `POST /wp-json/adaptive-customer-engagement/v1/bot/site-context/search`
+- `GET /wp-json/adaptive-customer-engagement/v1/bot/site-context/document/{postId}`
+
+Those routes are intended for a bot runtime such as Lambda or other middleware, and they read directly from the site's current published pages, posts, and products. Use the saved webhook secret in the `X-ACE-Webhook-Secret` header when calling them outside wp-admin.
 
 The **Enrichment** page is where the implemented provider support is connected today. That page already includes the provider selector, API key field, cache controls, bot/private-IP options, and a live test lookup tool for the supported providers.
 

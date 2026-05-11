@@ -356,17 +356,160 @@ function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
 	}
 
 	window.__aceConnectChatConfigured = true;
+	let widgetLaunchCallback = null;
+	let widgetLaunchAttempts = 0;
+
+	const setLauncherVisibility = (launcher, isVisible) => {
+		launcher.style.setProperty('opacity', isVisible ? '1' : '0', 'important');
+		launcher.style.setProperty('visibility', isVisible ? 'visible' : 'hidden', 'important');
+		launcher.style.setProperty('pointer-events', isVisible ? 'auto' : 'none', 'important');
+		launcher.style.setProperty('transform', isVisible ? 'translate3d(0, 0, 0)' : 'translate3d(0, 12px, 0)', 'important');
+	};
+
+	const ensureLauncher = () => {
+		if (!document.body) {
+			return null;
+		}
+
+		let launcher = document.getElementById('ace-connect-chat-launcher');
+
+		if (!launcher) {
+			launcher = document.createElement('button');
+			launcher.id = 'ace-connect-chat-launcher';
+			launcher.type = 'button';
+			launcher.setAttribute('aria-label', 'Open live chat');
+			launcher.textContent = 'Chat with us';
+		}
+
+		launcher.style.setProperty('position', 'fixed', 'important');
+		launcher.style.setProperty('left', '24px', 'important');
+		launcher.style.setProperty('bottom', '160px', 'important');
+		launcher.style.setProperty('z-index', '2147483000', 'important');
+		launcher.style.setProperty('display', 'inline-flex', 'important');
+		launcher.style.setProperty('align-items', 'center', 'important');
+		launcher.style.setProperty('justify-content', 'center', 'important');
+		launcher.style.setProperty('min-width', '160px', 'important');
+		launcher.style.setProperty('min-height', '54px', 'important');
+		launcher.style.setProperty('padding', '16px 22px', 'important');
+		launcher.style.setProperty('border', '2px solid #ffffff', 'important');
+		launcher.style.setProperty('border-radius', '999px', 'important');
+		launcher.style.setProperty('background', '#e41618', 'important');
+		launcher.style.setProperty('color', '#ffffff', 'important');
+		launcher.style.setProperty('font', '700 16px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', 'important');
+		launcher.style.setProperty('letter-spacing', '0.01em', 'important');
+		launcher.style.setProperty('box-shadow', '0 18px 48px rgba(15, 23, 42, 0.35)', 'important');
+		launcher.style.setProperty('cursor', 'pointer', 'important');
+		launcher.style.setProperty('transform', 'translate3d(0, 0, 0)', 'important');
+		launcher.style.setProperty('transition', 'opacity 0.2s ease, transform 0.2s ease', 'important');
+		launcher.onclick = () => {
+			requestWidgetLaunch();
+		};
+
+		setLauncherVisibility(launcher, true);
+
+		if (!launcher.isConnected) {
+			document.body.appendChild(launcher);
+		}
+
+		return launcher;
+	};
+
+	const isWidgetOpen = () => {
+		const frame = document.getElementById('amazon-connect-widget-frame');
+
+		if (!frame) {
+			return false;
+		}
+
+		return frame.classList.contains('show') || frame.style.display !== 'none';
+	};
+
+	const fallbackOpenWidget = () => {
+		const openWidgetButton = document.getElementById('amazon-connect-open-widget-button');
+
+		if (openWidgetButton instanceof HTMLButtonElement) {
+			openWidgetButton.click();
+			return true;
+		}
+
+		return false;
+	};
+
+	const restoreLauncherIfNeeded = () => {
+		if (isWidgetOpen()) {
+			return;
+		}
+
+		const activeLauncher = ensureLauncher();
+
+		if (activeLauncher) {
+			setLauncherVisibility(activeLauncher, true);
+		}
+	};
+
+	const requestWidgetLaunch = () => {
+		const activeLauncher = ensureLauncher();
+
+		if (!activeLauncher) {
+			return;
+		}
+
+		setLauncherVisibility(activeLauncher, false);
+
+		if (typeof widgetLaunchCallback === 'function') {
+			widgetLaunchCallback();
+		}
+
+		if (isWidgetOpen()) {
+			return;
+		}
+
+		widgetLaunchAttempts = 0;
+
+		const retryLaunch = () => {
+			if (isWidgetOpen()) {
+				return;
+			}
+
+			widgetLaunchAttempts += 1;
+
+			if (!fallbackOpenWidget() && typeof widgetLaunchCallback === 'function' && widgetLaunchAttempts <= 3) {
+				widgetLaunchCallback();
+			}
+
+			if (isWidgetOpen()) {
+				return;
+			}
+
+			if (widgetLaunchAttempts < 8) {
+				window.setTimeout(retryLaunch, 500);
+				return;
+			}
+
+			restoreLauncherIfNeeded();
+		};
+
+		window.setTimeout(retryLaunch, 300);
+	};
 
 	if (!document.querySelector('#ace-connect-chat-position')) {
 		const style = document.createElement('style');
 		style.id = 'ace-connect-chat-position';
 		style.textContent = `
-			#amazon-connect-open-widget-button,
 			#amazon-connect-close-widget-button,
 			#amazon-connect-widget-frame {
+				position: fixed !important;
 				left: 24px !important;
 				right: auto !important;
-				bottom: 24px !important;
+				bottom: 160px !important;
+				z-index: 2147482999 !important;
+			}
+			#ace-connect-chat-launcher {
+				max-width: calc(100vw - 48px);
+			}
+			#ace-connect-chat-launcher:hover,
+			#ace-connect-chat-launcher:focus {
+				filter: brightness(0.96);
 			}
 		`;
 		document.head.appendChild(style);
@@ -386,6 +529,17 @@ function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
 		script.src = chatConfig.scriptUrl;
 		script.async = true;
 		document.head.appendChild(script);
+	}
+
+	const launcher = ensureLauncher();
+
+	if (document.body && !window.__aceConnectChatLauncherObserver) {
+		window.__aceConnectChatLauncherObserver = new MutationObserver(() => {
+			ensureLauncher();
+		});
+		window.__aceConnectChatLauncherObserver.observe(document.body, {
+			childList: true,
+		});
 	}
 
 	if (chatConfig.securityEnabled) {
@@ -412,6 +566,35 @@ function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
 		});
 	}
 
+	if (chatConfig.useCustomStartChat && chatConfig.chatFlowId) {
+		window.amazon_connect('customStartChat', (callback) => {
+			window.fetch(`${config.root}${config.namespace}/chat-widget/start`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					session_uuid: sessionUuid || '',
+					visitor_uuid: visitorUuid || '',
+					page_url: window.location.href,
+					page_title: document.title || '',
+				}),
+			})
+				.then((response) => response.json())
+				.then((data) => {
+					const payload = data?.data?.startChatResult ? data.data : data;
+
+					if (payload?.startChatResult?.ContactId && payload?.startChatResult?.ParticipantId && payload?.startChatResult?.ParticipantToken) {
+						callback(payload);
+					}
+				})
+				.catch(() => {
+					// Leave widget launch failure handling to the hosted widget.
+				});
+		});
+	}
+
 	window.amazon_connect('snippetId', chatConfig.snippetId);
 	window.amazon_connect('styles', {
 		openChat: {
@@ -423,9 +606,39 @@ function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
 			backgroundColor: '#2563eb',
 		},
 	});
-	window.amazon_connect('supportedMessagingContentTypes', ['text/plain', 'text/markdown', 'application/vnd.amazonaws.connect.message.interactive', 'application/vnd.amazonaws.connect.message.interactive.response']);
+	window.amazon_connect('supportedMessagingContentTypes', ['text/plain', 'text/markdown']);
+	window.amazon_connect('customStyles', {
+		widgetFrame: {
+			left: '24px',
+			right: 'auto',
+			bottom: '160px',
+			zIndex: '2147482999',
+			boxShadow: '0 16px 40px rgba(15, 23, 42, 0.2)',
+			border: '1px solid rgba(37, 99, 235, 0.2)',
+		},
+		widgetButton: {
+			left: '24px',
+			right: 'auto',
+			bottom: '160px',
+			zIndex: '2147482999',
+		},
+	});
 	window.amazon_connect('customLaunchBehavior', {
 		skipIconButtonAndAutoLaunch: true,
+		alwaysHideWidgetButton: true,
+		programmaticLaunch: (launchCallback) => {
+			widgetLaunchCallback = launchCallback;
+			restoreLauncherIfNeeded();
+		},
+	});
+	window.amazon_connect('registerCallback', {
+		WIDGET_FRAME_CLOSED: () => {
+			const activeLauncher = ensureLauncher();
+
+			if (activeLauncher) {
+				setLauncherVisibility(activeLauncher, true);
+			}
+		},
 	});
 	window.amazon_connect('contactAttributes', {
 		aceSessionId: sessionUuid || '',

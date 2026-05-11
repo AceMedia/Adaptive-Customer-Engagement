@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement;
 
+use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
@@ -81,7 +82,8 @@ final class Plugin {
 			new RateLimiter(),
 			$privacy,
 			new BotDetector(),
-			$enrichment_service
+			$enrichment_service,
+			new SiteContextService()
 		);
 		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data, $connect_client );
 		
@@ -163,13 +165,15 @@ final class Plugin {
 			&& $can_view;
 
 		return array(
-			'enabled'     => $enabled,
-			'adminOnly'   => $admin_only,
-			'scriptUrl'   => esc_url_raw( (string) ( $amazon_connect['chat_widget_script_url'] ?? '' ) ),
-			'widgetId'    => sanitize_text_field( (string) ( $amazon_connect['chat_widget_id'] ?? '' ) ),
-			'snippetId'   => sanitize_text_field( (string) ( $amazon_connect['chat_widget_snippet_id'] ?? '' ) ),
+			'enabled'           => $enabled,
+			'adminOnly'         => $admin_only,
+			'scriptUrl'         => esc_url_raw( (string) ( $amazon_connect['chat_widget_script_url'] ?? '' ) ),
+			'widgetId'          => sanitize_text_field( (string) ( $amazon_connect['chat_widget_id'] ?? '' ) ),
+			'snippetId'         => sanitize_text_field( (string) ( $amazon_connect['chat_widget_snippet_id'] ?? '' ) ),
+			'chatFlowId'        => sanitize_text_field( (string) ( $amazon_connect['chat_contact_flow_id'] ?? '' ) ),
+			'useCustomStartChat'=> ! empty( $amazon_connect['chat_contact_flow_id'] ) && ! empty( $amazon_connect['instance_id'] ),
 			'securityEnabled' => ! empty( $amazon_connect['chat_widget_security_key'] ),
-			'region'      => sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) ),
+			'region'            => sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) ),
 		);
 	}
 }

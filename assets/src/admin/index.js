@@ -1,5 +1,5 @@
 import apiFetch from '@wordpress/api-fetch';
-import { Button, Card, CardBody, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
+import { Button, Card, CardBody, Modal, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
 import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { BarChart } from '@mui/x-charts/BarChart';
@@ -65,11 +65,19 @@ const CONNECT_FLOW_DRAFT_DEFAULTS = {
 	dtmf_sequence: '',
 	resume_after_disconnect: false,
 	set_as_default: false,
+	set_as_chat_flow: false,
 };
 const CONNECT_ASSISTANT_DRAFT_DEFAULTS = {
 	name: __('Sitewide Assistant', 'adaptive-customer-engagement'),
 	description: __('Sitewide Amazon Q in Connect assistant for website and call-context support.', 'adaptive-customer-engagement'),
 	link_to_ai_agent: true,
+};
+const LEX_BOT_DRAFT_DEFAULTS = {
+	name: 'Site-FAQ-Bot',
+	description: __('Amazon Lex V2 bot seeded from the site knowledge base managed inside Adaptive Customer Engagement.', 'adaptive-customer-engagement'),
+	role_arn: '',
+	locale_id: 'en_GB',
+	link_to_settings: true,
 };
 const NAV_GROUPS = [
 	{
@@ -139,7 +147,7 @@ const PAGE_META = {
 	'ai-agent': {
 		title: __('AI agent', 'adaptive-customer-engagement'),
 		icon: 'format-chat',
-		description: __('Configure Amazon Q in Connect assistant selection, handoff, and context-sharing settings for future assisted service workflows.', 'adaptive-customer-engagement'),
+		description: __('Configure Amazon Q in Connect, manage Amazon Lex chat bots, and control the site knowledge shared into assisted service workflows.', 'adaptive-customer-engagement'),
 	},
 };
 
@@ -183,13 +191,13 @@ function shouldReplaceAutoSourceValue(currentValue, previousType) {
 }
 
 function hasConnectConfig(settings = {}) {
+	const hasAccessKeys = !!(settings?.access_key_id && settings?.secret_access_key);
+
 	return !!(
 		settings?.enabled &&
 		settings?.region &&
 		settings?.instance_id &&
-		!settings?.use_iam_role &&
-		settings?.access_key_id &&
-		settings?.secret_access_key
+		(hasAccessKeys || settings?.use_iam_role)
 	);
 }
 
@@ -197,17 +205,17 @@ function hasEnrichmentConfig(settings = {}) {
 	return !!(settings?.provider && settings.provider !== 'none' && settings?.api_key);
 }
 
-function parseConnectWidgetSnippet(snippet = '') {
-	const value = String(snippet || '');
-	const scriptUrl = value.match(/s\.src\s*=\s*['"]([^'"]+)['"]/i)?.[1] || '';
-	const widgetId = value.match(/\(\s*window\s*,\s*document\s*,\s*['"]amazon_connect['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i)?.[1] || '';
-	const snippetId = value.match(/amazon_connect\(\s*['"]snippetId['"]\s*,\s*['"]([^'"]+)['"]\s*\)/i)?.[1] || '';
+function isServiceLinkedLexRoleArn(roleArn = '') {
+	return roleArn.includes(':role/aws-service-role/lexv2.amazonaws.com/')
+		|| roleArn.includes(':role/aws-service-role/channels.lexv2.amazonaws.com/')
+		|| roleArn.includes('AWSServiceRoleForLexV2');
+}
 
-	return {
-		scriptUrl,
-		widgetId,
-		snippetId,
-	};
+function getApiErrorMessage(error, fallback) {
+	return error?.message
+		|| error?.data?.body?.message
+		|| error?.data?.body?.Message
+		|| fallback;
 }
 
 function getHashRoute() {
@@ -3817,17 +3825,23 @@ function SettingsView({ section = 'settings', active }) {
 	const [settings, setSettings] = useState(null);
 	const [notice, setNotice] = useState(null);
 	const [busy, setBusy] = useState(false);
+	const [settingsImportFile, setSettingsImportFile] = useState(null);
+	const [settingsImportName, setSettingsImportName] = useState('');
+	const [settingsImportInputKey, setSettingsImportInputKey] = useState(0);
 	const [testIp, setTestIp] = useState('');
 	const [testResult, setTestResult] = useState(null);
 	const [connectReadiness, setConnectReadiness] = useState(null);
 	const [connectImportStatus, setConnectImportStatus] = useState(null);
 	const [assistantData, setAssistantData] = useState(null);
+	const [lexBotData, setLexBotData] = useState(null);
 	const [contactFlowData, setContactFlowData] = useState(null);
 	const [queueFlowData, setQueueFlowData] = useState(null);
 	const [queueData, setQueueData] = useState(null);
 	const [flowDraft, setFlowDraft] = useState(CONNECT_FLOW_DRAFT_DEFAULTS);
 	const [assistantDraft, setAssistantDraft] = useState(CONNECT_ASSISTANT_DRAFT_DEFAULTS);
-	const [widgetSnippetDraft, setWidgetSnippetDraft] = useState('');
+	const [lexBotDraft, setLexBotDraft] = useState(LEX_BOT_DRAFT_DEFAULTS);
+	const [isLexBotCreateModalOpen, setIsLexBotCreateModalOpen] = useState(false);
+	const [lexBotCreateResult, setLexBotCreateResult] = useState(null);
 
 	useEffect(() => {
 		if (active && !settings) {
@@ -3846,6 +3860,15 @@ function SettingsView({ section = 'settings', active }) {
 			request('/admin/connect/assistants').then(setAssistantData);
 		}
 	}, [active, section, settings, assistantData]);
+
+	useEffect(() => {
+		if (active && (section === 'amazon-connect' || section === 'ai-agent') && settings && hasConnectConfig(settings.amazon_connect || {}) && !lexBotData) {
+			request('/admin/connect/lex-bots').then((response) => {
+				setLexBotData(response);
+				applyLexSelectionToSettings(response);
+			});
+		}
+	}, [active, section, settings, lexBotData]);
 
 	useEffect(() => {
 		if (active && section === 'amazon-connect' && settings && hasConnectConfig(settings.amazon_connect || {}) && !connectImportStatus) {
@@ -3871,6 +3894,48 @@ function SettingsView({ section = 'settings', active }) {
 		}
 	}, [active, section, settings, queueFlowData]);
 
+	useEffect(() => {
+		if (!settings) {
+			return;
+		}
+
+		setLexBotDraft((current) => ({
+			...current,
+			role_arn: current.role_arn || (isServiceLinkedLexRoleArn(settings.amazon_connect?.lex_bot_role_arn || '') ? '' : (settings.amazon_connect?.lex_bot_role_arn || '')),
+			locale_id: current.locale_id || settings.amazon_connect?.lex_bot_locale_id || 'en_GB',
+		}));
+	}, [settings]);
+
+	const applyLexSelectionToSettings = (response) => {
+		if (!response?.selected) {
+			return;
+		}
+
+		setSettings((current) => {
+			if (!current) {
+				return current;
+			}
+
+			return {
+				...current,
+				amazon_connect: {
+					...(current.amazon_connect || {}),
+					lex_bot_id: response.selected.bot_id || current.amazon_connect?.lex_bot_id || '',
+					lex_bot_alias_id: response.selected.alias_id || current.amazon_connect?.lex_bot_alias_id || '',
+					lex_bot_locale_id: response.selected.locale_id || current.amazon_connect?.lex_bot_locale_id || '',
+					lex_bot_intent_name: response.selected.intent_name || current.amazon_connect?.lex_bot_intent_name || '',
+					lex_bot_role_arn: response.selected.role_arn || current.amazon_connect?.lex_bot_role_arn || '',
+					lex_bot_console_url: response.selected.console_url || response.console_url || current.amazon_connect?.lex_bot_console_url || '',
+				},
+			};
+		});
+
+		setLexBotDraft((current) => ({
+			...current,
+			role_arn: current.role_arn || (isServiceLinkedLexRoleArn(response.selected.role_arn || '') ? '' : (response.selected.role_arn || '')),
+		}));
+	};
+
 	if (!settings) {
 		return createElement(Spinner);
 	}
@@ -3883,11 +3948,105 @@ function SettingsView({ section = 'settings', active }) {
 			setConnectReadiness(await request('/admin/connect-readiness'));
 			setConnectImportStatus(await request('/admin/connect/calls/import-status'));
 			setAssistantData(await request('/admin/connect/assistants'));
+			await refreshLexBotData(
+				response?.amazon_connect?.lex_bot_id || '',
+				response?.amazon_connect?.lex_bot_locale_id || ''
+			);
 			setContactFlowData(await request('/admin/connect/contact-flows'));
 			setQueueFlowData(await request('/admin/connect/queue-flows'));
 			setQueueData(await request('/admin/connect/queues'));
 		}
 		setNotice(__('Settings saved.', 'adaptive-customer-engagement'));
+		setBusy(false);
+	};
+
+	const exportSettingsConfig = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/settings/export');
+			const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json' });
+			const objectUrl = window.URL.createObjectURL(blob);
+			const link = document.createElement('a');
+			link.href = objectUrl;
+			link.download = `adaptive-customer-engagement-settings-${new Date().toISOString().slice(0, 10)}.json`;
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+			window.URL.revokeObjectURL(objectUrl);
+			setNotice({ status: 'success', message: __('Settings export downloaded.', 'adaptive-customer-engagement') });
+		} catch (error) {
+			setNotice({ status: 'error', message: getApiErrorMessage(error, __('The settings export could not be downloaded.', 'adaptive-customer-engagement')) });
+		}
+		setBusy(false);
+	};
+
+	const handleSettingsImportSelection = async (event) => {
+		const file = event?.target?.files?.[0];
+
+		if (!file) {
+			setSettingsImportFile(null);
+			setSettingsImportName('');
+			return;
+		}
+
+		try {
+			const parsed = JSON.parse(await file.text());
+			setSettingsImportFile(parsed);
+			setSettingsImportName(file.name || '');
+			setNotice({ status: 'info', message: sprintf(__('Ready to import settings from %s.', 'adaptive-customer-engagement'), file.name || __('the selected file', 'adaptive-customer-engagement')) });
+		} catch (error) {
+			setSettingsImportFile(null);
+			setSettingsImportName('');
+			setSettingsImportInputKey((current) => current + 1);
+			setNotice({ status: 'error', message: __('That file could not be read as a valid settings export.', 'adaptive-customer-engagement') });
+		}
+	};
+
+	const importSettingsConfig = async () => {
+		if (!settingsImportFile) {
+			return;
+		}
+
+		setBusy(true);
+
+		try {
+			const response = await request('/admin/settings/import', {
+				method: 'POST',
+				data: settingsImportFile,
+			});
+			const importedSettings = response?.settings || {};
+			setSettings(importedSettings);
+			setTestResult(null);
+			setSettingsImportFile(null);
+			setSettingsImportName('');
+			setSettingsImportInputKey((current) => current + 1);
+
+			if (hasConnectConfig(importedSettings.amazon_connect || {})) {
+				setConnectReadiness(await request('/admin/connect-readiness'));
+				setConnectImportStatus(await request('/admin/connect/calls/import-status'));
+				setAssistantData(await request('/admin/connect/assistants'));
+				await refreshLexBotData(
+					importedSettings?.amazon_connect?.lex_bot_id || '',
+					importedSettings?.amazon_connect?.lex_bot_locale_id || ''
+				);
+				setContactFlowData(await request('/admin/connect/contact-flows'));
+				setQueueFlowData(await request('/admin/connect/queue-flows'));
+				setQueueData(await request('/admin/connect/queues'));
+			} else {
+				setConnectReadiness(null);
+				setConnectImportStatus(null);
+				setAssistantData(null);
+				setLexBotData(null);
+				setContactFlowData(null);
+				setQueueFlowData(null);
+				setQueueData(null);
+			}
+
+			setNotice({ status: 'success', message: __('Settings imported.', 'adaptive-customer-engagement') });
+		} catch (error) {
+			setNotice({ status: 'error', message: getApiErrorMessage(error, __('The settings import could not be completed.', 'adaptive-customer-engagement')) });
+		}
+
 		setBusy(false);
 	};
 
@@ -3980,12 +4139,33 @@ function SettingsView({ section = 'settings', active }) {
 		setBusy(false);
 	};
 
+	const refreshLexBotData = async (botId = '', localeId = '') => {
+		const params = new URLSearchParams();
+
+		if (botId) {
+			params.set('bot_id', botId);
+		}
+
+		if (localeId) {
+			params.set('locale_id', localeId);
+		}
+
+		const path = `/admin/connect/lex-bots${params.toString() ? `?${params.toString()}` : ''}`;
+		const response = await request(path);
+		setLexBotData(response);
+		applyLexSelectionToSettings(response);
+		return response;
+	};
+
 	const createConnectFlow = async () => {
 		setBusy(true);
 		try {
 			const response = await request('/admin/connect/contact-flows', {
 				method: 'POST',
-				data: flowDraft,
+				data: {
+					...flowDraft,
+					lex_bot_alias_arn: selectedLexBot?.aliasArn || lexBotData?.selected?.alias_arn || '',
+				},
 			});
 			const refreshedFlows = await request('/admin/connect/contact-flows');
 			const refreshedQueueFlows = await request('/admin/connect/queue-flows');
@@ -3999,10 +4179,159 @@ function SettingsView({ section = 'settings', active }) {
 			setFlowDraft({
 				...CONNECT_FLOW_DRAFT_DEFAULTS,
 				set_as_default: flowDraft.set_as_default,
+				set_as_chat_flow: flowDraft.set_as_chat_flow,
 			});
-			setNotice(__('Amazon Connect flow created.', 'adaptive-customer-engagement'));
+			setNotice(
+				response?.settings?.amazon_connect?.chat_contact_flow_id === response?.item?.Id
+					? __('Amazon Connect flow created and linked as the website chat flow.', 'adaptive-customer-engagement')
+					: __('Amazon Connect flow created.', 'adaptive-customer-engagement')
+			);
 		} catch (error) {
 			setNotice(error.message || __('The Amazon Connect flow could not be created.', 'adaptive-customer-engagement'));
+		}
+		setBusy(false);
+	};
+
+	const seedBotKnowledge = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/connect/bot-knowledge/seed', {
+				method: 'POST',
+				data: {
+					limit: 8,
+				},
+			});
+			setAiAgent({ bot_knowledge_entries: response.items || [] });
+			setNotice(__('Knowledge entries were seeded from the latest published site content.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setNotice(error.message || __('The site knowledge entries could not be seeded.', 'adaptive-customer-engagement'));
+		}
+		setBusy(false);
+	};
+
+	const addBotKnowledgeEntry = () => {
+		const entries = (settings.ai_agent?.bot_knowledge_entries || []).slice();
+		entries.push({
+			id: `manual-${Date.now()}`,
+			question: '',
+			answer: '',
+			source_type: 'manual',
+			source_id: 0,
+			source_label: '',
+			url: '',
+			enabled: true,
+		});
+		setAiAgent({ bot_knowledge_entries: entries });
+	};
+
+	const updateBotKnowledgeEntry = (index, patch) => {
+		const entries = (settings.ai_agent?.bot_knowledge_entries || []).map((entry, entryIndex) => (
+			entryIndex === index ? { ...entry, ...patch } : entry
+		));
+		setAiAgent({ bot_knowledge_entries: entries });
+	};
+
+	const removeBotKnowledgeEntry = (index) => {
+		const entries = (settings.ai_agent?.bot_knowledge_entries || []).filter((entry, entryIndex) => entryIndex !== index);
+		setAiAgent({ bot_knowledge_entries: entries });
+	};
+
+	const createLexBot = async () => {
+		setBusy(true);
+		setLexBotCreateResult(null);
+		try {
+			const response = await request('/admin/connect/lex-bots', {
+				method: 'POST',
+				data: {
+					name: lexBotDraft.name,
+					description: lexBotDraft.description,
+					locale_id: inferredLexBotLocale,
+					knowledge_entries: settings.ai_agent?.bot_knowledge_entries || [],
+					link_to_settings: lexBotDraft.link_to_settings,
+				},
+			});
+			if (response?.settings) {
+				setSettings(response.settings);
+			}
+			try {
+				setLexBotData(await refreshLexBotData(response?.item?.botId || '', inferredLexBotLocale));
+			} catch (refreshError) {
+				setLexBotData({
+					items: response.items || [],
+					aliases: response.aliases || [],
+					locales: response.locales || [],
+					intents: response.intents || [],
+					error: response.build_error || refreshError.message || '',
+				});
+			}
+			setLexBotCreateResult(response);
+			setLexBotDraft({
+				...LEX_BOT_DRAFT_DEFAULTS,
+				link_to_settings: lexBotDraft.link_to_settings,
+			});
+			setNotice(response?.message || __('Amazon Lex bot created.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setNotice(getApiErrorMessage(error, __('The Amazon Lex bot could not be created.', 'adaptive-customer-engagement')));
+		}
+		setBusy(false);
+	};
+
+	const connectExistingLexBot = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/settings', { method: 'POST', data: settings });
+			setSettings(response);
+			await refreshLexBotData(
+				response?.amazon_connect?.lex_bot_id || '',
+				response?.amazon_connect?.lex_bot_locale_id || ''
+			);
+			setNotice(__('Existing Amazon Connect bot linked into the plugin settings.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setNotice(getApiErrorMessage(error, __('The Amazon Connect bot could not be linked into the plugin settings.', 'adaptive-customer-engagement')));
+		}
+		setBusy(false);
+	};
+
+	const disconnectLexBot = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/connect/lex-bots/disconnect', {
+				method: 'POST',
+				data: {},
+			});
+			if (response?.settings) {
+				setSettings(response.settings);
+			}
+			setLexBotData((current) => ({
+				...(current || {}),
+				items: response?.items || current?.items || [],
+				selected: response?.selected || {},
+			}));
+			setNotice(response?.message || __('The site bot has been disconnected.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setNotice(getApiErrorMessage(error, __('The site bot could not be disconnected.', 'adaptive-customer-engagement')));
+		}
+		setBusy(false);
+	};
+
+	const cleanupLexBots = async () => {
+		setBusy(true);
+		try {
+			const response = await request('/admin/connect/lex-bots/cleanup', {
+				method: 'POST',
+				data: {
+					keep_bot_id: settings.amazon_connect?.lex_bot_id || '',
+				},
+			});
+			setLexBotData((current) => ({
+				...(current || {}),
+				items: response?.items || [],
+				selected: response?.selected || current?.selected || {},
+				error: (response?.errors || []).join(' '),
+			}));
+			setNotice(response?.message || __('Amazon Connect bot cleanup completed.', 'adaptive-customer-engagement'));
+		} catch (error) {
+			setNotice(getApiErrorMessage(error, __('Amazon Connect bot cleanup could not be completed.', 'adaptive-customer-engagement')));
 		}
 		setBusy(false);
 	};
@@ -4012,17 +4341,6 @@ function SettingsView({ section = 'settings', active }) {
 	const setEnrichment = (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, ...next } });
 	const setAmazonConnect = (next) => setSettings({ ...settings, amazon_connect: { ...settings.amazon_connect, ...next } });
 	const setAiAgent = (next) => setSettings({ ...settings, ai_agent: { ...settings.ai_agent, ...next } });
-	const applyWidgetSnippet = (nextSnippet) => {
-		setWidgetSnippetDraft(nextSnippet);
-
-		const parsed = parseConnectWidgetSnippet(nextSnippet);
-
-		setAmazonConnect({
-			chat_widget_script_url: parsed.scriptUrl || settings.amazon_connect.chat_widget_script_url || '',
-			chat_widget_id: parsed.widgetId || settings.amazon_connect.chat_widget_id || '',
-			chat_widget_snippet_id: parsed.snippetId || settings.amazon_connect.chat_widget_snippet_id || '',
-		});
-	};
 	const trackingEnabled = !!settings.enabled;
 	const enrichmentProviderChosen = !!(settings.enrichment?.provider && settings.enrichment.provider !== 'none');
 	const enrichmentConnected = hasEnrichmentConfig(settings.enrichment || {});
@@ -4041,6 +4359,48 @@ function SettingsView({ section = 'settings', active }) {
 		}))
 	);
 	const selectedAssistant = ((assistantData?.items) || []).find((item) => item.assistantId === settings.ai_agent.assistant_id);
+	const lexBotOptions = [{ label: __('Choose an Amazon Lex V2 bot', 'adaptive-customer-engagement'), value: '' }].concat(
+		((lexBotData?.items) || []).map((item) => ({
+			label: `${item.botName || item.botId}${item.botStatus ? ` (${item.botStatus})` : ''}`,
+			value: item.botId || '',
+		}))
+	);
+	const selectedLexBot = ((lexBotData?.items) || []).find((item) => item.botId === (settings.amazon_connect.lex_bot_id || ''));
+	const siteBotConnected = !!(settings.amazon_connect?.lex_bot_id || '').trim();
+	const lexAliasOptions = [{ label: __('Choose a bot alias', 'adaptive-customer-engagement'), value: '' }].concat(
+		((lexBotData?.aliases) || []).map((item) => ({
+			label: `${item.botAliasName || item.botAliasId}${item.botAliasStatus ? ` (${item.botAliasStatus})` : ''}`,
+			value: item.botAliasId || '',
+		}))
+	);
+	const selectedLexAlias = ((lexBotData?.aliases) || []).find((item) => item.botAliasId === (settings.amazon_connect.lex_bot_alias_id || ''));
+	const lexLocaleOptions = [{ label: __('Choose a bot locale', 'adaptive-customer-engagement'), value: '' }].concat(
+		((lexBotData?.locales) || []).map((item) => ({
+			label: `${item.localeId || item.localeName}${item.botLocaleStatus ? ` (${item.botLocaleStatus})` : ''}`,
+			value: item.localeId || '',
+		}))
+	);
+	const selectedLexLocale = ((lexBotData?.locales) || []).find((item) => item.localeId === (settings.amazon_connect.lex_bot_locale_id || ''));
+	const lexIntentOptions = [{ label: __('Choose a preferred Lex intent', 'adaptive-customer-engagement'), value: '' }].concat(
+		((lexBotData?.intents) || []).map((item) => ({
+			label: item.intentName || item.intentDisplayName || item.intentId,
+			value: item.intentName || '',
+		}))
+	);
+	const selectedLexIntent = ((lexBotData?.intents) || []).find((item) => item.intentName === (settings.amazon_connect.lex_bot_intent_name || ''));
+	const knowledgeEntries = settings.ai_agent?.bot_knowledge_entries || [];
+	const enabledKnowledgeEntries = knowledgeEntries.filter((entry) => entry.enabled && (entry.question || '').trim() && (entry.answer || '').trim());
+	const inferredLexBotLocale = (settings.amazon_connect?.lex_bot_locale_id || lexBotData?.selected?.locale_id || 'en_GB').trim() || 'en_GB';
+	const storedLexRoleArn = (settings.amazon_connect?.lex_bot_role_arn || lexBotData?.selected?.role_arn || '').trim();
+	const usingSavedDedicatedLexRole = !!storedLexRoleArn && !isServiceLinkedLexRoleArn(storedLexRoleArn);
+	const inferredLexRoleSummary = usingSavedDedicatedLexRole
+		? __('Reuse the saved dedicated Lex bot role', 'adaptive-customer-engagement')
+		: __('Create or reuse a dedicated Lex bot role automatically', 'adaptive-customer-engagement');
+	const canCreateLexBot = !!lexBotDraft.name.trim() && enabledKnowledgeEntries.length > 0;
+	const defaultChatApiEndpoint = `${config.root.replace(/\/$/, '')}/${config.namespace}/bot/site-context/answer`;
+	const siteSearchApiEndpoint = `${config.root.replace(/\/$/, '')}/${config.namespace}/bot/site-context/search`;
+	const siteDocumentApiEndpointBase = `${config.root.replace(/\/$/, '')}/${config.namespace}/bot/site-context/document`;
+	const chatApiEndpoint = (settings.amazon_connect.chat_api_endpoint || '').trim() || defaultChatApiEndpoint;
 	const connectFlowOptions = [{ label: __('Choose a contact flow', 'adaptive-customer-engagement'), value: '' }].concat(
 		((contactFlowData?.items) || []).map((item) => ({
 			label: `${item.Name || item.Id}${item.ContactFlowStatus ? ` (${item.ContactFlowStatus})` : ''}`,
@@ -4071,6 +4431,18 @@ function SettingsView({ section = 'settings', active }) {
 		{ label: __('Shell', 'adaptive-customer-engagement'), value: __('Native WordPress admin', 'adaptive-customer-engagement') },
 		{ label: __('Defaults', 'adaptive-customer-engagement'), value: __('Privacy-first', 'adaptive-customer-engagement') },
 	];
+	const resolvedNotice = typeof notice === 'string' ? { status: 'success', message: notice } : notice;
+	const openLexBotCreateModal = () => {
+		setLexBotCreateResult(null);
+		setIsLexBotCreateModalOpen(true);
+	};
+	const closeLexBotCreateModal = () => {
+		if (busy) {
+			return;
+		}
+		setIsLexBotCreateModalOpen(false);
+		setLexBotCreateResult(null);
+	};
 
 	const sections = {
 		settings: createElement(
@@ -4352,6 +4724,7 @@ function SettingsView({ section = 'settings', active }) {
 								value: flowDraft.template_type,
 								options: [
 									{ label: __('Greeting then disconnect', 'adaptive-customer-engagement'), value: 'message_disconnect' },
+									{ label: __('Website chat via connected bot', 'adaptive-customer-engagement'), value: 'lex_chat' },
 									{ label: __('Queue routing', 'adaptive-customer-engagement'), value: 'queue_transfer' },
 									{ label: __('Customer queue / hold message', 'adaptive-customer-engagement'), value: 'customer_queue' },
 									{ label: __('Call forwarding', 'adaptive-customer-engagement'), value: 'call_forward' },
@@ -4366,7 +4739,8 @@ function SettingsView({ section = 'settings', active }) {
 									timeout_seconds: next === 'call_forward' ? flowDraft.timeout_seconds : CONNECT_FLOW_DRAFT_DEFAULTS.timeout_seconds,
 									dtmf_sequence: next === 'call_forward' ? flowDraft.dtmf_sequence : '',
 									resume_after_disconnect: next === 'call_forward' ? flowDraft.resume_after_disconnect : false,
-									failure_message: (next === 'queue_transfer' || next === 'call_forward') ? flowDraft.failure_message : CONNECT_FLOW_DRAFT_DEFAULTS.failure_message,
+									failure_message: (next === 'queue_transfer' || next === 'call_forward' || next === 'lex_chat') ? flowDraft.failure_message : CONNECT_FLOW_DRAFT_DEFAULTS.failure_message,
+									set_as_chat_flow: next === 'lex_chat' ? true : CONNECT_FLOW_DRAFT_DEFAULTS.set_as_chat_flow,
 								}),
 							}),
 							createElement(TextControl, {
@@ -4380,15 +4754,22 @@ function SettingsView({ section = 'settings', active }) {
 								onChange: (next) => setFlowDraft({ ...flowDraft, description: next }),
 							}),
 							createElement(TextareaControl, {
-								label: flowDraft.template_type === 'queue_transfer' ? __('Greeting message', 'adaptive-customer-engagement') : flowDraft.template_type === 'customer_queue' ? __('Queue / hold message', 'adaptive-customer-engagement') : __('Prompt message', 'adaptive-customer-engagement'),
+								label: flowDraft.template_type === 'queue_transfer' ? __('Greeting message', 'adaptive-customer-engagement') : flowDraft.template_type === 'customer_queue' ? __('Queue / hold message', 'adaptive-customer-engagement') : flowDraft.template_type === 'lex_chat' ? __('Opening chat message', 'adaptive-customer-engagement') : __('Prompt message', 'adaptive-customer-engagement'),
 								help: flowDraft.template_type === 'queue_transfer'
 									? __('This message plays before the caller is placed into the selected Amazon Connect queue.', 'adaptive-customer-engagement')
 									: flowDraft.template_type === 'customer_queue'
 										? __('This becomes the customer queue flow message that callers hear while they are waiting in queue.', 'adaptive-customer-engagement')
+										: flowDraft.template_type === 'lex_chat'
+											? __('This welcome message is sent before the connected site bot takes over the website chat.', 'adaptive-customer-engagement')
 									: __('This creates a published greeting-and-disconnect flow that can be assigned immediately and extended later in Amazon Connect if required.', 'adaptive-customer-engagement'),
 								value: flowDraft.message,
 								onChange: (next) => setFlowDraft({ ...flowDraft, message: next }),
 							}),
+							flowDraft.template_type === 'lex_chat'
+								? createElement(Notice, { status: selectedLexBot ? 'info' : 'warning', isDismissible: false }, selectedLexBot
+									? sprintf(__('This flow will invoke the connected bot %s through Amazon Connect and can be saved straight into the website chat setting.', 'adaptive-customer-engagement'), selectedLexBot.botName || selectedLexBot.botId)
+									: __('Connect a site bot first before creating a website chat flow.', 'adaptive-customer-engagement'))
+								: null,
 							flowDraft.template_type === 'queue_transfer'
 								? createElement(SelectControl, {
 									label: __('Amazon Connect queue', 'adaptive-customer-engagement'),
@@ -4438,11 +4819,13 @@ function SettingsView({ section = 'settings', active }) {
 									onChange: (next) => setFlowDraft({ ...flowDraft, dtmf_sequence: next }),
 								})
 								: null,
-							(flowDraft.template_type === 'queue_transfer' || flowDraft.template_type === 'call_forward')
+							(flowDraft.template_type === 'queue_transfer' || flowDraft.template_type === 'call_forward' || flowDraft.template_type === 'lex_chat')
 								? createElement(TextareaControl, {
 									label: __('Fallback message', 'adaptive-customer-engagement'),
 									help: flowDraft.template_type === 'queue_transfer'
 										? __('This message plays if the queue cannot accept the caller or another queueing error occurs.', 'adaptive-customer-engagement')
+										: flowDraft.template_type === 'lex_chat'
+											? __('This message is sent if Amazon Connect cannot hand the customer over to the selected site bot.', 'adaptive-customer-engagement')
 										: __('This message plays if the forwarding destination fails or another transfer error occurs.', 'adaptive-customer-engagement'),
 									value: flowDraft.failure_message,
 									onChange: (next) => setFlowDraft({ ...flowDraft, failure_message: next }),
@@ -4461,10 +4844,17 @@ function SettingsView({ section = 'settings', active }) {
 								label: __('Set this as the default contact flow after creation', 'adaptive-customer-engagement'),
 								checked: !!flowDraft.set_as_default,
 								onChange: (next) => setFlowDraft({ ...flowDraft, set_as_default: next }),
-							})
+							}),
+							flowDraft.template_type === 'lex_chat'
+								? createElement(ToggleControl, {
+									label: __('Use this as the website chat flow', 'adaptive-customer-engagement'),
+									checked: !!flowDraft.set_as_chat_flow,
+									onChange: (next) => setFlowDraft({ ...flowDraft, set_as_chat_flow: next }),
+								})
+								: null
 						),
 						createElement(SettingsActionRow, null,
-							createElement(Button, { variant: 'primary', onClick: createConnectFlow, disabled: busy || !flowDraft.name.trim() || !flowDraft.message.trim() || (flowDraft.template_type === 'queue_transfer' && !flowDraft.queue_id) || (flowDraft.template_type === 'call_forward' && !flowDraft.target_phone_number.trim()) }, flowDraft.template_type === 'queue_transfer' ? __('Create queue flow in Connect', 'adaptive-customer-engagement') : flowDraft.template_type === 'customer_queue' ? __('Create customer queue flow in Connect', 'adaptive-customer-engagement') : flowDraft.template_type === 'call_forward' ? __('Create forwarding flow in Connect', 'adaptive-customer-engagement') : __('Create standard flow in Connect', 'adaptive-customer-engagement')),
+							createElement(Button, { variant: 'primary', onClick: createConnectFlow, disabled: busy || !flowDraft.name.trim() || !flowDraft.message.trim() || (flowDraft.template_type === 'queue_transfer' && !flowDraft.queue_id) || (flowDraft.template_type === 'call_forward' && !flowDraft.target_phone_number.trim()) || (flowDraft.template_type === 'lex_chat' && !selectedLexBot) }, flowDraft.template_type === 'queue_transfer' ? __('Create queue flow in Connect', 'adaptive-customer-engagement') : flowDraft.template_type === 'customer_queue' ? __('Create customer queue flow in Connect', 'adaptive-customer-engagement') : flowDraft.template_type === 'call_forward' ? __('Create forwarding flow in Connect', 'adaptive-customer-engagement') : flowDraft.template_type === 'lex_chat' ? __('Create website chat flow in Connect', 'adaptive-customer-engagement') : __('Create standard flow in Connect', 'adaptive-customer-engagement')),
 							createElement(Button, { variant: 'secondary', onClick: refreshConnectFlows, disabled: busy }, __('Refresh flows', 'adaptive-customer-engagement'))
 						),
 						createElement(SettingsResultCard, {
@@ -4483,11 +4873,11 @@ function SettingsView({ section = 'settings', active }) {
 			),
 			createElement(SettingsPanel, {
 				title: __('Connection mode', 'adaptive-customer-engagement'),
-				description: __('Choose how the service should authenticate with AWS.', 'adaptive-customer-engagement'),
+				description: __('Choose how the service should authenticate with AWS. Saved access keys are used first; IAM role credentials are used as a fallback when keys are not present.', 'adaptive-customer-engagement'),
 			},
 			createElement(SettingsToggleList, null,
 				createElement(ToggleControl, { label: __('Enable Amazon Connect features', 'adaptive-customer-engagement'), checked: !!settings.amazon_connect.enabled, onChange: (next) => setAmazonConnect({ enabled: next }) }),
-				createElement(ToggleControl, { label: __('Use IAM role instead of saved access keys', 'adaptive-customer-engagement'), checked: !!settings.amazon_connect.use_iam_role, onChange: (next) => setAmazonConnect({ use_iam_role: next }) })
+				createElement(ToggleControl, { label: __('Allow IAM role fallback when saved keys are not present', 'adaptive-customer-engagement'), checked: !!settings.amazon_connect.use_iam_role, onChange: (next) => setAmazonConnect({ use_iam_role: next }) })
 			)),
 			createElement(SettingsPanel, {
 				title: __('Instance and credentials', 'adaptive-customer-engagement'),
@@ -4506,20 +4896,31 @@ function SettingsView({ section = 'settings', active }) {
 			)
 				: createElement(Notice, { status: 'info', isDismissible: false }, __('Enable Amazon Connect features first to reveal the connection fields.', 'adaptive-customer-engagement'))),
 			connectEnabled && !connectConfigured
-				? createElement(Notice, { status: 'info', isDismissible: false }, __('Save the Amazon Connect region, instance ID, and AWS access keys to unlock the remaining service settings.', 'adaptive-customer-engagement'))
+				? createElement(Notice, { status: 'info', isDismissible: false }, __('Save the Amazon Connect region and instance ID, then add AWS access keys or enable IAM role fallback to unlock the remaining service settings.', 'adaptive-customer-engagement'))
 				: null,
 			connectConfigured && createElement(SettingsPanel, {
 				title: __('Flows and webhook handling', 'adaptive-customer-engagement'),
-				description: __('Manage default flow selection and webhook security for Amazon Connect traffic.', 'adaptive-customer-engagement'),
+				description: __('Manage default flow selection, webhook security, and the live site-content runtime endpoint used by bot integrations.', 'adaptive-customer-engagement'),
 				tone: 'soft',
 			},
 			connectLiveReady
 				? createElement(SettingsFieldGrid, null,
 					createElement(SelectControl, { label: __('Default contact flow', 'adaptive-customer-engagement'), value: settings.amazon_connect.default_contact_flow_id, options: connectFlowOptions, onChange: (next) => setAmazonConnect({ default_contact_flow_id: next }) }),
-					createElement(TextControl, { label: __('Chat contact flow ID', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_contact_flow_id, onChange: (next) => setAmazonConnect({ chat_contact_flow_id: next }) }),
+					createElement(SelectControl, { label: __('Chat contact flow', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_contact_flow_id, options: connectFlowOptions, onChange: (next) => setAmazonConnect({ chat_contact_flow_id: next }) }),
+					createElement(TextControl, { label: __('Chat API endpoint', 'adaptive-customer-engagement'), help: __('Use this endpoint from a Lambda hook or other bot runtime when you want live answers from the current pages, posts, and products. Leave it blank to use the built-in WordPress endpoint shown below.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_api_endpoint || '', onChange: (next) => setAmazonConnect({ chat_api_endpoint: next }) }),
 					createElement(TextControl, { label: __('Webhook secret', 'adaptive-customer-engagement'), value: settings.amazon_connect.webhook_secret, onChange: (next) => setAmazonConnect({ webhook_secret: next }) }),
 				)
-				: createElement(Notice, { status: 'info', isDismissible: false }, __('Finish the live Amazon Connect connection first to reveal the flow-default and webhook settings.', 'adaptive-customer-engagement'))),
+				: createElement(Notice, { status: 'info', isDismissible: false }, __('Finish the live Amazon Connect connection first to reveal the flow-default and webhook settings.', 'adaptive-customer-engagement')),
+			connectLiveReady
+				? createElement(Notice, { status: settings.amazon_connect.chat_contact_flow_id ? 'success' : 'info', isDismissible: false }, settings.amazon_connect.chat_contact_flow_id
+					? __('The frontend widget now starts chat through the selected Chat contact flow, so that flow should be the one that invokes the site bot inside Amazon Connect.', 'adaptive-customer-engagement')
+					: __('If Chat contact flow is left blank, the hosted widget keeps using whatever flow is baked into the Connect snippet. Set it here to make WordPress start chat against the chosen flow explicitly.', 'adaptive-customer-engagement'))
+				: null,
+			connectLiveReady
+				? createElement(Notice, { status: settings.amazon_connect.webhook_secret ? 'success' : 'warning', isDismissible: false }, settings.amazon_connect.webhook_secret
+					? sprintf(__('Live answer endpoint: %1$s. Search endpoint: %2$s. Document endpoint base: %3$s/{postId}. Send the webhook secret in the X-ACE-Webhook-Secret header from the bot runtime.', 'adaptive-customer-engagement'), chatApiEndpoint, siteSearchApiEndpoint, siteDocumentApiEndpointBase)
+					: __('Save a webhook secret before using the live site answer, search, or document endpoints from a bot runtime.', 'adaptive-customer-engagement'))
+				: null),
 			connectConfigured
 				? createElement(Notice, { status: connectReadiness?.summary?.is_ready_for_testing ? 'success' : 'info', isDismissible: false }, connectReadiness?.summary?.is_ready_for_testing ? __('Amazon Connect configuration is ready for live testing and service validation.', 'adaptive-customer-engagement') : __('Amazon Connect configuration has been saved. Complete the readiness checklist before enabling live import, sync, and call matching.', 'adaptive-customer-engagement'))
 				: null
@@ -4528,10 +4929,10 @@ function SettingsView({ section = 'settings', active }) {
 			Fragment,
 			null,
 			createElement(SettingsPageIntro, {
-				eyebrow: __('Amazon Q in Connect', 'adaptive-customer-engagement'),
-				title: __('Configure the Amazon Q in Connect assistant used for assisted service workflows.', 'adaptive-customer-engagement'),
+				eyebrow: __('Connect AI and Lex bots', 'adaptive-customer-engagement'),
+				title: __('Configure the Connect assistant, managed Lex bot, and site knowledge used for assisted service workflows.', 'adaptive-customer-engagement'),
 				description: connectConfigured
-					? __('Choose the live Connect assistant, decide which site signals are shared into Connect, and prepare the future handoff rules from one control surface.', 'adaptive-customer-engagement')
+					? __('Choose the live Connect assistant, manage the Lex chat bot and its site knowledge, and prepare the handoff rules from one control surface.', 'adaptive-customer-engagement')
 					: __('This page becomes available once Amazon Connect is connected so the plugin can read the live assistants for this account and region.', 'adaptive-customer-engagement'),
 				highlights: commonHighlights.concat([
 					{ label: __('Runtime', 'adaptive-customer-engagement'), value: __('Amazon Q in Connect only', 'adaptive-customer-engagement') },
@@ -4631,9 +5032,214 @@ function SettingsView({ section = 'settings', active }) {
 					})
 					: null
 				),
+			connectConfigured && createElement(SettingsPanel, {
+				title: __('Site knowledge base', 'adaptive-customer-engagement'),
+				description: __('Seed a small, editable FAQ-style knowledge base from published site content, then use it to provision or refresh the chat bot from inside WordPress.', 'adaptive-customer-engagement'),
+				tone: 'soft',
+			},
+			createElement(SettingsActionRow, null,
+				createElement(Button, { variant: 'secondary', onClick: seedBotKnowledge, disabled: busy }, __('Seed from latest site content', 'adaptive-customer-engagement')),
+				createElement(Button, { variant: 'secondary', onClick: addBotKnowledgeEntry, disabled: busy || knowledgeEntries.length >= 25 }, __('Add manual entry', 'adaptive-customer-engagement'))
+			),
+			knowledgeEntries.length
+				? createElement('div', { className: 'ace-settings-stack' },
+					knowledgeEntries.map((entry, index) => createElement(SettingsPanel, {
+						key: entry.id || `bot-knowledge-${index}`,
+						title: entry.source_label || sprintf(__('Knowledge entry %d', 'adaptive-customer-engagement'), index + 1),
+						description: entry.url ? entry.url : __('Manually managed entry', 'adaptive-customer-engagement'),
+						tone: 'soft',
+						className: 'ace-settings-subpanel',
+					},
+					createElement(SettingsToggleList, null,
+						createElement(ToggleControl, {
+							label: __('Use this entry when provisioning the Lex bot', 'adaptive-customer-engagement'),
+							checked: !!entry.enabled,
+							onChange: (next) => updateBotKnowledgeEntry(index, { enabled: next }),
+						})
+					),
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(TextControl, {
+							label: __('Question', 'adaptive-customer-engagement'),
+							value: entry.question || '',
+							onChange: (next) => updateBotKnowledgeEntry(index, { question: next }),
+						}),
+						createElement(TextControl, {
+							label: __('Source label', 'adaptive-customer-engagement'),
+							value: entry.source_label || '',
+							onChange: (next) => updateBotKnowledgeEntry(index, { source_label: next }),
+						}),
+					),
+					createElement(TextareaControl, {
+						label: __('Answer', 'adaptive-customer-engagement'),
+						help: __('Keep the answer concise and factual. This text is used as the intent response inside the generated Lex bot.', 'adaptive-customer-engagement'),
+						value: entry.answer || '',
+						onChange: (next) => updateBotKnowledgeEntry(index, { answer: next }),
+					}),
+					createElement(SettingsActionRow, null,
+						createElement(Button, { variant: 'tertiary', onClick: () => removeBotKnowledgeEntry(index), disabled: busy }, __('Remove entry', 'adaptive-customer-engagement'))
+					)))
+				)
+				: createElement(Notice, { status: 'info', isDismissible: false }, __('No bot knowledge entries have been added yet. Seed them from the latest site content or add them manually before creating a Lex bot.', 'adaptive-customer-engagement'))
+			),
+			connectConfigured && !siteBotConnected && createElement(SettingsPanel, {
+				title: __('Create Lex bot from site knowledge', 'adaptive-customer-engagement'),
+				description: __('Open the guided creator to build a new Amazon Connect-ready Lex bot from the site knowledge base while keeping the existing-bot chooser unchanged.', 'adaptive-customer-engagement'),
+				tone: 'soft',
+			},
+			createElement(SettingsResultCard, {
+				items: [
+					{ label: __('Enabled knowledge entries', 'adaptive-customer-engagement'), value: `${enabledKnowledgeEntries.length}` },
+					{ label: __('Locale', 'adaptive-customer-engagement'), value: inferredLexBotLocale },
+					{ label: __('Role handling', 'adaptive-customer-engagement'), value: inferredLexRoleSummary },
+					{ label: __('Alias', 'adaptive-customer-engagement'), value: __('WebsiteChat', 'adaptive-customer-engagement') },
+				],
+			}),
+			createElement(Notice, { status: storedLexRoleArn && isServiceLinkedLexRoleArn(storedLexRoleArn) ? 'warning' : 'info', isDismissible: false },
+				storedLexRoleArn && isServiceLinkedLexRoleArn(storedLexRoleArn)
+					? __('A saved service-linked Lex role will be ignored here. The plugin will prepare a dedicated Lex bot role automatically instead.', 'adaptive-customer-engagement')
+					: __('The creator now hides AWS values the plugin can infer from your saved Connect credentials and setup. You only need to provide the bot details that are specific to this site assistant.', 'adaptive-customer-engagement')
+			),
+			createElement(SettingsActionRow, null,
+				createElement(Button, { variant: 'primary', onClick: openLexBotCreateModal, disabled: busy || !enabledKnowledgeEntries.length }, __('Open Lex bot creator', 'adaptive-customer-engagement'))
+			),
+			createElement(Notice, { status: 'info', isDismissible: false }, __('The guided creator will provision the bot, locale, version, alias, Connect tags, Connect association, and website chat flow automatically.', 'adaptive-customer-engagement'))
+			),
+			connectConfigured && createElement(SettingsPanel, {
+				title: __('Conversational bot', 'adaptive-customer-engagement'),
+				description: siteBotConnected
+					? __('The frontend chat should use a single Amazon Connect bot with your site context. Disconnect it if you need to reconnect a different existing Connect bot or create a replacement.', 'adaptive-customer-engagement')
+					: __('Reconnect one of the bots already associated with Amazon Connect, or create a fresh site bot from the knowledge base below.', 'adaptive-customer-engagement'),
+				tone: 'soft',
+			},
+			lexBotData?.error
+				? createElement(Notice, { status: 'warning', isDismissible: false }, lexBotData.error)
+				: null,
+			siteBotConnected
+				? createElement(
+					Fragment,
+					null,
+					createElement(SettingsResultCard, {
+						items: [
+							{ label: __('Connected bots in Amazon Connect', 'adaptive-customer-engagement'), value: `${lexBotData?.connected_count || 0}` },
+							{ label: __('Bot name', 'adaptive-customer-engagement'), value: selectedLexBot?.botName || '—' },
+							{ label: __('Bot status', 'adaptive-customer-engagement'), value: selectedLexBot?.botStatus || '—' },
+							{ label: __('Selected alias', 'adaptive-customer-engagement'), value: selectedLexAlias?.botAliasName || settings.amazon_connect.lex_bot_alias_id || '—' },
+							{ label: __('Selected locale', 'adaptive-customer-engagement'), value: selectedLexLocale?.localeId || settings.amazon_connect.lex_bot_locale_id || '—' },
+							{ label: __('Preferred intent', 'adaptive-customer-engagement'), value: selectedLexIntent?.intentName || settings.amazon_connect.lex_bot_intent_name || '—' },
+						],
+					}),
+					createElement(SettingsActionRow, null,
+						createElement(Button, { variant: 'secondary', onClick: disconnectLexBot, disabled: busy }, __('Disconnect site bot', 'adaptive-customer-engagement')),
+						createElement(Button, { variant: 'secondary', onClick: cleanupLexBots, disabled: busy || !(settings.amazon_connect.lex_bot_id || '').trim() }, __('Remove other Amazon Connect bots', 'adaptive-customer-engagement'))
+					),
+					!settings.amazon_connect?.chat_contact_flow_id
+						? createElement(Notice, { status: 'warning', isDismissible: false }, __('This bot is connected, but no website chat flow is selected yet. Create a “Website chat via connected bot” flow below or recreate the bot to let the plugin wire that up automatically.', 'adaptive-customer-engagement'))
+						: null,
+					createElement(Notice, { status: 'info', isDismissible: false }, __('This connected view is limited to bots already associated with Amazon Connect. Disconnect the site bot before reconnecting another existing bot or creating a replacement.', 'adaptive-customer-engagement'))
+				)
+				: createElement(
+					Fragment,
+					null,
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(SelectControl, {
+							label: __('Amazon Connect bot', 'adaptive-customer-engagement'),
+							value: settings.amazon_connect.lex_bot_id || '',
+							options: lexBotOptions,
+							onChange: async (next) => {
+								const response = await refreshLexBotData(next, settings.amazon_connect.lex_bot_locale_id || '');
+								const firstAlias = response?.aliases?.[0]?.botAliasId || '';
+								const preferredLocale = response?.selected?.locale_id || response?.locales?.[0]?.localeId || '';
+								const preferredIntent = response?.selected?.intent_name || response?.intents?.[0]?.intentName || '';
+								setAmazonConnect({
+									lex_bot_id: next,
+									lex_bot_alias_id: next ? (response?.selected?.alias_id || firstAlias) : '',
+									lex_bot_locale_id: next ? preferredLocale : '',
+									lex_bot_intent_name: next ? preferredIntent : '',
+									lex_bot_console_url: next ? (response?.console_url || response?.selected?.console_url || '') : '',
+								});
+							},
+						}),
+						createElement(SelectControl, {
+							label: __('Bot alias', 'adaptive-customer-engagement'),
+							value: settings.amazon_connect.lex_bot_alias_id || '',
+							options: lexAliasOptions,
+							onChange: (next) => setAmazonConnect({ lex_bot_alias_id: next }),
+						}),
+						createElement(SelectControl, {
+							label: __('Bot locale', 'adaptive-customer-engagement'),
+							value: settings.amazon_connect.lex_bot_locale_id || '',
+							options: lexLocaleOptions,
+							onChange: async (next) => {
+								const response = await refreshLexBotData(settings.amazon_connect.lex_bot_id || '', next);
+								setAmazonConnect({
+									lex_bot_locale_id: next,
+									lex_bot_intent_name: response?.selected?.intent_name || settings.amazon_connect.lex_bot_intent_name || '',
+									lex_bot_console_url: response?.console_url || response?.selected?.console_url || '',
+								});
+							},
+						}),
+						createElement(SelectControl, {
+							label: __('Preferred Lex intent', 'adaptive-customer-engagement'),
+							value: settings.amazon_connect.lex_bot_intent_name || '',
+							options: lexIntentOptions,
+							onChange: (next) => {
+								const locale = settings.amazon_connect.lex_bot_locale_id || '';
+								const botId = settings.amazon_connect.lex_bot_id || '';
+								const baseUrl = settings.amazon_connect.instance_url || '';
+								const originMatch = baseUrl.match(/^https?:\/\/[^/]+/i);
+								const origin = originMatch ? originMatch[0] : '';
+								const consoleUrl = botId && origin
+									? `${origin}/bots/configuration/${encodeURIComponent(botId)}${locale ? `/locale/${encodeURIComponent(locale)}` : ''}${next ? `/intent/${encodeURIComponent(next)}` : ''}`
+									: '';
+								setAmazonConnect({
+									lex_bot_intent_name: next,
+									lex_bot_console_url: consoleUrl || '',
+								});
+							},
+						}),
+						createElement(TextControl, {
+							label: __('Connect bot console URL', 'adaptive-customer-engagement'),
+							value: settings.amazon_connect.lex_bot_console_url || '',
+							onChange: (next) => setAmazonConnect({ lex_bot_console_url: next }),
+						}),
+					),
+					createElement(SettingsActionRow, null,
+						createElement(Button, { variant: 'primary', onClick: connectExistingLexBot, disabled: busy || !(settings.amazon_connect.lex_bot_id || '').trim() }, __('Reconnect selected Amazon Connect bot', 'adaptive-customer-engagement'))
+					),
+					((lexBotData?.items || []).length)
+						? createElement(Notice, { status: 'info', isDismissible: false }, __('Only bots already associated with Amazon Connect are listed here. Raw Lex bots that sit outside Connect are intentionally hidden.', 'adaptive-customer-engagement'))
+						: createElement(Notice, { status: 'info', isDismissible: false }, __('No Amazon Connect bots are currently associated with this instance. Create the site bot below to provision one from WordPress.', 'adaptive-customer-engagement'))
+				),
+			selectedLexBot && !siteBotConnected
+				? createElement(SettingsResultCard, {
+					items: [
+						{ label: __('Bot name', 'adaptive-customer-engagement'), value: selectedLexBot.botName || '—' },
+						{ label: __('Bot status', 'adaptive-customer-engagement'), value: selectedLexBot.botStatus || '—' },
+						{ label: __('Selected alias', 'adaptive-customer-engagement'), value: selectedLexAlias?.botAliasName || settings.amazon_connect.lex_bot_alias_id || '—' },
+						{ label: __('Selected locale', 'adaptive-customer-engagement'), value: selectedLexLocale?.localeId || settings.amazon_connect.lex_bot_locale_id || '—' },
+						{ label: __('Preferred intent', 'adaptive-customer-engagement'), value: selectedLexIntent?.intentName || settings.amazon_connect.lex_bot_intent_name || '—' },
+					],
+				})
+				: null,
+			createElement(Notice, { status: 'info', isDismissible: false }, __('Important: the hosted website widget still starts through an Amazon Connect chat flow. The Lex bot sits inside that Connect flow, rather than replacing the flow entirely.', 'adaptive-customer-engagement'))
+			),
+			connectConfigured && aiEnabled && createElement(SettingsPanel, {
+				title: __('Live site knowledge runtime', 'adaptive-customer-engagement'),
+				description: __('Use the built-in WordPress endpoints below when the chat bot needs current products, pages, and posts instead of pre-generated FAQ intents.', 'adaptive-customer-engagement'),
+				tone: 'soft',
+			},
+			createElement(SettingsFieldGrid, { compact: true },
+				createElement(TextControl, { label: __('Answer endpoint', 'adaptive-customer-engagement'), value: chatApiEndpoint, disabled: true }),
+				createElement(TextControl, { label: __('Search endpoint', 'adaptive-customer-engagement'), value: siteSearchApiEndpoint, disabled: true }),
+				createElement(TextControl, { label: __('Document endpoint base', 'adaptive-customer-engagement'), value: siteDocumentApiEndpointBase, disabled: true }),
+			),
+			createElement(Notice, { status: settings.amazon_connect.webhook_secret ? 'success' : 'warning', isDismissible: false }, settings.amazon_connect.webhook_secret
+				? __('These endpoints read live published WordPress content. Use the saved webhook secret in the X-ACE-Webhook-Secret header when the bot runtime calls them.', 'adaptive-customer-engagement')
+				: __('These endpoints stay locked until you save a webhook secret on the Amazon Connect settings screen.', 'adaptive-customer-engagement'))
+			),
 			connectConfigured && aiEnabled && createElement(SettingsPanel, {
 				title: __('Frontend test chat', 'adaptive-customer-engagement'),
-				description: __('Embed the Amazon Connect chat widget on the frontend for logged-in admin testing so the sitewide assistant can be exercised without exposing the test widget to visitors.', 'adaptive-customer-engagement'),
+				description: __('Embed the Amazon Connect chat widget on the frontend for logged-in admin testing so the sitewide assistant and any linked Lex-backed chat flow can be exercised without exposing the test widget to visitors.', 'adaptive-customer-engagement'),
 				tone: 'soft',
 			},
 			createElement(SettingsToggleList, null,
@@ -4641,23 +5247,15 @@ function SettingsView({ section = 'settings', active }) {
 				createElement(ToggleControl, { label: __('Restrict frontend test chat to logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_test_admin_only, onChange: (next) => setAiAgent({ frontend_test_admin_only: next }) })
 			),
 			settings.ai_agent.frontend_test_enabled
-				? createElement(Fragment, null,
-					createElement(TextareaControl, {
-						label: __('Hosted widget snippet', 'adaptive-customer-engagement'),
-						help: __('Paste the full Amazon Connect communications widget snippet here and the plugin will extract the script URL, widget ID, and snippet ID for you.', 'adaptive-customer-engagement'),
-						value: widgetSnippetDraft,
-						onChange: applyWidgetSnippet,
-					}),
-					createElement(SettingsFieldGrid, { compact: true },
-						createElement(TextControl, { label: __('Widget script URL', 'adaptive-customer-engagement'), help: __('This can be filled automatically from the pasted widget snippet.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_script_url || '', onChange: (next) => setAmazonConnect({ chat_widget_script_url: next }) }),
-						createElement(TextControl, { label: __('Widget ID', 'adaptive-customer-engagement'), help: __('This is the widget ID used in the snippet and for secured JWT chat requests.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_id || '', onChange: (next) => setAmazonConnect({ chat_widget_id: next }) }),
-						createElement(TextControl, { label: __('Widget snippet ID', 'adaptive-customer-engagement'), help: __('This can be filled automatically from the pasted widget snippet.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_snippet_id || '', onChange: (next) => setAmazonConnect({ chat_widget_snippet_id: next }) }),
-						createElement(TextControl, { label: __('Widget security key', 'adaptive-customer-engagement'), type: 'password', help: __('Optional, but needed if the Connect widget was configured with JWT security. The plugin will use it server-side to issue chat tokens.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_security_key || '', onChange: (next) => setAmazonConnect({ chat_widget_security_key: next }) }),
-						createElement(TextControl, { label: __('Amazon Connect instance URL', 'adaptive-customer-engagement'), help: __('The plugin can now use this access URL, together with the saved AWS keys, to backfill the matching Connect instance details on save. It is not used to load the hosted website widget.', 'adaptive-customer-engagement'), value: settings.amazon_connect.instance_url || '', onChange: (next) => setAmazonConnect({ instance_url: next }) }),
-					)
+				? createElement(SettingsFieldGrid, { compact: true },
+					createElement(TextControl, { label: __('Widget script URL', 'adaptive-customer-engagement'), help: __('Use the Amazon Connect hosted widget client URL for this instance.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_script_url || '', onChange: (next) => setAmazonConnect({ chat_widget_script_url: next }) }),
+					createElement(TextControl, { label: __('Widget ID', 'adaptive-customer-engagement'), help: __('This widget ID is used by the hosted chat client and the secured JWT token flow.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_id || '', onChange: (next) => setAmazonConnect({ chat_widget_id: next }) }),
+					createElement(TextControl, { label: __('Widget snippet ID', 'adaptive-customer-engagement'), help: __('Use the hosted widget snippet ID from Amazon Connect.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_snippet_id || '', onChange: (next) => setAmazonConnect({ chat_widget_snippet_id: next }) }),
+					createElement(TextControl, { label: __('Widget security key', 'adaptive-customer-engagement'), type: 'password', help: __('Needed when the hosted widget uses JWT security. The plugin uses it server-side to issue chat tokens.', 'adaptive-customer-engagement'), value: settings.amazon_connect.chat_widget_security_key || '', onChange: (next) => setAmazonConnect({ chat_widget_security_key: next }) }),
+					createElement(TextControl, { label: __('Amazon Connect instance URL', 'adaptive-customer-engagement'), help: __('The plugin can use this access URL, together with the saved AWS keys, to backfill the matching Connect instance details on save. It is not used to load the hosted website widget.', 'adaptive-customer-engagement'), value: settings.amazon_connect.instance_url || '', onChange: (next) => setAmazonConnect({ instance_url: next }) }),
 				)
 				: createElement(Notice, { status: 'info', isDismissible: false }, __('Turn on the frontend test chat when you are ready to load the Amazon Connect chat widget on the frontend for admin testing.', 'adaptive-customer-engagement')),
-			createElement(Notice, { status: 'info', isDismissible: false }, __('Amazon Q in Connect is not itself the website widget. This test mode uses the hosted Amazon Connect communications widget snippet, auto-launches it for admins, and keeps it fixed at the bottom left for live testing.', 'adaptive-customer-engagement'))
+			createElement(Notice, { status: 'info', isDismissible: false }, __('Amazon Q in Connect is not itself the website widget. This test mode uses the hosted Amazon Connect communications widget snippet, while any live Lex bot behaviour still needs to be wired into the Connect chat flow behind that widget.', 'adaptive-customer-engagement'))
 			),
 			connectConfigured && aiEnabled && createElement(SettingsPanel, {
 				title: __('Context shared into Connect', 'adaptive-customer-engagement'),
@@ -4719,8 +5317,110 @@ function SettingsView({ section = 'settings', active }) {
 	return createElement(
 		Fragment,
 		null,
-		notice && createElement(Notice, { status: 'success', isDismissible: true, onRemove: () => setNotice(null) }, notice),
+		resolvedNotice && createElement(Notice, { status: resolvedNotice.status || 'info', isDismissible: true, onRemove: () => setNotice(null) }, resolvedNotice.message),
+		isLexBotCreateModalOpen && createElement(
+			Modal,
+			{
+				title: __('Create Amazon Lex bot', 'adaptive-customer-engagement'),
+				onRequestClose: closeLexBotCreateModal,
+				shouldCloseOnClickOutside: !busy,
+			},
+			lexBotCreateResult
+				? createElement(
+					Fragment,
+					null,
+					createElement(Notice, { status: 'success', isDismissible: false }, lexBotCreateResult.message || __('Amazon Lex bot created.', 'adaptive-customer-engagement')),
+					createElement(SettingsResultCard, {
+						items: [
+							{ label: __('Bot', 'adaptive-customer-engagement'), value: lexBotCreateResult?.item?.botName || lexBotCreateResult?.item?.botId || '—' },
+							{ label: __('Locale', 'adaptive-customer-engagement'), value: lexBotCreateResult?.inferred?.locale_id || inferredLexBotLocale },
+							{ label: __('Alias', 'adaptive-customer-engagement'), value: lexBotCreateResult?.published_alias?.botAliasName || lexBotCreateResult?.inferred?.alias_name || 'WebsiteChat' },
+							{ label: __('Role handling', 'adaptive-customer-engagement'), value: lexBotCreateResult?.inferred?.role_source === 'saved'
+								? __('Used saved dedicated role', 'adaptive-customer-engagement')
+								: lexBotCreateResult?.inferred?.role_source === 'provided'
+									? __('Used provided dedicated role', 'adaptive-customer-engagement')
+									: __('Prepared a dedicated role automatically', 'adaptive-customer-engagement') },
+						],
+					}),
+					Array.isArray(lexBotCreateResult?.creation_checks) && lexBotCreateResult.creation_checks.length
+						? createElement('ul', { className: 'ace-settings-list' },
+							lexBotCreateResult.creation_checks.map((check) => createElement('li', { key: check.key },
+								`${check.label}: ${check.value || (check.status === 'complete' ? __('Done', 'adaptive-customer-engagement') : check.status)}`
+							))
+						)
+						: null,
+					createElement(SettingsActionRow, null,
+						createElement(Button, { variant: 'primary', onClick: closeLexBotCreateModal, disabled: busy }, __('Done', 'adaptive-customer-engagement'))
+					)
+				)
+				: createElement(
+					Fragment,
+					null,
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(TextControl, {
+							label: __('Bot name', 'adaptive-customer-engagement'),
+							help: __('Letters, numbers, hyphens, and underscores only. The plugin will clean this up for Lex automatically if needed.', 'adaptive-customer-engagement'),
+							value: lexBotDraft.name,
+							onChange: (next) => setLexBotDraft({ ...lexBotDraft, name: next }),
+						}),
+					),
+					createElement(TextareaControl, {
+						label: __('Bot description', 'adaptive-customer-engagement'),
+						value: lexBotDraft.description,
+						onChange: (next) => setLexBotDraft({ ...lexBotDraft, description: next }),
+					}),
+					createElement(SettingsToggleList, null,
+						createElement(ToggleControl, {
+							label: __('Link the new bot into the saved plugin settings after creation', 'adaptive-customer-engagement'),
+							checked: !!lexBotDraft.link_to_settings,
+							onChange: (next) => setLexBotDraft({ ...lexBotDraft, link_to_settings: next }),
+						})
+					),
+					createElement(SettingsResultCard, {
+						items: [
+							{ label: __('Enabled knowledge entries', 'adaptive-customer-engagement'), value: `${enabledKnowledgeEntries.length}` },
+							{ label: __('Locale', 'adaptive-customer-engagement'), value: inferredLexBotLocale },
+							{ label: __('Role handling', 'adaptive-customer-engagement'), value: inferredLexRoleSummary },
+							{ label: __('Alias', 'adaptive-customer-engagement'), value: __('WebsiteChat', 'adaptive-customer-engagement') },
+						],
+					}),
+					createElement(Notice, { status: 'info', isDismissible: false }, __('Adaptive Customer Engagement will automatically handle the locale build, version publishing, Connect tags, Connect association, and website chat flow creation for this bot.', 'adaptive-customer-engagement')),
+					createElement(SettingsActionRow, null,
+						createElement(Button, { variant: 'tertiary', onClick: closeLexBotCreateModal, disabled: busy }, __('Cancel', 'adaptive-customer-engagement')),
+						createElement(Button, { variant: 'primary', onClick: createLexBot, disabled: busy || !canCreateLexBot }, __('Create Amazon Lex bot', 'adaptive-customer-engagement'))
+					)
+				)
+		),
 		sections[section] || sections.settings,
+		createElement(SettingsPanel, {
+			title: __('Settings import and export', 'adaptive-customer-engagement'),
+			description: __('Download or restore plugin configuration only. This does not include sample data, tracked sessions, companies, calls, or reporting history.', 'adaptive-customer-engagement'),
+			tone: 'soft',
+		},
+		createElement(SettingsFieldGrid, { compact: true },
+			createElement(
+				'div',
+				null,
+				createElement('label', { className: 'components-base-control__label', htmlFor: `ace-settings-import-${section}` }, __('Import settings file', 'adaptive-customer-engagement')),
+				createElement('input', {
+					key: settingsImportInputKey,
+					id: `ace-settings-import-${section}`,
+					type: 'file',
+					accept: 'application/json,.json',
+					onChange: handleSettingsImportSelection,
+					disabled: busy,
+				}),
+				createElement('p', { className: 'components-base-control__help' }, settingsImportName
+					? sprintf(__('Selected file: %s', 'adaptive-customer-engagement'), settingsImportName)
+					: __('Choose a previously exported JSON settings file.', 'adaptive-customer-engagement'))
+			)
+		),
+		createElement(SettingsActionRow, null,
+			createElement(Button, { variant: 'secondary', onClick: exportSettingsConfig, disabled: busy }, __('Export settings', 'adaptive-customer-engagement')),
+			createElement(Button, { variant: 'primary', onClick: importSettingsConfig, disabled: busy || !settingsImportFile }, __('Import settings', 'adaptive-customer-engagement'))
+		),
+		createElement(Notice, { status: 'info', isDismissible: false }, __('Secrets such as AWS keys, widget security keys, webhook secrets, and the current plugin configuration are included in the export so you can move the setup between environments.', 'adaptive-customer-engagement'))
+		),
 		createElement(
 			'div',
 			{ className: 'ace-admin-settings-savebar' },

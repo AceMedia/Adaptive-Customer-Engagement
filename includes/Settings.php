@@ -55,6 +55,15 @@ final class Settings {
 				'region'                  => 'eu-west-2',
 				'instance_id'             => '',
 				'instance_url'            => '',
+				'lex_bot_console_url'     => '',
+				'lex_bot_role_arn'        => '',
+				'lex_runtime_role_arn'    => '',
+				'lex_runtime_lambda_name' => '',
+				'lex_runtime_lambda_arn'  => '',
+				'lex_bot_id'              => '',
+				'lex_bot_alias_id'        => '',
+				'lex_bot_locale_id'       => 'en_GB',
+				'lex_bot_intent_name'     => '',
 				'chat_widget_script_url'  => '',
 				'chat_widget_id'          => '',
 				'chat_widget_snippet_id'  => '',
@@ -87,6 +96,7 @@ final class Settings {
 				'context_instructions'       => '',
 				'frontend_test_enabled'      => false,
 				'frontend_test_admin_only'   => true,
+				'bot_knowledge_entries'      => array(),
 				'allowed_tools'              => array(),
 				'guardrails'                 => array(),
 			),
@@ -285,6 +295,15 @@ final class Settings {
 				'region'                  => sanitize_text_field( $amazon_connect['region'] ?? $defaults['amazon_connect']['region'] ),
 				'instance_id'             => sanitize_text_field( $amazon_connect['instance_id'] ?? $defaults['amazon_connect']['instance_id'] ),
 				'instance_url'            => esc_url_raw( $amazon_connect['instance_url'] ?? $defaults['amazon_connect']['instance_url'] ),
+				'lex_bot_console_url'     => esc_url_raw( $amazon_connect['lex_bot_console_url'] ?? $defaults['amazon_connect']['lex_bot_console_url'] ),
+				'lex_bot_role_arn'        => sanitize_text_field( $amazon_connect['lex_bot_role_arn'] ?? $defaults['amazon_connect']['lex_bot_role_arn'] ),
+				'lex_runtime_role_arn'    => sanitize_text_field( $amazon_connect['lex_runtime_role_arn'] ?? $defaults['amazon_connect']['lex_runtime_role_arn'] ),
+				'lex_runtime_lambda_name' => sanitize_text_field( $amazon_connect['lex_runtime_lambda_name'] ?? $defaults['amazon_connect']['lex_runtime_lambda_name'] ),
+				'lex_runtime_lambda_arn'  => sanitize_text_field( $amazon_connect['lex_runtime_lambda_arn'] ?? $defaults['amazon_connect']['lex_runtime_lambda_arn'] ),
+				'lex_bot_id'              => sanitize_text_field( $amazon_connect['lex_bot_id'] ?? $defaults['amazon_connect']['lex_bot_id'] ),
+				'lex_bot_alias_id'        => sanitize_text_field( $amazon_connect['lex_bot_alias_id'] ?? $defaults['amazon_connect']['lex_bot_alias_id'] ),
+				'lex_bot_locale_id'       => sanitize_text_field( $amazon_connect['lex_bot_locale_id'] ?? $defaults['amazon_connect']['lex_bot_locale_id'] ),
+				'lex_bot_intent_name'     => sanitize_text_field( $amazon_connect['lex_bot_intent_name'] ?? $defaults['amazon_connect']['lex_bot_intent_name'] ),
 				'chat_widget_script_url'  => esc_url_raw( $amazon_connect['chat_widget_script_url'] ?? $defaults['amazon_connect']['chat_widget_script_url'] ),
 				'chat_widget_id'          => sanitize_text_field( $amazon_connect['chat_widget_id'] ?? $defaults['amazon_connect']['chat_widget_id'] ),
 				'chat_widget_snippet_id'  => sanitize_text_field( $amazon_connect['chat_widget_snippet_id'] ?? $defaults['amazon_connect']['chat_widget_snippet_id'] ),
@@ -317,6 +336,9 @@ final class Settings {
 				'context_instructions'      => sanitize_textarea_field( $ai_agent['context_instructions'] ?? $defaults['ai_agent']['context_instructions'] ),
 				'frontend_test_enabled'     => rest_sanitize_boolean( $ai_agent['frontend_test_enabled'] ?? $defaults['ai_agent']['frontend_test_enabled'] ),
 				'frontend_test_admin_only'  => rest_sanitize_boolean( $ai_agent['frontend_test_admin_only'] ?? $defaults['ai_agent']['frontend_test_admin_only'] ),
+				'bot_knowledge_entries'     => self::sanitize_bot_knowledge_entries(
+					is_array( $ai_agent['bot_knowledge_entries'] ?? null ) ? $ai_agent['bot_knowledge_entries'] : $defaults['ai_agent']['bot_knowledge_entries']
+				),
 				'allowed_tools'             => array_values(
 					array_filter(
 						array_map(
@@ -462,5 +484,45 @@ final class Settings {
 			),
 			'created_at' => sanitize_text_field( (string) ( $segment['created_at'] ?? current_time( 'mysql', true ) ) ),
 		);
+	}
+
+	/**
+	 * Sanitize stored bot knowledge entries.
+	 *
+	 * @param array<int, mixed> $entries Raw entries.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function sanitize_bot_knowledge_entries( array $entries ): array {
+		$sanitized = array();
+
+		foreach ( $entries as $entry ) {
+			if ( ! is_array( $entry ) ) {
+				continue;
+			}
+
+			$question = sanitize_text_field( (string) ( $entry['question'] ?? '' ) );
+			$answer   = sanitize_textarea_field( (string) ( $entry['answer'] ?? '' ) );
+
+			if ( '' === $question || '' === $answer ) {
+				continue;
+			}
+
+			$sanitized[] = array(
+				'id'           => sanitize_text_field( (string) ( $entry['id'] ?? wp_generate_uuid4() ) ),
+				'question'     => $question,
+				'answer'       => $answer,
+				'source_type'  => sanitize_key( (string) ( $entry['source_type'] ?? 'manual' ) ),
+				'source_id'    => absint( $entry['source_id'] ?? 0 ),
+				'source_label' => sanitize_text_field( (string) ( $entry['source_label'] ?? '' ) ),
+				'url'          => esc_url_raw( (string) ( $entry['url'] ?? '' ) ),
+				'enabled'      => ! array_key_exists( 'enabled', $entry ) || rest_sanitize_boolean( $entry['enabled'] ),
+			);
+
+			if ( count( $sanitized ) >= 25 ) {
+				break;
+			}
+		}
+
+		return $sanitized;
 	}
 }
