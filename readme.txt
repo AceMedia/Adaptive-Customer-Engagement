@@ -23,10 +23,10 @@ This first release includes:
 * saved reporting segments and CSV exports across sessions, companies, calls, and WooCommerce reporting
 * WooCommerce repeat-interest reporting for products, categories, sessions, and companies
 * setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, AI, and phone-number management
-* Amazon Connect setup fields for instance details, S3 export location, flow log group, credentials mode, contact flow IDs, hosted widget values, and test-chat setup
+* Amazon Connect setup fields for instance details, S3 export location, flow log group, credentials mode, and default contact flow
+* OpenAI-backed website assistant controls for API key, model, prompts, frontend launcher copy, live site context, and visibility rules
 * live Amazon Connect phone-number visibility in the setup UI, plus search and claim actions for available numbers
 * Amazon Connect call import from S3 exports, plus stored-call matching and import status reporting
-* Amazon Q in Connect assistant visibility and site-assistant creation in the admin UI
 * sample/demo numbers kept visible for admin preview work without taking over live number resolution
 * sample-data seeding for realistic recent local demo activity
 * privacy-aware defaults with hashed IP support, raw IP expiry, admin exclusion, and bot/private-IP filtering
@@ -47,11 +47,11 @@ No. The current release is built around first-party tracking and internal data s
 
 = Does this plugin already include Amazon Connect integration? =
 
-Yes. The plugin already includes Amazon Connect setup, number visibility and claiming, contact flow visibility and creation, Amazon Q in Connect assistant visibility and creation, S3 call import, stored call matching, and an admin-only frontend test-chat path for the hosted Connect widget.
+Yes. The plugin already includes Amazon Connect setup, number visibility and claiming, contact flow visibility and creation, S3 call import, stored call matching, and telephony-focused setup controls. Website chat is now handled separately through the OpenAI-backed AI screen.
 
-= Does the frontend chat widget support secured hosted widgets? =
+= Does the frontend chat widget use OpenAI now? =
 
-Yes. The plugin can now store the hosted widget values, parse the pasted widget snippet, and issue JWT tokens server-side when the Connect widget is configured with a security key.
+Yes. The frontend website assistant is now plugin-managed and uses the saved OpenAI key, model, prompts, and live site context instead of the hosted Amazon Connect widget path.
 
 = Does this support WooCommerce reporting already? =
 

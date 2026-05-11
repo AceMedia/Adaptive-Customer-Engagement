@@ -81,10 +81,15 @@ final class Settings {
 			),
 			'ai_agent'       => array(
 				'enabled'                    => false,
-				'mode'                       => 'off',
-				'provider'                   => 'amazon_q_connect',
+				'mode'                       => 'chat',
+				'provider'                   => 'openai',
 				'assistant_id'               => '',
 				'assistant_arn'              => '',
+				'openai_api_key'             => '',
+				'openai_model'               => 'gpt-4.1-mini',
+				'openai_temperature'         => 0.2,
+				'openai_max_response_tokens' => 700,
+				'system_prompt'              => 'You are the site assistant. Answer clearly and helpfully using the current website content when it is available. If the answer is not clear from the site context, say so plainly rather than guessing.',
 				'handoff_to_human'           => true,
 				'share_session_context'      => true,
 				'share_company_context'      => true,
@@ -94,6 +99,16 @@ final class Settings {
 				'company_summary_attribute'  => 'ace_company_summary',
 				'number_summary_attribute'   => 'ace_number_summary',
 				'context_instructions'       => '',
+				'use_live_site_context'      => true,
+				'show_source_links'          => true,
+				'keep_history'               => true,
+				'max_context_documents'      => 4,
+				'max_history_messages'       => 8,
+				'frontend_chat_enabled'      => false,
+				'frontend_chat_admin_only'   => true,
+				'frontend_chat_title'        => 'Site assistant',
+				'frontend_chat_greeting'     => 'Hello, I am the site assistant. Ask me anything about this website and I will do my best to help.',
+				'frontend_chat_placeholder'  => 'Ask a question about this website',
 				'frontend_test_enabled'      => false,
 				'frontend_test_admin_only'   => true,
 				'bot_knowledge_entries'      => array(),
@@ -251,6 +266,19 @@ final class Settings {
 		$enrichment     = isset( $settings['enrichment'] ) && is_array( $settings['enrichment'] ) ? $settings['enrichment'] : array();
 		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
 		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$provider       = sanitize_key( $ai_agent['provider'] ?? $defaults['ai_agent']['provider'] );
+		$mode           = sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] );
+
+		if ( ! in_array( $provider, array( 'openai' ), true ) ) {
+			$provider = 'openai';
+		}
+
+		if ( ! in_array( $mode, array( 'chat', 'assist', 'off' ), true ) ) {
+			$mode = $defaults['ai_agent']['mode'];
+		}
+
+		$frontend_chat_enabled = $ai_agent['frontend_chat_enabled'] ?? $ai_agent['frontend_test_enabled'] ?? $defaults['ai_agent']['frontend_chat_enabled'];
+		$frontend_chat_admin_only = $ai_agent['frontend_chat_admin_only'] ?? $ai_agent['frontend_test_admin_only'] ?? $defaults['ai_agent']['frontend_chat_admin_only'];
 
 		return array(
 			'enabled'        => rest_sanitize_boolean( $settings['enabled'] ?? $defaults['enabled'] ),
@@ -321,10 +349,15 @@ final class Settings {
 			),
 			'ai_agent'       => array(
 				'enabled'                   => rest_sanitize_boolean( $ai_agent['enabled'] ?? $defaults['ai_agent']['enabled'] ),
-				'mode'                      => sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] ),
-				'provider'                  => 'amazon_q_connect',
+				'mode'                      => $mode,
+				'provider'                  => $provider,
 				'assistant_id'              => sanitize_text_field( $ai_agent['assistant_id'] ?? $defaults['ai_agent']['assistant_id'] ),
 				'assistant_arn'             => sanitize_text_field( $ai_agent['assistant_arn'] ?? $defaults['ai_agent']['assistant_arn'] ),
+				'openai_api_key'            => sanitize_text_field( $ai_agent['openai_api_key'] ?? $defaults['ai_agent']['openai_api_key'] ),
+				'openai_model'              => sanitize_text_field( $ai_agent['openai_model'] ?? $defaults['ai_agent']['openai_model'] ),
+				'openai_temperature'        => max( 0, min( 2, (float) ( $ai_agent['openai_temperature'] ?? $defaults['ai_agent']['openai_temperature'] ) ) ),
+				'openai_max_response_tokens'=> max( 200, min( 4000, absint( $ai_agent['openai_max_response_tokens'] ?? $defaults['ai_agent']['openai_max_response_tokens'] ) ) ),
+				'system_prompt'             => sanitize_textarea_field( $ai_agent['system_prompt'] ?? $defaults['ai_agent']['system_prompt'] ),
 				'handoff_to_human'          => rest_sanitize_boolean( $ai_agent['handoff_to_human'] ?? $defaults['ai_agent']['handoff_to_human'] ),
 				'share_session_context'     => rest_sanitize_boolean( $ai_agent['share_session_context'] ?? $defaults['ai_agent']['share_session_context'] ),
 				'share_company_context'     => rest_sanitize_boolean( $ai_agent['share_company_context'] ?? $defaults['ai_agent']['share_company_context'] ),
@@ -334,6 +367,16 @@ final class Settings {
 				'company_summary_attribute' => sanitize_key( $ai_agent['company_summary_attribute'] ?? $defaults['ai_agent']['company_summary_attribute'] ),
 				'number_summary_attribute'  => sanitize_key( $ai_agent['number_summary_attribute'] ?? $defaults['ai_agent']['number_summary_attribute'] ),
 				'context_instructions'      => sanitize_textarea_field( $ai_agent['context_instructions'] ?? $defaults['ai_agent']['context_instructions'] ),
+				'use_live_site_context'     => rest_sanitize_boolean( $ai_agent['use_live_site_context'] ?? $defaults['ai_agent']['use_live_site_context'] ),
+				'show_source_links'         => rest_sanitize_boolean( $ai_agent['show_source_links'] ?? $defaults['ai_agent']['show_source_links'] ),
+				'keep_history'              => rest_sanitize_boolean( $ai_agent['keep_history'] ?? $defaults['ai_agent']['keep_history'] ),
+				'max_context_documents'     => max( 1, min( 8, absint( $ai_agent['max_context_documents'] ?? $defaults['ai_agent']['max_context_documents'] ) ) ),
+				'max_history_messages'      => max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? $defaults['ai_agent']['max_history_messages'] ) ) ),
+				'frontend_chat_enabled'     => rest_sanitize_boolean( $frontend_chat_enabled ),
+				'frontend_chat_admin_only'  => rest_sanitize_boolean( $frontend_chat_admin_only ),
+				'frontend_chat_title'       => sanitize_text_field( $ai_agent['frontend_chat_title'] ?? $defaults['ai_agent']['frontend_chat_title'] ),
+				'frontend_chat_greeting'    => sanitize_textarea_field( $ai_agent['frontend_chat_greeting'] ?? $defaults['ai_agent']['frontend_chat_greeting'] ),
+				'frontend_chat_placeholder' => sanitize_text_field( $ai_agent['frontend_chat_placeholder'] ?? $defaults['ai_agent']['frontend_chat_placeholder'] ),
 				'frontend_test_enabled'     => rest_sanitize_boolean( $ai_agent['frontend_test_enabled'] ?? $defaults['ai_agent']['frontend_test_enabled'] ),
 				'frontend_test_admin_only'  => rest_sanitize_boolean( $ai_agent['frontend_test_admin_only'] ?? $defaults['ai_agent']['frontend_test_admin_only'] ),
 				'bot_knowledge_entries'     => self::sanitize_bot_knowledge_entries(

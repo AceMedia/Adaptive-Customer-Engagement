@@ -288,26 +288,6 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
-			'/chat-widget/token',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => '__return_true',
-				'callback'            => array( $this, 'create_connect_widget_token' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/chat-widget/start',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => '__return_true',
-				'callback'            => array( $this, 'start_connect_widget_chat' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
 			'/admin/connect-readiness',
 			array(
 				'methods'             => 'GET',
@@ -323,70 +303,6 @@ final class AdminController {
 				'methods'             => 'GET',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'connect_resources' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/admin/connect/assistants',
-			array(
-				array(
-					'methods'             => 'GET',
-					'permission_callback' => array( $this, 'can_manage' ),
-					'callback'            => array( $this, 'connect_assistants' ),
-				),
-				array(
-					'methods'             => 'POST',
-					'permission_callback' => array( $this, 'can_manage' ),
-					'callback'            => array( $this, 'create_connect_assistant' ),
-				),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/admin/connect/lex-bots',
-			array(
-				array(
-					'methods'             => 'GET',
-					'permission_callback' => array( $this, 'can_manage' ),
-					'callback'            => array( $this, 'connect_lex_bots' ),
-				),
-				array(
-					'methods'             => 'POST',
-					'permission_callback' => array( $this, 'can_manage' ),
-					'callback'            => array( $this, 'create_connect_lex_bot' ),
-				),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/admin/connect/lex-bots/disconnect',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
-				'callback'            => array( $this, 'disconnect_connect_lex_bot' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/admin/connect/lex-bots/cleanup',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
-				'callback'            => array( $this, 'cleanup_connect_lex_bots' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/admin/connect/bot-knowledge/seed',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
-				'callback'            => array( $this, 'seed_connect_bot_knowledge' ),
 			)
 		);
 

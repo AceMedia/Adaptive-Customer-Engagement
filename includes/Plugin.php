@@ -7,6 +7,8 @@
 
 namespace ACE\AdaptiveCustomerEngagement;
 
+use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
+use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
@@ -75,6 +77,7 @@ final class Plugin {
 		$menu               = new Menu();
 		$sample_data        = new SampleDataSeeder();
 		$connect_client     = new AmazonConnectClient();
+		$site_context       = new SiteContextService();
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
 			new EventLogger( $event_repository ),
@@ -83,7 +86,8 @@ final class Plugin {
 			$privacy,
 			new BotDetector(),
 			$enrichment_service,
-			new SiteContextService()
+			$site_context,
+			new FrontendChatService( new OpenAIClient(), $site_context )
 		);
 		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $privacy, $enrichment_service, $sample_data, $connect_client );
 		
@@ -115,11 +119,11 @@ final class Plugin {
 	 * @return void
 	 */
 	public function enqueue_frontend_assets(): void {
-		$settings = Settings::get();
+		$settings    = Settings::get();
 		$woo_context = new WooCommerceContext();
-		$connect_chat = $this->get_frontend_connect_chat_config( $settings );
+		$ai_chat     = $this->get_frontend_ai_chat_config( $settings );
 
-		if ( empty( $settings['enabled'] ) && empty( $connect_chat['enabled'] ) ) {
+		if ( empty( $settings['enabled'] ) && empty( $ai_chat['enabled'] ) ) {
 			return;
 		}
 
@@ -140,7 +144,7 @@ final class Plugin {
 					'enabled'   => (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
 					'page'      => $woo_context->get_frontend_context(),
-					'connectChat' => $connect_chat,
+					'aiChat'    => $ai_chat,
 				)
 			),
 			'before'
@@ -148,32 +152,33 @@ final class Plugin {
 	}
 
 	/**
-	 * Build frontend Connect chat test-widget config.
+	 * Build frontend AI chat config.
 	 *
 	 * @param array<string, mixed> $settings Plugin settings.
 	 * @return array<string, mixed>
 	 */
-	private function get_frontend_connect_chat_config( array $settings ): array {
-		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
-		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
-		$admin_only     = ! empty( $ai_agent['frontend_test_admin_only'] );
-		$can_view       = ! $admin_only || current_user_can( Capabilities::MANAGE );
-		$enabled        = ! empty( $ai_agent['enabled'] )
-			&& ! empty( $ai_agent['frontend_test_enabled'] )
-			&& ! empty( $amazon_connect['chat_widget_script_url'] )
-			&& ! empty( $amazon_connect['chat_widget_snippet_id'] )
+	private function get_frontend_ai_chat_config( array $settings ): array {
+		$ai_agent   = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
+		$admin_only = ! empty( $ai_agent['frontend_chat_admin_only'] );
+		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE );
+		$enabled    = ! empty( $ai_agent['enabled'] )
+			&& ! empty( $ai_agent['frontend_chat_enabled'] )
+			&& ! empty( $ai_agent['openai_api_key'] )
 			&& $can_view;
 
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
-			'scriptUrl'         => esc_url_raw( (string) ( $amazon_connect['chat_widget_script_url'] ?? '' ) ),
-			'widgetId'          => sanitize_text_field( (string) ( $amazon_connect['chat_widget_id'] ?? '' ) ),
-			'snippetId'         => sanitize_text_field( (string) ( $amazon_connect['chat_widget_snippet_id'] ?? '' ) ),
-			'chatFlowId'        => sanitize_text_field( (string) ( $amazon_connect['chat_contact_flow_id'] ?? '' ) ),
-			'useCustomStartChat'=> ! empty( $amazon_connect['chat_contact_flow_id'] ) && ! empty( $amazon_connect['instance_id'] ),
-			'securityEnabled' => ! empty( $amazon_connect['chat_widget_security_key'] ),
-			'region'            => sanitize_text_field( (string) ( $amazon_connect['region'] ?? '' ) ),
+			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
+			'title'             => sanitize_text_field( (string) ( $ai_agent['frontend_chat_title'] ?? '' ) ),
+			'greeting'          => sanitize_textarea_field( (string) ( $ai_agent['frontend_chat_greeting'] ?? '' ) ),
+			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),
+			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
+			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),
+			'maxHistoryMessages'=> max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? 8 ) ) ),
+			'provider'          => sanitize_key( (string) ( $ai_agent['provider'] ?? 'openai' ) ),
+			'model'             => sanitize_text_field( (string) ( $ai_agent['openai_model'] ?? '' ) ),
+			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),
 		);
 	}
 }

@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
@@ -88,6 +89,13 @@ final class TrackingController {
 	private $site_context;
 
 	/**
+	 * Frontend AI chat service.
+	 *
+	 * @var FrontendChatService
+	 */
+	private $frontend_chat;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param SessionManager $session_manager Session manager.
@@ -97,7 +105,7 @@ final class TrackingController {
 	 * @param Privacy        $privacy         Privacy helper.
 	 * @param BotDetector    $bot_detector    Bot detector.
 	 */
-	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector, EnrichmentService $enrichment_service, SiteContextService $site_context ) {
+	public function __construct( SessionManager $session_manager, EventLogger $event_logger, NumberResolver $number_resolver, RateLimiter $rate_limiter, Privacy $privacy, BotDetector $bot_detector, EnrichmentService $enrichment_service, SiteContextService $site_context, FrontendChatService $frontend_chat ) {
 		$this->session_manager = $session_manager;
 		$this->event_logger    = $event_logger;
 		$this->number_resolver = $number_resolver;
@@ -106,6 +114,7 @@ final class TrackingController {
 		$this->bot_detector    = $bot_detector;
 		$this->enrichment_service = $enrichment_service;
 		$this->site_context    = $site_context;
+		$this->frontend_chat   = $frontend_chat;
 	}
 
 	/**
@@ -136,31 +145,11 @@ final class TrackingController {
 
 		register_rest_route(
 			$this->namespace,
-			'/bot/site-context/search',
+			'/ai/chat/respond',
 			array(
 				'methods'             => 'POST',
 				'permission_callback' => '__return_true',
-				'callback'            => array( $this, 'bot_site_context_search' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/bot/site-context/answer',
-			array(
-				'methods'             => 'POST',
-				'permission_callback' => '__return_true',
-				'callback'            => array( $this, 'bot_site_context_answer' ),
-			)
-		);
-
-		register_rest_route(
-			$this->namespace,
-			'/bot/site-context/document/(?P<id>\d+)',
-			array(
-				'methods'             => 'GET',
-				'permission_callback' => '__return_true',
-				'callback'            => array( $this, 'bot_site_context_document' ),
+				'callback'            => array( $this, 'ai_chat_respond' ),
 			)
 		);
 	}
@@ -247,6 +236,40 @@ final class TrackingController {
 				'label'          => (string) $number['label'],
 			)
 		);
+	}
+
+	/**
+	 * Respond to a frontend AI chat message.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_respond( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 30, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many chat messages have been sent just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$response = $this->frontend_chat->respond( $payload );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new WP_REST_Response( $response );
 	}
 
 	/**

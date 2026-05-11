@@ -344,319 +344,409 @@ function bindInteractionTracking(sessionUuid, visitorUuid, pageContext) {
 	});
 }
 
-function embedConnectChatTestWidget(sessionUuid, visitorUuid) {
-	const chatConfig = config.connectChat || {};
+function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
+	const chatConfig = config.aiChat || {};
 
-	if (!chatConfig.enabled || !chatConfig.scriptUrl || !chatConfig.snippetId) {
+	if (!chatConfig.enabled || window.__aceAiChatConfigured || !document.body) {
 		return;
 	}
 
-	if (window.__aceConnectChatConfigured) {
-		return;
-	}
+	window.__aceAiChatConfigured = true;
 
-	window.__aceConnectChatConfigured = true;
-	let widgetLaunchCallback = null;
-	let widgetLaunchAttempts = 0;
-
-	const setLauncherVisibility = (launcher, isVisible) => {
-		launcher.style.setProperty('opacity', isVisible ? '1' : '0', 'important');
-		launcher.style.setProperty('visibility', isVisible ? 'visible' : 'hidden', 'important');
-		launcher.style.setProperty('pointer-events', isVisible ? 'auto' : 'none', 'important');
-		launcher.style.setProperty('transform', isVisible ? 'translate3d(0, 0, 0)' : 'translate3d(0, 12px, 0)', 'important');
-	};
-
-	const ensureLauncher = () => {
-		if (!document.body) {
-			return null;
-		}
-
-		let launcher = document.getElementById('ace-connect-chat-launcher');
-
-		if (!launcher) {
-			launcher = document.createElement('button');
-			launcher.id = 'ace-connect-chat-launcher';
-			launcher.type = 'button';
-			launcher.setAttribute('aria-label', 'Open live chat');
-			launcher.textContent = 'Chat with us';
-		}
-
-		launcher.style.setProperty('position', 'fixed', 'important');
-		launcher.style.setProperty('left', '24px', 'important');
-		launcher.style.setProperty('bottom', '160px', 'important');
-		launcher.style.setProperty('z-index', '2147483000', 'important');
-		launcher.style.setProperty('display', 'inline-flex', 'important');
-		launcher.style.setProperty('align-items', 'center', 'important');
-		launcher.style.setProperty('justify-content', 'center', 'important');
-		launcher.style.setProperty('min-width', '160px', 'important');
-		launcher.style.setProperty('min-height', '54px', 'important');
-		launcher.style.setProperty('padding', '16px 22px', 'important');
-		launcher.style.setProperty('border', '2px solid #ffffff', 'important');
-		launcher.style.setProperty('border-radius', '999px', 'important');
-		launcher.style.setProperty('background', '#e41618', 'important');
-		launcher.style.setProperty('color', '#ffffff', 'important');
-		launcher.style.setProperty('font', '700 16px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', 'important');
-		launcher.style.setProperty('letter-spacing', '0.01em', 'important');
-		launcher.style.setProperty('box-shadow', '0 18px 48px rgba(15, 23, 42, 0.35)', 'important');
-		launcher.style.setProperty('cursor', 'pointer', 'important');
-		launcher.style.setProperty('transform', 'translate3d(0, 0, 0)', 'important');
-		launcher.style.setProperty('transition', 'opacity 0.2s ease, transform 0.2s ease', 'important');
-		launcher.onclick = () => {
-			requestWidgetLaunch();
-		};
-
-		setLauncherVisibility(launcher, true);
-
-		if (!launcher.isConnected) {
-			document.body.appendChild(launcher);
-		}
-
-		return launcher;
-	};
-
-	const isWidgetOpen = () => {
-		const frame = document.getElementById('amazon-connect-widget-frame');
-
-		if (!frame) {
-			return false;
-		}
-
-		return frame.classList.contains('show') || frame.style.display !== 'none';
-	};
-
-	const fallbackOpenWidget = () => {
-		const openWidgetButton = document.getElementById('amazon-connect-open-widget-button');
-
-		if (openWidgetButton instanceof HTMLButtonElement) {
-			openWidgetButton.click();
-			return true;
-		}
-
-		return false;
-	};
-
-	const restoreLauncherIfNeeded = () => {
-		if (isWidgetOpen()) {
-			return;
-		}
-
-		const activeLauncher = ensureLauncher();
-
-		if (activeLauncher) {
-			setLauncherVisibility(activeLauncher, true);
-		}
-	};
-
-	const requestWidgetLaunch = () => {
-		const activeLauncher = ensureLauncher();
-
-		if (!activeLauncher) {
-			return;
-		}
-
-		setLauncherVisibility(activeLauncher, false);
-
-		if (typeof widgetLaunchCallback === 'function') {
-			widgetLaunchCallback();
-		}
-
-		if (isWidgetOpen()) {
-			return;
-		}
-
-		widgetLaunchAttempts = 0;
-
-		const retryLaunch = () => {
-			if (isWidgetOpen()) {
-				return;
-			}
-
-			widgetLaunchAttempts += 1;
-
-			if (!fallbackOpenWidget() && typeof widgetLaunchCallback === 'function' && widgetLaunchAttempts <= 3) {
-				widgetLaunchCallback();
-			}
-
-			if (isWidgetOpen()) {
-				return;
-			}
-
-			if (widgetLaunchAttempts < 8) {
-				window.setTimeout(retryLaunch, 500);
-				return;
-			}
-
-			restoreLauncherIfNeeded();
-		};
-
-		window.setTimeout(retryLaunch, 300);
-	};
-
-	if (!document.querySelector('#ace-connect-chat-position')) {
+	if (!document.querySelector('#ace-ai-chat-style')) {
 		const style = document.createElement('style');
-		style.id = 'ace-connect-chat-position';
+		style.id = 'ace-ai-chat-style';
 		style.textContent = `
-			#amazon-connect-close-widget-button,
-			#amazon-connect-widget-frame {
-				position: fixed !important;
-				left: 24px !important;
-				right: auto !important;
-				bottom: 160px !important;
-				z-index: 2147482999 !important;
+			#ace-ai-chat-launcher {
+				position: fixed;
+				left: 24px;
+				bottom: 24px;
+				z-index: 2147483000;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				padding: 14px 20px;
+				border: 0;
+				border-radius: 999px;
+				background: #2563eb;
+				color: #ffffff;
+				font: 700 15px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+				cursor: pointer;
 			}
-			#ace-connect-chat-launcher {
-				max-width: calc(100vw - 48px);
+			#ace-ai-chat-panel {
+				position: fixed;
+				left: 24px;
+				bottom: 92px;
+				z-index: 2147483000;
+				width: min(380px, calc(100vw - 32px));
+				height: min(560px, calc(100vh - 132px));
+				display: flex;
+				flex-direction: column;
+				background: #ffffff;
+				border: 1px solid rgba(15, 23, 42, 0.1);
+				border-radius: 18px;
+				box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+				overflow: hidden;
 			}
-			#ace-connect-chat-launcher:hover,
-			#ace-connect-chat-launcher:focus {
-				filter: brightness(0.96);
+			#ace-ai-chat-panel[hidden] {
+				display: none;
+			}
+			#ace-ai-chat-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 16px 18px;
+				background: #0f172a;
+				color: #ffffff;
+			}
+			#ace-ai-chat-header strong {
+				display: block;
+				font-size: 15px;
+			}
+			#ace-ai-chat-header small {
+				display: block;
+				margin-top: 4px;
+				color: rgba(255, 255, 255, 0.75);
+			}
+			#ace-ai-chat-close {
+				border: 0;
+				background: transparent;
+				color: inherit;
+				font-size: 22px;
+				line-height: 1;
+				cursor: pointer;
+			}
+			#ace-ai-chat-messages {
+				flex: 1;
+				padding: 16px;
+				overflow-y: auto;
+				background: #f8fafc;
+			}
+			.ace-ai-chat-message {
+				margin-bottom: 14px;
+			}
+			.ace-ai-chat-bubble {
+				display: inline-block;
+				max-width: 100%;
+				padding: 11px 14px;
+				border-radius: 14px;
+				white-space: pre-wrap;
+				word-break: break-word;
+				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			.ace-ai-chat-message[data-role="assistant"] .ace-ai-chat-bubble {
+				background: #ffffff;
+				color: #0f172a;
+				border: 1px solid rgba(15, 23, 42, 0.08);
+			}
+			.ace-ai-chat-message[data-role="user"] {
+				text-align: right;
+			}
+			.ace-ai-chat-message[data-role="user"] .ace-ai-chat-bubble {
+				background: #2563eb;
+				color: #ffffff;
+			}
+			.ace-ai-chat-sources {
+				margin: 8px 0 0;
+				padding-left: 18px;
+				font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #334155;
+			}
+			.ace-ai-chat-sources a {
+				color: #1d4ed8;
+			}
+			#ace-ai-chat-form {
+				padding: 14px;
+				border-top: 1px solid rgba(15, 23, 42, 0.08);
+				background: #ffffff;
+			}
+			#ace-ai-chat-input {
+				width: 100%;
+				min-height: 92px;
+				padding: 12px 14px;
+				border: 1px solid rgba(15, 23, 42, 0.14);
+				border-radius: 14px;
+				resize: vertical;
+				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			#ace-ai-chat-actions {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				margin-top: 10px;
+			}
+			#ace-ai-chat-meta {
+				font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #64748b;
+			}
+			#ace-ai-chat-send {
+				border: 0;
+				border-radius: 999px;
+				background: #2563eb;
+				color: #ffffff;
+				padding: 10px 16px;
+				font: 700 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+			}
+			#ace-ai-chat-send[disabled],
+			#ace-ai-chat-input[disabled] {
+				opacity: 0.6;
+				cursor: not-allowed;
 			}
 		`;
 		document.head.appendChild(style);
 	}
 
-	if (typeof window.amazon_connect !== 'function') {
-		window.amazon_connect = function amazonConnectProxy() {
-			(window.amazon_connect.ac = window.amazon_connect.ac || []).push(arguments);
-		};
-	}
+	const launcher = document.createElement('button');
+	const panel = document.createElement('section');
+	const header = document.createElement('div');
+	const titleWrap = document.createElement('div');
+	const title = document.createElement('strong');
+	const subtitle = document.createElement('small');
+	const close = document.createElement('button');
+	const messagesNode = document.createElement('div');
+	const form = document.createElement('form');
+	const input = document.createElement('textarea');
+	const actions = document.createElement('div');
+	const meta = document.createElement('div');
+	const send = document.createElement('button');
+	const state = {
+		open: false,
+		started: false,
+		pending: false,
+		messages: [],
+	};
 
-	const scriptElementId = chatConfig.widgetId || 'ace-connect-chat-script';
+	launcher.id = 'ace-ai-chat-launcher';
+	launcher.type = 'button';
+	launcher.textContent = chatConfig.title || 'Chat with us';
+	launcher.setAttribute('aria-expanded', 'false');
 
-	if (!document.querySelector(`#${scriptElementId}`)) {
-		const script = document.createElement('script');
-		script.id = scriptElementId;
-		script.src = chatConfig.scriptUrl;
-		script.async = true;
-		document.head.appendChild(script);
-	}
+	panel.id = 'ace-ai-chat-panel';
+	panel.hidden = true;
 
-	const launcher = ensureLauncher();
+	header.id = 'ace-ai-chat-header';
+	title.textContent = chatConfig.title || 'Site assistant';
+	subtitle.textContent = chatConfig.provider === 'openai' && chatConfig.model ? `OpenAI · ${chatConfig.model}` : 'Website assistant';
+	titleWrap.appendChild(title);
+	titleWrap.appendChild(subtitle);
 
-	if (document.body && !window.__aceConnectChatLauncherObserver) {
-		window.__aceConnectChatLauncherObserver = new MutationObserver(() => {
-			ensureLauncher();
-		});
-		window.__aceConnectChatLauncherObserver.observe(document.body, {
-			childList: true,
-		});
-	}
+	close.id = 'ace-ai-chat-close';
+	close.type = 'button';
+	close.setAttribute('aria-label', 'Close chat');
+	close.textContent = '×';
 
-	if (chatConfig.securityEnabled) {
-		window.amazon_connect('authenticate', (callback) => {
-			window.fetch(`${config.root}${config.namespace}/chat-widget/token`, {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					session_uuid: sessionUuid || '',
-					visitor_uuid: visitorUuid || '',
-					page_url: window.location.href,
-					page_title: document.title || '',
-				}),
-			})
-				.then((response) => response.json())
-				.then((data) => {
-					if (data?.token) {
-						callback(data.token);
+	header.appendChild(titleWrap);
+	header.appendChild(close);
+
+	messagesNode.id = 'ace-ai-chat-messages';
+	messagesNode.setAttribute('aria-live', 'polite');
+
+	form.id = 'ace-ai-chat-form';
+	input.id = 'ace-ai-chat-input';
+	input.placeholder = chatConfig.placeholder || 'Ask a question about this website';
+
+	actions.id = 'ace-ai-chat-actions';
+	meta.id = 'ace-ai-chat-meta';
+	meta.textContent = chatConfig.showSources ? 'Replies can include source links from this website.' : 'Ask about pages, posts, and products on this website.';
+	send.id = 'ace-ai-chat-send';
+	send.type = 'submit';
+	send.textContent = 'Send';
+
+	actions.appendChild(meta);
+	actions.appendChild(send);
+	form.appendChild(input);
+	form.appendChild(actions);
+
+	panel.appendChild(header);
+	panel.appendChild(messagesNode);
+	panel.appendChild(form);
+	document.body.appendChild(launcher);
+	document.body.appendChild(panel);
+
+	const pushMessage = (message) => {
+		state.messages.push(message);
+	};
+
+	const renderMessages = () => {
+		messagesNode.innerHTML = '';
+
+		state.messages.forEach((message) => {
+			const item = document.createElement('div');
+			const bubble = document.createElement('div');
+
+			item.className = 'ace-ai-chat-message';
+			item.dataset.role = message.role;
+			bubble.className = 'ace-ai-chat-bubble';
+			bubble.textContent = message.content;
+			item.appendChild(bubble);
+
+			if (chatConfig.showSources && Array.isArray(message.sources) && message.sources.length) {
+				const list = document.createElement('ol');
+				list.className = 'ace-ai-chat-sources';
+
+				message.sources.forEach((source) => {
+					if (!source?.url || !source?.title) {
+						return;
 					}
+
+					const listItem = document.createElement('li');
+					const link = document.createElement('a');
+					link.href = source.url;
+					link.target = '_blank';
+					link.rel = 'noopener noreferrer';
+					link.textContent = source.label ? `${source.title} (${source.label})` : source.title;
+					listItem.appendChild(link);
+					list.appendChild(listItem);
 				});
-		});
-	}
 
-	if (chatConfig.useCustomStartChat && chatConfig.chatFlowId) {
-		window.amazon_connect('customStartChat', (callback) => {
-			window.fetch(`${config.root}${config.namespace}/chat-widget/start`, {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					session_uuid: sessionUuid || '',
-					visitor_uuid: visitorUuid || '',
-					page_url: window.location.href,
-					page_title: document.title || '',
-				}),
-			})
-				.then((response) => response.json())
-				.then((data) => {
-					const payload = data?.data?.startChatResult ? data.data : data;
-
-					if (payload?.startChatResult?.ContactId && payload?.startChatResult?.ParticipantId && payload?.startChatResult?.ParticipantToken) {
-						callback(payload);
-					}
-				})
-				.catch(() => {
-					// Leave widget launch failure handling to the hosted widget.
-				});
-		});
-	}
-
-	window.amazon_connect('snippetId', chatConfig.snippetId);
-	window.amazon_connect('styles', {
-		openChat: {
-			color: '#ffffff',
-			backgroundColor: '#2563eb',
-		},
-		closeChat: {
-			color: '#ffffff',
-			backgroundColor: '#2563eb',
-		},
-	});
-	window.amazon_connect('supportedMessagingContentTypes', ['text/plain', 'text/markdown']);
-	window.amazon_connect('customStyles', {
-		widgetFrame: {
-			left: '24px',
-			right: 'auto',
-			bottom: '160px',
-			zIndex: '2147482999',
-			boxShadow: '0 16px 40px rgba(15, 23, 42, 0.2)',
-			border: '1px solid rgba(37, 99, 235, 0.2)',
-		},
-		widgetButton: {
-			left: '24px',
-			right: 'auto',
-			bottom: '160px',
-			zIndex: '2147482999',
-		},
-	});
-	window.amazon_connect('customLaunchBehavior', {
-		skipIconButtonAndAutoLaunch: true,
-		alwaysHideWidgetButton: true,
-		programmaticLaunch: (launchCallback) => {
-			widgetLaunchCallback = launchCallback;
-			restoreLauncherIfNeeded();
-		},
-	});
-	window.amazon_connect('registerCallback', {
-		WIDGET_FRAME_CLOSED: () => {
-			const activeLauncher = ensureLauncher();
-
-			if (activeLauncher) {
-				setLauncherVisibility(activeLauncher, true);
+				if (list.childNodes.length) {
+					item.appendChild(list);
+				}
 			}
-		},
+
+			messagesNode.appendChild(item);
+		});
+
+		messagesNode.scrollTop = messagesNode.scrollHeight;
+	};
+
+	const setOpen = (nextOpen) => {
+		state.open = nextOpen;
+		panel.hidden = !nextOpen;
+		launcher.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+
+		if (nextOpen && !state.started) {
+			state.started = true;
+			sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
+				event_type: 'chat_start',
+				event_name: 'frontend_ai_chat_started',
+				url: window.location.href,
+				path: window.location.pathname,
+				page_title: document.title,
+				referrer: document.referrer,
+				utm: getUtm(),
+				metadata: {
+					provider: chatConfig.provider || 'openai',
+					model: chatConfig.model || '',
+				},
+			}, pageContext));
+			input.focus();
+		}
+	};
+
+	const setPending = (nextPending) => {
+		state.pending = nextPending;
+		input.disabled = nextPending;
+		send.disabled = nextPending;
+		send.textContent = nextPending ? 'Sending…' : 'Send';
+	};
+
+	const buildHistory = () => state.messages
+		.filter((message) => message.role === 'user' || message.role === 'assistant')
+		.slice(-1 * Number(chatConfig.maxHistoryMessages || 8))
+		.map((message) => ({
+			role: message.role,
+			content: message.content,
+		}));
+
+	const sendMessage = async (content) => {
+		if (!content || state.pending) {
+			return;
+		}
+
+		pushMessage({ role: 'user', content });
+		renderMessages();
+		setPending(true);
+
+		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
+			event_type: 'chat_message',
+			event_name: 'frontend_ai_chat_message',
+			url: window.location.href,
+			path: window.location.pathname,
+			page_title: document.title,
+			referrer: document.referrer,
+			utm: getUtm(),
+			metadata: {
+				provider: chatConfig.provider || 'openai',
+				model: chatConfig.model || '',
+				message_length: String(content.length),
+			},
+		}, pageContext));
+
+		try {
+			const history = buildHistory().slice(0, -1);
+			const response = await fetch(chatConfig.endpoint || `${config.root}${config.namespace}/ai/chat/respond`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					message: content,
+					history: chatConfig.keepHistory ? history : [],
+					session_uuid: sessionUuid || '',
+					visitor_uuid: visitorUuid || '',
+					page_url: window.location.href,
+					page_title: document.title || '',
+				}),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data?.message || 'The site assistant could not reply just now.');
+			}
+
+			pushMessage({
+				role: 'assistant',
+				content: data?.message || 'Sorry, I could not prepare a reply just now.',
+				sources: Array.isArray(data?.sources) ? data.sources : [],
+			});
+		} catch (error) {
+			pushMessage({
+				role: 'assistant',
+				content: error?.message || 'Sorry, I could not prepare a reply just now.',
+				sources: [],
+			});
+		} finally {
+			setPending(false);
+			renderMessages();
+		}
+	};
+
+	pushMessage({
+		role: 'assistant',
+		content: chatConfig.greeting || 'Hello, I am the site assistant. Ask me anything about this website and I will do my best to help.',
+		sources: [],
 	});
-	window.amazon_connect('contactAttributes', {
-		aceSessionId: sessionUuid || '',
-		aceVisitorId: visitorUuid || '',
-		acePageUrl: window.location.href,
-		acePageTitle: document.title || '',
+	renderMessages();
+
+	launcher.addEventListener('click', () => setOpen(!state.open));
+	close.addEventListener('click', () => setOpen(false));
+	form.addEventListener('submit', (event) => {
+		event.preventDefault();
+		const content = input.value.trim();
+
+		if (!content) {
+			return;
+		}
+
+		input.value = '';
+		sendMessage(content);
 	});
-	window.amazon_connect('customizationObject', {
-		header: {
-			dropdown: true,
-			minimizeChatHeaderButton: true,
-		},
+	input.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter' && !event.shiftKey) {
+			event.preventDefault();
+			form.requestSubmit();
+		}
 	});
 }
 
 function init() {
 	const trackingEnabled = !!config.enabled;
-	const shouldEmbedChat = !!config.connectChat?.enabled;
+	const shouldEmbedChat = !!config.aiChat?.enabled;
 
 	if (!trackingEnabled && !shouldEmbedChat) {
 		return;
@@ -703,7 +793,7 @@ function init() {
 	}
 
 	if (shouldEmbedChat) {
-		embedConnectChatTestWidget(sessionUuid, visitorUuid);
+		embedAiChatWidget(sessionUuid, visitorUuid, pageContext);
 	}
 }
 
