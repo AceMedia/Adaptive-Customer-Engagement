@@ -180,6 +180,7 @@ final class Plugin {
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
 			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
+			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 			'title'             => sanitize_text_field( (string) ( $ai_agent['frontend_chat_title'] ?? '' ) ),
 			'greeting'          => sanitize_textarea_field( (string) ( $ai_agent['frontend_chat_greeting'] ?? '' ) ),
 			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),

@@ -681,12 +681,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		try {
 			const history = buildHistory().slice(0, -1);
+			const headers = {
+				'Content-Type': 'application/json',
+			};
+
+			if (chatConfig.restNonce) {
+				headers['X-WP-Nonce'] = chatConfig.restNonce;
+			}
+
 			const response = await fetch(chatConfig.endpoint || `${config.root}${config.namespace}/ai/chat/respond`, {
 				method: 'POST',
 				credentials: 'same-origin',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers,
 				body: JSON.stringify({
 					message: content,
 					history: chatConfig.keepHistory ? history : [],
