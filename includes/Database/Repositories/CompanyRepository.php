@@ -15,6 +15,86 @@ defined( 'ABSPATH' ) || exit;
 
 final class CompanyRepository {
 	/**
+	 * Find or create a company record from locally declared data.
+	 *
+	 * @param array<string, mixed> $data Company payload.
+	 * @return array<string, mixed>|null
+	 */
+	public function create_or_touch_local( array $data ): ?array {
+		global $wpdb;
+
+		$name = sanitize_text_field( (string) ( $data['name'] ?? '' ) );
+
+		if ( '' === $name ) {
+			return null;
+		}
+
+		$domain     = sanitize_text_field( (string) ( $data['domain'] ?? '' ) );
+		$confidence = sanitize_key( (string) ( $data['confidence'] ?? 'confirmed' ) ) ?: 'confirmed';
+		$source     = sanitize_key( (string) ( $data['source'] ?? 'local_chat_memory' ) ) ?: 'local_chat_memory';
+		$table      = Schema::table_name( 'companies' );
+		$row        = null;
+
+		if ( '' !== $domain ) {
+			$row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$table} WHERE domain = %s LIMIT 1",
+					$domain
+				),
+				ARRAY_A
+			);
+		}
+
+		if ( ! is_array( $row ) ) {
+			$row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$table} WHERE name = %s LIMIT 1",
+					$name
+				),
+				ARRAY_A
+			);
+		}
+
+		$now = current_time( 'mysql', true );
+
+		if ( is_array( $row ) ) {
+			$wpdb->update(
+				$table,
+				array(
+					'name'            => $name,
+					'domain'          => '' !== $domain ? $domain : $row['domain'],
+					'source_provider' => $source,
+					'confidence'      => $confidence,
+					'last_seen'       => $now,
+					'updated_at'      => $now,
+				),
+				array( 'id' => (int) $row['id'] )
+			);
+
+			return $this->find( (int) $row['id'] );
+		}
+
+		$wpdb->insert(
+			$table,
+			array(
+				'name'            => $name,
+				'domain'          => $domain,
+				'source_provider' => $source,
+				'confidence'      => $confidence,
+				'first_seen'      => $now,
+				'last_seen'       => $now,
+				'total_sessions'  => 0,
+				'total_events'    => 0,
+				'total_calls'     => 0,
+				'created_at'      => $now,
+				'updated_at'      => $now,
+			)
+		);
+
+		return $this->find( (int) $wpdb->insert_id );
+	}
+
+	/**
 	 * Find or create a company record from enrichment data.
 	 *
 	 * @param EnrichmentResult $result Enrichment result.

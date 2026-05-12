@@ -339,6 +339,32 @@ final class SessionRepository {
 	}
 
 	/**
+	 * Assign a company match to a session without overwriting location data.
+	 *
+	 * @param int    $session_id  Session ID.
+	 * @param int    $company_id  Company ID.
+	 * @param string $confidence  Match confidence.
+	 * @return void
+	 */
+	public function assign_company( int $session_id, int $company_id, string $confidence = 'likely' ): void {
+		global $wpdb;
+
+		if ( $session_id <= 0 || $company_id <= 0 ) {
+			return;
+		}
+
+		$wpdb->update(
+			Schema::table_name( 'sessions' ),
+			array(
+				'company_id'         => $company_id,
+				'company_confidence' => sanitize_key( $confidence ) ?: 'likely',
+				'updated_at'         => current_time( 'mysql', true ),
+			),
+			array( 'id' => $session_id )
+		);
+	}
+
+	/**
 	 * Count sessions started today.
 	 *
 	 * @return int

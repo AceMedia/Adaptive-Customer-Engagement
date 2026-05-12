@@ -7,8 +7,10 @@
 
 namespace ACE\AdaptiveCustomerEngagement\AI;
 
+use ACE\AdaptiveCustomerEngagement\AI\AgentAvailability;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use WP_Error;
@@ -52,6 +54,20 @@ final class FrontendChatService {
 	private $chat_messages;
 
 	/**
+	 * Lead profile helper.
+	 *
+	 * @var LeadProfileService
+	 */
+	private $lead_profiles;
+
+	/**
+	 * Number repository.
+	 *
+	 * @var NumberRepository
+	 */
+	private $numbers;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param OpenAIClient             $openai             OpenAI client.
@@ -59,13 +75,17 @@ final class FrontendChatService {
 	 * @param SessionRepository        $sessions           Session repository.
 	 * @param ChatConversationRepository $chat_conversations Chat conversation repository.
 	 * @param ChatMessageRepository    $chat_messages      Chat message repository.
+	 * @param LeadProfileService       $lead_profiles      Lead profile helper.
+	 * @param NumberRepository         $numbers            Number repository.
 	 */
-	public function __construct( OpenAIClient $openai, SiteContextService $site_context, SessionRepository $sessions, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages ) {
+	public function __construct( OpenAIClient $openai, SiteContextService $site_context, SessionRepository $sessions, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, LeadProfileService $lead_profiles, NumberRepository $numbers ) {
 		$this->openai             = $openai;
 		$this->site_context       = $site_context;
 		$this->sessions           = $sessions;
 		$this->chat_conversations = $chat_conversations;
 		$this->chat_messages      = $chat_messages;
+		$this->lead_profiles      = $lead_profiles;
+		$this->numbers            = $numbers;
 	}
 
 	/**
@@ -91,6 +111,9 @@ final class FrontendChatService {
 		$page_url   = esc_url_raw( (string) ( $payload['page_url'] ?? '' ) );
 		$page_title = sanitize_text_field( (string) ( $payload['page_title'] ?? '' ) );
 		$session    = ! empty( $payload['session_uuid'] ) ? $this->sessions->find_by_uuid( sanitize_text_field( (string) $payload['session_uuid'] ) ) : null;
+		$known_context = $this->lead_profiles->apply_known_context( $session );
+		$session       = $known_context['session'];
+		$ip_memory     = $known_context['memory'];
 		$thread     = $this->chat_conversations->create_or_touch(
 			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) ),
 			array(
@@ -124,7 +147,53 @@ final class FrontendChatService {
 			false
 		);
 
-		if ( ! empty( $thread['handover_enabled'] ) || ChatConversationRepository::STATUS_HANDOVER === ( $thread['status'] ?? '' ) ) {
+		$lead_capture = $this->lead_profiles->capture_from_message( $thread, $session, $message );
+		$thread       = is_array( $lead_capture['conversation'] ?? null ) ? $lead_capture['conversation'] : $thread;
+		$session      = is_array( $lead_capture['session'] ?? null ) ? $lead_capture['session'] : $session;
+		$ip_memory    = is_array( $lead_capture['memory'] ?? null ) ? $lead_capture['memory'] : $ip_memory;
+		ChatPresence::set_typing( (int) $thread['id'], 'customer', false );
+
+		if ( ! empty( $ai_agent['handoff_to_human'] ) && $this->is_human_handover_request( $message ) ) {
+			$availability = AgentAvailability::get_status();
+			$thread       = $this->chat_conversations->request_handover( (int) $thread['id'] ) ?: $thread;
+			$reply        = ! empty( $availability['online'] )
+				? __( 'I have let the team know and an agent can join this chat shortly.', 'adaptive-customer-engagement' )
+				: __( 'Nobody is online in the admin area just now. You can leave your details here and the team can get back in touch.', 'adaptive-customer-engagement' );
+
+			$this->store_message(
+				(int) $thread['id'],
+				(int) ( $session['id'] ?? 0 ),
+				(int) ( $session['company_id'] ?? 0 ),
+				'assistant',
+				$reply,
+				array(),
+				'handover',
+				false
+			);
+			ChatPresence::set_typing( (int) $thread['id'], 'assistant', false );
+
+			$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+
+			return array(
+				'message'      => '',
+				'sources'      => array(),
+				'model'        => '',
+				'conversation' => $this->normalise_conversation( $thread ),
+				'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
+			);
+		}
+
+		ChatPresence::set_typing(
+			(int) $thread['id'],
+			'assistant',
+			true,
+			array(
+				'label' => __( 'Assistant', 'adaptive-customer-engagement' ),
+				'name'  => $this->get_message_author( 'assistant' )['name'],
+			)
+		);
+
+		if ( ! empty( $thread['handover_enabled'] ) ) {
 			$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
 
 			return array(
@@ -150,6 +219,18 @@ final class FrontendChatService {
 				$page_title ?: __( 'Unknown page', 'adaptive-customer-engagement' ),
 				$page_url ?: __( 'Unavailable', 'adaptive-customer-engagement' )
 			);
+		}
+
+		$lead_context = $this->lead_profiles->build_prompt_context( $session, $thread, $ip_memory );
+
+		if ( '' !== $lead_context ) {
+			$context[] = $lead_context;
+		}
+
+		$contact_context = $this->build_contact_number_context();
+
+		if ( '' !== $contact_context ) {
+			$context[] = $contact_context;
 		}
 
 		if ( ! empty( $ai_agent['use_live_site_context'] ) ) {
@@ -189,6 +270,24 @@ final class FrontendChatService {
 			);
 		}
 
+		$source_display_instruction = $this->build_source_display_instruction( $sources );
+
+		if ( '' !== $source_display_instruction ) {
+			$messages[] = array(
+				'role'    => 'system',
+				'content' => $source_display_instruction,
+			);
+		}
+
+		$sales_instruction = $this->build_sales_prompt_instruction( $message, $thread, $lead_capture['captured'] ?? array() );
+
+		if ( '' !== $sales_instruction ) {
+			$messages[] = array(
+				'role'    => 'system',
+				'content' => $sales_instruction,
+			);
+		}
+
 		if ( ! empty( $ai_agent['keep_history'] ) ) {
 			$messages = array_merge( $messages, $this->sanitize_history( $payload['history'] ?? array(), (int) ( $ai_agent['max_history_messages'] ?? 8 ) ) );
 		}
@@ -224,26 +323,33 @@ final class FrontendChatService {
 				);
 			}
 
+			ChatPresence::set_typing( (int) $thread['id'], 'assistant', false );
+
 			return $response;
 		}
 
-		$normalised_sources = $this->normalise_sources( $sources );
+		$response_message = sanitize_textarea_field( (string) ( $response['message'] ?? '' ) );
+		$show_sources     = $this->extract_source_display_decision( $response_message, ! empty( $sources ) );
+		$response_message = $this->apply_sales_follow_up_prompt( $response_message, $message, $thread, $lead_capture['captured'] ?? array() );
+		$response_message = $this->append_primary_contact_number( $response_message );
+		$normalised_sources = $this->normalise_sources( $show_sources ? $sources : array() );
 
 		$this->store_message(
 			(int) $thread['id'],
 			(int) ( $session['id'] ?? 0 ),
 			(int) ( $session['company_id'] ?? 0 ),
 			'assistant',
-			sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
+			$response_message,
 			$normalised_sources,
 			sanitize_text_field( (string) ( $response['model'] ?? $model ) ),
 			false
 		);
+		ChatPresence::set_typing( (int) $thread['id'], 'assistant', false );
 
 		$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
 
 		return array(
-			'message'      => sanitize_textarea_field( (string) ( $response['message'] ?? '' ) ),
+			'message'      => $response_message,
 			'sources'      => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
 			'model'        => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
 			'conversation' => $this->normalise_conversation( $thread ),
@@ -271,6 +377,34 @@ final class FrontendChatService {
 	}
 
 	/**
+	 * Update visitor typing state for an accessible conversation.
+	 *
+	 * @param array<string, mixed> $payload Request payload.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	public function update_typing( array $payload ) {
+		$conversation = $this->find_accessible_conversation( $payload );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_ai_chat_not_found', __( 'The chat conversation could not be found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		ChatPresence::set_typing(
+			(int) $conversation['id'],
+			'customer',
+			! empty( $payload['is_typing'] ),
+			array(
+				'label' => __( 'Customer', 'adaptive-customer-engagement' ),
+			)
+		);
+
+		return array(
+			'conversation' => $this->normalise_conversation( $conversation ),
+			'typing'       => ChatPresence::get_typing_state( (int) $conversation['id'] ),
+		);
+	}
+
+	/**
 	 * End a frontend chat conversation.
 	 *
 	 * @param array<string, mixed> $payload Request payload.
@@ -289,9 +423,104 @@ final class FrontendChatService {
 			return new WP_Error( 'ace_ai_chat_end_failed', __( 'The chat conversation could not be ended.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
 		}
 
+		ChatPresence::clear_conversation( (int) $conversation['id'] );
+
 		return array(
 			'conversation' => $this->normalise_conversation( $conversation ),
 			'messages'     => $this->normalise_conversation_messages( (int) $conversation['id'] ),
+		);
+	}
+
+	/**
+	 * Get current human availability for frontend chats.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function get_availability(): array {
+		return AgentAvailability::get_status();
+	}
+
+	/**
+	 * Store a visitor follow-up request when no agent is watching chats.
+	 *
+	 * @param array<string, mixed> $payload Request payload.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	public function submit_follow_up_request( array $payload ) {
+		$contact_name  = sanitize_text_field( (string) ( $payload['contact_name'] ?? '' ) );
+		$contact_email = sanitize_email( (string) ( $payload['contact_email'] ?? '' ) );
+		$contact_phone = sanitize_text_field( (string) ( $payload['contact_phone'] ?? '' ) );
+
+		if ( '' === $contact_name ) {
+			return new WP_Error( 'ace_ai_chat_contact_name_required', __( 'Please add your name so the team knows who to contact.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( '' === $contact_email && '' === $contact_phone ) {
+			return new WP_Error( 'ace_ai_chat_contact_method_required', __( 'Please add an email address or phone number so the team can get back in touch.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		if ( '' !== $contact_email && ! is_email( $contact_email ) ) {
+			return new WP_Error( 'ace_ai_chat_contact_email_invalid', __( 'Please enter a valid email address.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$session = ! empty( $payload['session_uuid'] ) ? $this->sessions->find_by_uuid( sanitize_text_field( (string) $payload['session_uuid'] ) ) : null;
+		$known_context = $this->lead_profiles->apply_known_context( $session );
+		$session       = $known_context['session'];
+		$thread  = $this->chat_conversations->create_or_touch(
+			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) ),
+			array(
+				'session_id'   => (int) ( $session['id'] ?? 0 ),
+				'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
+				'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
+				'company_id'   => (int) ( $session['company_id'] ?? 0 ),
+				'page_url'     => esc_url_raw( (string) ( $payload['page_url'] ?? '' ) ),
+				'page_title'   => sanitize_text_field( (string) ( $payload['page_title'] ?? '' ) ),
+				'provider'     => 'openai',
+				'model'        => sanitize_text_field( (string) ( Settings::get()['ai_agent']['openai_model'] ?? 'gpt-4.1-mini' ) ),
+			)
+		);
+
+		if ( empty( $thread['id'] ) ) {
+			return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		if ( ChatConversationRepository::STATUS_ENDED === ( $thread['status'] ?? '' ) ) {
+			return new WP_Error( 'ace_ai_chat_ended', __( 'This chat session has already ended. Please start a new conversation.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+		}
+
+		$thread = $this->chat_conversations->record_follow_up_request(
+			(int) $thread['id'],
+			array(
+				'contact_name'  => $contact_name,
+				'contact_email' => $contact_email,
+				'contact_phone' => $contact_phone,
+				'contact_company' => sanitize_text_field( (string) ( $payload['contact_company'] ?? '' ) ),
+				'contact_role'  => sanitize_text_field( (string) ( $payload['contact_role'] ?? '' ) ),
+				'follow_up_at'  => current_time( 'mysql', true ),
+				'internal_notes'=> sanitize_textarea_field( (string) ( $thread['internal_notes'] ?? '' ) ),
+			)
+		);
+
+		if ( ! $thread ) {
+			return new WP_Error( 'ace_ai_chat_follow_up_failed', __( 'The follow-up request could not be saved just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		$lead_capture = $this->lead_profiles->capture_from_contact(
+			$thread,
+			$session,
+			array(
+				'contact_name'    => $contact_name,
+				'contact_email'   => $contact_email,
+				'contact_phone'   => $contact_phone,
+				'contact_company' => sanitize_text_field( (string) ( $payload['contact_company'] ?? '' ) ),
+				'contact_role'    => sanitize_text_field( (string) ( $payload['contact_role'] ?? '' ) ),
+			)
+		);
+		$thread = is_array( $lead_capture['conversation'] ?? null ) ? $lead_capture['conversation'] : $thread;
+
+		return array(
+			'conversation' => $this->normalise_conversation( $thread ),
+			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
 		);
 	}
 
@@ -365,10 +594,23 @@ final class FrontendChatService {
 			'conversation_uuid'=> sanitize_text_field( (string) ( $conversation['conversation_uuid'] ?? '' ) ),
 			'status'           => sanitize_key( (string) ( $conversation['status'] ?? ChatConversationRepository::STATUS_OPEN ) ),
 			'handover_enabled' => ! empty( $conversation['handover_enabled'] ),
+			'handover_requested' => ! empty( $conversation['handover_requested'] ),
+			'handover_requested_at' => sanitize_text_field( (string) ( $conversation['handover_requested_at'] ?? '' ) ),
 			'ended_at'         => sanitize_text_field( (string) ( $conversation['ended_at'] ?? '' ) ),
 			'ended_by'         => sanitize_key( (string) ( $conversation['ended_by'] ?? '' ) ),
+			'follow_up_requested' => ! empty( $conversation['follow_up_requested'] ),
+			'contact_name'     => sanitize_text_field( (string) ( $conversation['contact_name'] ?? '' ) ),
+			'contact_email'    => sanitize_email( (string) ( $conversation['contact_email'] ?? '' ) ),
+			'contact_phone'    => sanitize_text_field( (string) ( $conversation['contact_phone'] ?? '' ) ),
+			'contact_company'  => sanitize_text_field( (string) ( $conversation['contact_company'] ?? '' ) ),
+			'contact_role'     => sanitize_text_field( (string) ( $conversation['contact_role'] ?? '' ) ),
+			'lead_summary'     => sanitize_textarea_field( (string) ( $conversation['lead_summary'] ?? '' ) ),
+			'company_prompted_at' => sanitize_text_field( (string) ( $conversation['company_prompted_at'] ?? '' ) ),
+			'contact_prompted_at' => sanitize_text_field( (string) ( $conversation['contact_prompted_at'] ?? '' ) ),
+			'contact_captured_at' => sanitize_text_field( (string) ( $conversation['contact_captured_at'] ?? '' ) ),
 			'last_message_at'  => sanitize_text_field( (string) ( $conversation['last_message_at'] ?? '' ) ),
 			'message_count'    => absint( $conversation['message_count'] ?? 0 ),
+			'typing'          => ChatPresence::get_typing_state( (int) ( $conversation['id'] ?? 0 ) ),
 		);
 	}
 
@@ -387,6 +629,8 @@ final class FrontendChatService {
 						'role'    => sanitize_key( (string) ( $message['message_role'] ?? '' ) ),
 						'content' => sanitize_textarea_field( (string) ( $message['message_text'] ?? '' ) ),
 						'sources' => $this->normalise_sources( is_array( $message['sources'] ?? null ) ? $message['sources'] : array() ),
+						'author_name' => sanitize_text_field( (string) ( $message['author_name'] ?? '' ) ),
+						'author_avatar_url' => esc_url_raw( (string) ( $message['author_avatar_url'] ?? '' ) ),
 						'created_at' => sanitize_text_field( (string) ( $message['created_at'] ?? '' ) ),
 						'is_error' => ! empty( $message['is_error'] ),
 					);
@@ -410,6 +654,8 @@ final class FrontendChatService {
 	 * @return void
 	 */
 	private function store_message( int $conversation_id, int $session_id, int $company_id, string $role, string $text, array $sources, string $model, bool $is_error ): void {
+		$author = $this->get_message_author( $role );
+
 		$this->chat_messages->create(
 			array(
 				'conversation_id' => $conversation_id,
@@ -419,11 +665,268 @@ final class FrontendChatService {
 				'message_text'    => $text,
 				'sources'         => $sources,
 				'model'           => $model,
+				'author_name'     => $author['name'],
+				'author_avatar_url' => $author['avatar_url'],
 				'is_error'        => $is_error,
 			)
 		);
 
 		$this->chat_conversations->record_message( $conversation_id, $role, $model );
+	}
+
+	/**
+	 * Get a safe display identity for a stored message.
+	 *
+	 * @param string $role Message role.
+	 * @return array{name:string,avatar_url:string}
+	 */
+	private function get_message_author( string $role ): array {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+		$bot_name = sanitize_text_field( (string) ( $ai_agent['frontend_chat_bot_name'] ?? $ai_agent['frontend_chat_title'] ?? get_bloginfo( 'name' ) ) );
+		$bot_name = '' !== $bot_name ? $bot_name : __( 'Site assistant', 'adaptive-customer-engagement' );
+
+		if ( 'assistant' === $role ) {
+			return array(
+				'name'       => $bot_name,
+				'avatar_url' => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
+			);
+		}
+
+		if ( 'user' === $role ) {
+			return array(
+				'name'       => __( 'You', 'adaptive-customer-engagement' ),
+				'avatar_url' => '',
+			);
+		}
+
+		return array(
+			'name'       => sanitize_text_field( ucfirst( $role ) ),
+			'avatar_url' => '',
+		);
+	}
+
+	/**
+	 * Decide whether a visitor is asking for a human.
+	 *
+	 * @param string $message Visitor message.
+	 * @return bool
+	 */
+	private function is_human_handover_request( string $message ): bool {
+		$message = strtolower( sanitize_text_field( $message ) );
+
+		return (bool) preg_match(
+			'/\b(can i|could i|i want to|let me|please|need to|want to)\s+(speak|talk|chat)\s+to\b|\b(speak|talk|chat)\s+to\s+(a\s+)?(human|agent|advisor|representative|person|member of the team|real person)\b|\b(connect|put)\s+me\s+(through\s+)?to\s+(a\s+)?(human|agent|advisor|representative|person|member of the team)\b/',
+			$message
+		);
+	}
+
+	/**
+	 * Build a prompt hint for commercial lead capture.
+	 *
+	 * @param string               $message  Latest visitor message.
+	 * @param array<string, mixed> $thread   Conversation row.
+	 * @param array<string, mixed> $captured Freshly captured lead data.
+	 * @return string
+	 */
+	private function build_sales_prompt_instruction( string $message, array $thread, array $captured ): string {
+		$instructions = array();
+
+		if ( $this->is_commercial_enquiry( $message ) && empty( $thread['contact_company'] ) && empty( $thread['company_id'] ) && empty( $captured['contact_company'] ) && empty( $thread['company_prompted_at'] ) ) {
+			$instructions[] = 'This looks like a live sales enquiry. If it fits naturally after answering, ask one short question about the visitor company or organisation.';
+		}
+
+		if ( ! empty( $captured['contact_email'] ) || ! empty( $captured['contact_phone'] ) ) {
+			$instructions[] = 'The visitor has just shared follow-up details. Acknowledge briefly that the details have been saved for the team.';
+		} elseif ( $this->should_request_contact_details( $message, $thread ) ) {
+			$instructions[] = 'If the sales enquiry is ready for follow-up, finish with one short request for their name plus an email address or phone number so the team can follow up.';
+		}
+
+		return implode( "\n", $instructions );
+	}
+
+	/**
+	 * Build contact-number context for the assistant when a main tracked number exists.
+	 *
+	 * @return string
+	 */
+	private function build_contact_number_context(): string {
+		$number = $this->get_primary_contact_number();
+
+		if ( empty( $number['display_number'] ) || empty( $number['e164_number'] ) ) {
+			return '';
+		}
+
+		return sprintf(
+			'Primary contact phone: %1$s (tel:%2$s). When you advise the visitor to call, get in touch, or contact the team directly, prefer this main number and include it in the reply.',
+			sanitize_text_field( (string) $number['display_number'] ),
+			sanitize_text_field( (string) $number['e164_number'] )
+		);
+	}
+
+	/**
+	 * Append the main contact number when the reply tells the visitor to contact the team.
+	 *
+	 * @param string $reply Assistant reply.
+	 * @return string
+	 */
+	private function append_primary_contact_number( string $reply ): string {
+		$reply  = trim( $reply );
+		$number = $this->get_primary_contact_number();
+
+		if ( '' === $reply || empty( $number['display_number'] ) || empty( $number['e164_number'] ) ) {
+			return $reply;
+		}
+
+		if ( ! preg_match( '/\b(contact|get in touch|reach out|call|phone|ring|speak to|follow up|get back in touch)\b/i', $reply ) ) {
+			return $reply;
+		}
+
+		$display_number = sanitize_text_field( (string) $number['display_number'] );
+		$e164_number    = sanitize_text_field( (string) $number['e164_number'] );
+
+		if ( false !== stripos( $reply, $display_number ) || false !== stripos( $reply, $e164_number ) ) {
+			return $reply;
+		}
+
+		return $reply . "\n\n" . sprintf(
+			/* translators: 1: display phone number, 2: tel link number. */
+			__( 'You can also call %1$s (tel:%2$s).', 'adaptive-customer-engagement' ),
+			$display_number,
+			$e164_number
+		);
+	}
+
+	/**
+	 * Get the best main contact number to surface in chat.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	private function get_primary_contact_number(): ?array {
+		$numbers = $this->numbers->all();
+
+		foreach ( $numbers as $number ) {
+			if ( ! empty( $number['is_active'] ) && ! empty( $number['is_default'] ) && ! empty( $number['is_connect_linked'] ) && ! empty( $number['e164_number'] ) ) {
+				return $number;
+			}
+		}
+
+		foreach ( $numbers as $number ) {
+			if ( ! empty( $number['is_active'] ) && ! empty( $number['is_connect_linked'] ) && ! empty( $number['e164_number'] ) ) {
+				return $number;
+			}
+		}
+
+		foreach ( $numbers as $number ) {
+			if ( ! empty( $number['is_active'] ) && ! empty( $number['e164_number'] ) ) {
+				return $number;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Ask the AI whether the current source cards are genuinely worth showing.
+	 *
+	 * @param array<int, array<string, mixed>> $sources Candidate sources.
+	 * @return string
+	 */
+	private function build_source_display_instruction( array $sources ): string {
+		if ( empty( $sources ) ) {
+			return '';
+		}
+
+		return 'At the end of your reply, add exactly one control tag on its own line: [ACE_SOURCES:show] or [ACE_SOURCES:hide]. Use [ACE_SOURCES:show] only when the supplied sources are genuinely useful for the visitor to open next because they directly asked about a specific product, option, document, brochure, page, specification, or you are clearly relying on a named source in your answer. Use [ACE_SOURCES:hide] for broad company questions, delivery coverage questions, rough quote checks, inferred product matches, or when the sources are only background context. Never mention the control tag in normal prose.';
+	}
+
+	/**
+	 * Read the model's source-display control tag and strip it from the reply.
+	 *
+	 * @param string $reply                 Assistant reply.
+	 * @param bool   $has_candidate_sources Whether there were any candidate sources.
+	 * @return bool
+	 */
+	private function extract_source_display_decision( string &$reply, bool $has_candidate_sources ): bool {
+		if ( ! $has_candidate_sources ) {
+			return false;
+		}
+
+		$decision = null;
+
+		if ( preg_match( '/\[ACE_SOURCES:(show|hide)\]/i', $reply, $matches ) && ! empty( $matches[1] ) ) {
+			$decision = 'show' === strtolower( (string) $matches[1] );
+			$reply    = trim( preg_replace( '/\s*\[ACE_SOURCES:(show|hide)\]\s*/i', "\n", $reply ) ?: $reply );
+		}
+
+		return null === $decision ? true : $decision;
+	}
+
+	/**
+	 * Append a deterministic lead-capture question when the AI has not done so.
+	 *
+	 * @param string               $reply    Assistant reply.
+	 * @param string               $message  Latest visitor message.
+	 * @param array<string, mixed> $thread   Conversation row.
+	 * @param array<string, mixed> $captured Freshly captured lead data.
+	 * @return string
+	 */
+	private function apply_sales_follow_up_prompt( string $reply, string $message, array $thread, array $captured ): string {
+		$reply = trim( $reply );
+
+		if ( ! $this->is_commercial_enquiry( $message ) ) {
+			return $reply;
+		}
+
+		if ( ( ! empty( $captured['contact_email'] ) || ! empty( $captured['contact_phone'] ) ) && ! preg_match( '/\b(saved|follow up|get back|team)\b/i', $reply ) ) {
+			return $reply . "\n\n" . __( 'Thanks — I have saved those details so the team can follow this up properly.', 'adaptive-customer-engagement' );
+		}
+
+		if ( empty( $thread['contact_company'] ) && empty( $thread['company_id'] ) && empty( $captured['contact_company'] ) && empty( $thread['company_prompted_at'] ) ) {
+			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'company' );
+			return $reply . "\n\n" . __( 'Which company or organisation are you buying for?', 'adaptive-customer-engagement' );
+		}
+
+		if ( $this->should_request_contact_details( $message, $thread ) && empty( $thread['contact_prompted_at'] ) ) {
+			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'contact' );
+			return $reply . "\n\n" . __( 'If you would like us to follow this up, send your name plus an email address or phone number and I will save it for the team.', 'adaptive-customer-engagement' );
+		}
+
+		return $reply;
+	}
+
+	/**
+	 * Decide whether a message is commercial enough to qualify and follow up.
+	 *
+	 * @param string $message Visitor message.
+	 * @return bool
+	 */
+	private function is_commercial_enquiry( string $message ): bool {
+		return (bool) preg_match(
+			'/\b(product|products|bin|bins|container|quote|price|pricing|cost|budget|delivery|shipping|ship|postcode|stock|availability|lead time|buy|order|basket|brochure|spec|specification|recommend|tender)\b/i',
+			$message
+		);
+	}
+
+	/**
+	 * Decide whether the assistant should ask for follow-up details.
+	 *
+	 * @param string               $message Visitor message.
+	 * @param array<string, mixed> $thread  Conversation row.
+	 * @return bool
+	 */
+	private function should_request_contact_details( string $message, array $thread ): bool {
+		if ( ! empty( $thread['follow_up_requested'] ) || ! empty( $thread['contact_email'] ) || ! empty( $thread['contact_phone'] ) ) {
+			return false;
+		}
+
+		$has_context = ! empty( $thread['contact_company'] ) || ! empty( $thread['company_id'] ) || (int) ( $thread['user_message_count'] ?? 0 ) >= 2;
+		$ready_terms = (bool) preg_match(
+			'/\b(quote|pricing|price|cost|budget|delivery|shipping|lead time|availability|speak to|talk to|contact|email|phone|call me|call back|callback|get back|follow up|brochure|order|buy|purchase|tender)\b/i',
+			$message
+		);
+
+		return $has_context && ( $ready_terms || (int) ( $thread['user_message_count'] ?? 0 ) >= 3 );
 	}
 
 	/**
@@ -504,6 +1007,17 @@ final class FrontendChatService {
 						'source_type' => sanitize_key( (string) ( $source['source_type'] ?? '' ) ),
 						'commerce'    => array(
 							'price'           => sanitize_text_field( (string) ( $source['commerce']['price'] ?? '' ) ),
+							'sku'             => sanitize_text_field( (string) ( $source['commerce']['sku'] ?? '' ) ),
+							'stock_status'    => sanitize_key( (string) ( $source['commerce']['stock_status'] ?? '' ) ),
+							'stock_quantity'  => isset( $source['commerce']['stock_quantity'] ) ? (int) $source['commerce']['stock_quantity'] : null,
+							'empty_weight_kg' => ! empty( $source['commerce']['empty_weight_kg'] ) ? (float) $source['commerce']['empty_weight_kg'] : null,
+							'dimensions_cm'   => ! empty( $source['commerce']['dimensions_cm'] ) && is_array( $source['commerce']['dimensions_cm'] ) ? array(
+								'length' => ! empty( $source['commerce']['dimensions_cm']['length'] ) ? (float) $source['commerce']['dimensions_cm']['length'] : null,
+								'width'  => ! empty( $source['commerce']['dimensions_cm']['width'] ) ? (float) $source['commerce']['dimensions_cm']['width'] : null,
+								'height' => ! empty( $source['commerce']['dimensions_cm']['height'] ) ? (float) $source['commerce']['dimensions_cm']['height'] : null,
+							) : array(),
+							'needs_shipping'  => isset( $source['commerce']['needs_shipping'] ) ? ! empty( $source['commerce']['needs_shipping'] ) : null,
+							'shipping_class'  => sanitize_text_field( (string) ( $source['commerce']['shipping_class'] ?? '' ) ),
 							'variation_count' => absint( $source['commerce']['variation_count'] ?? 0 ),
 							'can_add_to_cart' => ! empty( $source['commerce']['can_add_to_cart'] ),
 							'add_to_cart_url' => esc_url_raw( (string) ( $source['commerce']['add_to_cart_url'] ?? '' ) ),

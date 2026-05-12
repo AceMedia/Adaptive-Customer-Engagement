@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.2';
+	public const SCHEMA_VERSION        = '0.1.6';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -211,6 +211,24 @@ final class Schema {
 			assistant_message_count BIGINT UNSIGNED DEFAULT 0,
 			operator_message_count BIGINT UNSIGNED DEFAULT 0,
 			status VARCHAR(20) NOT NULL DEFAULT 'open',
+			commercial_status VARCHAR(20) NOT NULL DEFAULT 'new',
+			commercial_outcome VARCHAR(30) NULL,
+			priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+			owner_user_id BIGINT UNSIGNED NULL,
+			handover_requested TINYINT(1) DEFAULT 0,
+			handover_requested_at DATETIME NULL,
+			follow_up_requested TINYINT(1) DEFAULT 0,
+			follow_up_at DATETIME NULL,
+			contact_name VARCHAR(150) NULL,
+			contact_email VARCHAR(190) NULL,
+			contact_phone VARCHAR(50) NULL,
+			contact_company VARCHAR(190) NULL,
+			contact_role VARCHAR(150) NULL,
+			lead_summary TEXT NULL,
+			company_prompted_at DATETIME NULL,
+			contact_prompted_at DATETIME NULL,
+			contact_captured_at DATETIME NULL,
+			internal_notes TEXT NULL,
 			handover_enabled TINYINT(1) DEFAULT 0,
 			started_at DATETIME NOT NULL,
 			last_message_at DATETIME NOT NULL,
@@ -224,8 +242,41 @@ final class Schema {
 			KEY company_id (company_id),
 			KEY last_message_at (last_message_at),
 			KEY provider (provider),
+			KEY owner_user_id (owner_user_id),
 			KEY model (model),
-			KEY status (status)
+			KEY status (status),
+			KEY commercial_status (commercial_status),
+			KEY commercial_outcome (commercial_outcome),
+			KEY priority (priority),
+			KEY handover_requested (handover_requested),
+			KEY handover_requested_at (handover_requested_at),
+			KEY follow_up_requested (follow_up_requested),
+			KEY follow_up_at (follow_up_at)
+		) {$collate};";
+
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'ip_company_memory' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			ip_hash CHAR(64) NOT NULL,
+			company_id BIGINT UNSIGNED NULL,
+			company_name VARCHAR(255) NOT NULL,
+			company_domain VARCHAR(255) NULL,
+			contact_name VARCHAR(150) NULL,
+			contact_email VARCHAR(190) NULL,
+			contact_phone VARCHAR(50) NULL,
+			contact_role VARCHAR(150) NULL,
+			source VARCHAR(50) NOT NULL DEFAULT 'chat',
+			confidence VARCHAR(20) DEFAULT 'likely',
+			evidence LONGTEXT NULL,
+			first_seen DATETIME NOT NULL,
+			last_seen DATETIME NOT NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY ip_hash (ip_hash),
+			KEY company_id (company_id),
+			KEY company_name (company_name),
+			KEY confidence (confidence),
+			KEY last_seen (last_seen)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_messages' ) . " (
@@ -237,6 +288,9 @@ final class Schema {
 			message_text LONGTEXT NULL,
 			sources LONGTEXT NULL,
 			model VARCHAR(100) NULL,
+			operator_user_id BIGINT UNSIGNED NULL,
+			author_name VARCHAR(150) NULL,
+			author_avatar_url TEXT NULL,
 			is_error TINYINT(1) DEFAULT 0,
 			created_at DATETIME NOT NULL,
 			PRIMARY KEY  (id),
@@ -244,6 +298,7 @@ final class Schema {
 			KEY session_id (session_id),
 			KEY company_id (company_id),
 			KEY message_role (message_role),
+			KEY operator_user_id (operator_user_id),
 			KEY created_at (created_at)
 		) {$collate};";
 
@@ -282,6 +337,7 @@ final class Schema {
 			self::table_name( 'enrichment_cache' ),
 			self::table_name( 'chat_conversations' ),
 			self::table_name( 'chat_messages' ),
+			self::table_name( 'ip_company_memory' ),
 		);
 	}
 

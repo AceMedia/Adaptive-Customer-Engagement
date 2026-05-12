@@ -8,6 +8,7 @@
 namespace ACE\AdaptiveCustomerEngagement;
 
 use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
+use ACE\AdaptiveCustomerEngagement\AI\LeadProfileService;
 use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
@@ -20,6 +21,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
@@ -75,6 +77,7 @@ final class Plugin {
 		$call_repository    = new CallRepository();
 		$chat_conversations = new ChatConversationRepository();
 		$chat_messages      = new ChatMessageRepository();
+		$ip_company_memory  = new IpCompanyMemoryRepository();
 		$privacy            = new Privacy();
 		$enrichment_service = new EnrichmentService(
 			new ProviderRegistry(),
@@ -87,6 +90,7 @@ final class Plugin {
 		$sample_data        = new SampleDataSeeder();
 		$connect_client     = new AmazonConnectClient();
 		$site_context       = new SiteContextService();
+		$lead_profiles      = new LeadProfileService( $session_repository, $company_repository, $chat_conversations, $ip_company_memory );
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
 			new EventLogger( $event_repository ),
@@ -96,7 +100,7 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service,
 			$site_context,
-			new FrontendChatService( new OpenAIClient(), $site_context, $session_repository, $chat_conversations, $chat_messages )
+			new FrontendChatService( new OpenAIClient(), $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository )
 		);
 		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client );
 		
@@ -131,7 +135,7 @@ final class Plugin {
 	public function enqueue_frontend_assets(): void {
 		$settings    = Settings::get();
 		$woo_context = new WooCommerceContext();
-		$ai_chat     = $this->get_frontend_ai_chat_config( $settings );
+		$ai_chat     = $this->get_frontend_ai_chat_config( $settings, new ChatMessageRepository() );
 
 		if ( empty( $settings['enabled'] ) && empty( $ai_chat['enabled'] ) ) {
 			return;
@@ -167,7 +171,7 @@ final class Plugin {
 	 * @param array<string, mixed> $settings Plugin settings.
 	 * @return array<string, mixed>
 	 */
-	private function get_frontend_ai_chat_config( array $settings ): array {
+	private function get_frontend_ai_chat_config( array $settings, ChatMessageRepository $chat_messages ): array {
 		$ai_agent   = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$admin_only = ! empty( $ai_agent['frontend_chat_admin_only'] );
 		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE );
@@ -193,16 +197,22 @@ final class Plugin {
 			'adminOnly'         => $admin_only,
 			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
 			'syncEndpoint'      => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ),
+			'typingEndpoint'    => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ),
 			'endEndpoint'       => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ),
+			'availabilityEndpoint' => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/availability' ) ),
+			'contactEndpoint'   => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/contact' ) ),
 			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 			'title'             => $bot_name,
 			'botName'           => $bot_name,
+			'botAvatarUrl'      => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
 			'greeting'          => $greeting,
+			'starterQuestions'  => $chat_messages->get_common_user_questions( 3 ),
 			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),
 			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
 			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),
 			'maxHistoryMessages'=> max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? 8 ) ) ),
 			'pollIntervalMs'    => 5000,
+			'availabilityPollIntervalMs' => 15000,
 			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),
 		);
 	}

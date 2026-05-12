@@ -7,7 +7,10 @@
 
 namespace ACE\AdaptiveCustomerEngagement\REST;
 
+use ACE\AdaptiveCustomerEngagement\AI\AgentAvailability;
+use ACE\AdaptiveCustomerEngagement\AI\ChatPresence;
 use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
+use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
@@ -283,6 +286,56 @@ final class AdminController {
 				'methods'             => 'POST',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'chat_reply' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/(?P<id>\d+)/workflow',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_workflow' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/availability',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_availability' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/alerts',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_alerts' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/(?P<id>\d+)/suggestions',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_suggestions' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/chats/(?P<id>\d+)/typing',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'chat_typing' ),
 			)
 		);
 
@@ -746,13 +799,22 @@ final class AdminController {
 				'metrics'    => array(
 					'conversations' => $total,
 					'messages'      => $this->chat_conversations->count_messages(),
+					'handover'      => $this->chat_conversations->count_conversations( array_merge( $filters, array( 'status' => ChatConversationRepository::STATUS_HANDOVER ) ) ),
+					'new'           => $this->chat_conversations->count_conversations( array_merge( $filters, array( 'commercial_status' => ChatConversationRepository::COMMERCIAL_STATUS_NEW ) ) ),
+					'due_follow_up' => $this->chat_conversations->count_due_follow_ups( $filters ),
 				),
 				'items'      => $this->chat_conversations->get_conversations( $per_page, $filters, ( $page - 1 ) * $per_page ),
 				'filters'    => array(
-					'providers' => $this->chat_conversations->get_providers(),
-					'models'    => $this->chat_conversations->get_models(),
-					'active'    => $filters,
+					'providers'           => $this->chat_conversations->get_providers(),
+					'models'              => $this->chat_conversations->get_models(),
+					'statuses'            => ChatConversationRepository::get_commercial_statuses(),
+					'runtime_statuses'    => array( ChatConversationRepository::STATUS_OPEN, ChatConversationRepository::STATUS_HANDOVER, ChatConversationRepository::STATUS_ENDED ),
+					'outcomes'            => ChatConversationRepository::get_commercial_outcomes(),
+					'priorities'          => ChatConversationRepository::get_priorities(),
+					'owners'              => $this->get_chat_owner_options(),
+					'active'              => $filters,
 				),
+				'agent_availability' => AgentAvailability::get_status(),
 				'segments'   => Settings::get_reporting_segments( 'chats' ),
 				'pagination' => array(
 					'page'        => $page,
@@ -781,6 +843,138 @@ final class AdminController {
 	}
 
 	/**
+	 * Update commercial workflow metadata for a chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_workflow( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$updated = $this->chat_conversations->update_workflow(
+			(int) $conversation['id'],
+			array(
+				'commercial_status'  => $payload['commercial_status'] ?? '',
+				'commercial_outcome' => $payload['commercial_outcome'] ?? '',
+				'priority'           => $payload['priority'] ?? '',
+				'owner_user_id'      => $payload['owner_user_id'] ?? 0,
+				'follow_up_at'       => $payload['follow_up_at'] ?? '',
+				'internal_notes'     => $payload['internal_notes'] ?? '',
+			)
+		);
+
+		if ( ! $updated ) {
+			return new WP_Error( 'ace_chat_workflow_update_failed', __( 'The chat workflow details could not be saved.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		return new WP_REST_Response( $this->build_chat_detail_response( $updated ) );
+	}
+
+	/**
+	 * Update the current admin chat-watching heartbeat.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function chat_availability( WP_REST_Request $request ): WP_REST_Response {
+		$payload = $request->get_json_params();
+		$payload = is_array( $payload ) ? $payload : array();
+		$active  = ! isset( $payload['active'] ) || ! empty( $payload['active'] );
+		$status  = $active
+			? AgentAvailability::mark_watching( get_current_user_id() )
+			: AgentAvailability::stop_watching( get_current_user_id() );
+
+		return new WP_REST_Response( $status );
+	}
+
+	/**
+	 * Get recent handover alerts for online admins.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function chat_alerts( WP_REST_Request $request ): WP_REST_Response {
+		$since = sanitize_text_field( (string) $request->get_param( 'since' ) );
+		$items = array_map(
+			function ( array $item ): array {
+				$item['chat_url'] = esc_url_raw( admin_url( 'admin.php?page=ace-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) );
+				return $item;
+			},
+			$this->chat_conversations->get_handover_alerts( $since )
+		);
+
+		return new WP_REST_Response(
+			array(
+				'items'        => $items,
+				'generated_at' => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
+	 * Build suggested agent replies for a chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_suggestions( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'suggestions' => $this->build_chat_reply_suggestions( $conversation ),
+				'generated_at' => gmdate( 'c' ),
+			)
+		);
+	}
+
+	/**
+	 * Update agent typing state for a chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function chat_typing( WP_REST_Request $request ) {
+		$conversation = $this->chat_conversations->find( absint( $request['id'] ) );
+
+		if ( ! $conversation ) {
+			return new WP_Error( 'ace_chat_not_found', __( 'Chat conversation not found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
+		}
+
+		$payload   = $request->get_json_params();
+		$payload   = is_array( $payload ) ? $payload : array();
+		$is_typing = ! empty( $payload['is_typing'] );
+		$user      = wp_get_current_user();
+
+		ChatPresence::set_typing(
+			(int) $conversation['id'],
+			'agent',
+			$is_typing,
+			array(
+				'label' => __( 'Agent', 'adaptive-customer-engagement' ),
+				'name'  => $user instanceof \WP_User ? (string) $user->display_name : '',
+			)
+		);
+
+		return new WP_REST_Response(
+			array(
+				'ok'     => true,
+				'typing' => ChatPresence::get_typing_state( (int) $conversation['id'] ),
+			)
+		);
+	}
+
+	/**
 	 * Update handover/end status for a chat conversation.
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -800,15 +994,31 @@ final class AdminController {
 		switch ( $action ) {
 			case 'handover':
 				$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], true );
+				$conversation = $conversation ? $this->chat_conversations->clear_handover_request( (int) $conversation['id'] ) : $conversation;
+				if ( $conversation ) {
+					$conversation = $this->chat_conversations->update_workflow(
+						(int) $conversation['id'],
+						array(
+							'owner_user_id'      => ! empty( $conversation['owner_user_id'] ) ? (int) $conversation['owner_user_id'] : get_current_user_id(),
+							'commercial_status'  => ChatConversationRepository::COMMERCIAL_STATUS_WORKING,
+							'commercial_outcome' => $conversation['commercial_outcome'] ?? '',
+							'priority'           => $conversation['priority'] ?? ChatConversationRepository::PRIORITY_NORMAL,
+							'follow_up_at'       => $conversation['follow_up_at'] ?? '',
+							'internal_notes'     => $conversation['internal_notes'] ?? '',
+						)
+					);
+				}
 				break;
 			case 'resume_ai':
 				if ( ! empty( $conversation['ended_at'] ) ) {
 					return new WP_Error( 'ace_chat_already_ended', __( 'This chat has already ended and cannot be handed back to the assistant.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
 				}
 				$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], false );
+				$conversation = $conversation ? $this->chat_conversations->clear_handover_request( (int) $conversation['id'] ) : $conversation;
 				break;
 			case 'end':
 				$conversation = $this->chat_conversations->end_conversation( (int) $conversation['id'], 'admin' );
+				$conversation = $conversation ? $this->chat_conversations->clear_handover_request( (int) $conversation['id'] ) : $conversation;
 				break;
 			default:
 				return new WP_Error( 'ace_chat_action_invalid', __( 'The requested chat action is not supported.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
@@ -816,6 +1026,10 @@ final class AdminController {
 
 		if ( ! $conversation ) {
 			return new WP_Error( 'ace_chat_update_failed', __( 'The chat conversation could not be updated.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		if ( 'end' === $action ) {
+			ChatPresence::clear_conversation( (int) $conversation['id'] );
 		}
 
 		return new WP_REST_Response( $this->build_chat_detail_response( $conversation ) );
@@ -849,6 +1063,17 @@ final class AdminController {
 		if ( empty( $conversation['handover_enabled'] ) ) {
 			$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], true ) ?: $conversation;
 		}
+		$conversation = $this->chat_conversations->update_workflow(
+			(int) $conversation['id'],
+			array(
+				'owner_user_id'      => ! empty( $conversation['owner_user_id'] ) ? (int) $conversation['owner_user_id'] : get_current_user_id(),
+				'commercial_status'  => ChatConversationRepository::COMMERCIAL_STATUS_WORKING,
+				'commercial_outcome' => $conversation['commercial_outcome'] ?? '',
+				'priority'           => $conversation['priority'] ?? ChatConversationRepository::PRIORITY_NORMAL,
+				'follow_up_at'       => $conversation['follow_up_at'] ?? '',
+				'internal_notes'     => $conversation['internal_notes'] ?? '',
+			)
+		) ?: $conversation;
 
 		$this->chat_messages->create(
 			array(
@@ -857,12 +1082,17 @@ final class AdminController {
 				'company_id'      => (int) ( $conversation['company_id'] ?? 0 ),
 				'message_role'    => 'operator',
 				'message_text'    => $message,
-				'sources'         => array(),
+				'sources'         => $this->site_context->infer_message_sources( $message, 5 ),
 				'model'           => 'human',
+				'operator_user_id'=> get_current_user_id(),
+				'author_name'     => wp_get_current_user()->display_name,
+				'author_avatar_url' => esc_url_raw( get_avatar_url( get_current_user_id(), array( 'size' => 96 ) ) ?: '' ),
 				'is_error'        => false,
 			)
 		);
+		ChatPresence::set_typing( (int) $conversation['id'], 'agent', false );
 		$this->chat_conversations->record_message( (int) $conversation['id'], 'operator', 'human' );
+		$conversation = $this->chat_conversations->clear_handover_request( (int) $conversation['id'] ) ?: $conversation;
 
 		$conversation = $this->chat_conversations->find( (int) $conversation['id'] );
 
@@ -880,10 +1110,200 @@ final class AdminController {
 	 * @return array<string, mixed>
 	 */
 	private function build_chat_detail_response( array $conversation ): array {
+		$session_commerce = ! empty( $conversation['session_id'] ) ? $this->events->get_session_woocommerce_interest( (int) $conversation['session_id'] ) : array();
+		$company_commerce = ! empty( $conversation['company_id'] ) ? $this->events->get_company_woocommerce_interest( (int) $conversation['company_id'] ) : array();
+
 		return array(
-			'conversation' => $conversation,
-			'messages'     => $this->chat_messages->get_by_conversation( (int) $conversation['id'] ),
+			'conversation'      => $conversation,
+			'messages'          => $this->chat_messages->get_by_conversation( (int) $conversation['id'] ),
+			'session_commerce'  => $session_commerce,
+			'company_commerce'  => $company_commerce,
+			'typing'            => ChatPresence::get_typing_state( (int) $conversation['id'] ),
+			'owner_options'     => $this->get_chat_owner_options(),
+			'workflow_options'  => array(
+				'statuses'   => ChatConversationRepository::get_commercial_statuses(),
+				'outcomes'   => ChatConversationRepository::get_commercial_outcomes(),
+				'priorities' => ChatConversationRepository::get_priorities(),
+			),
 		);
+	}
+
+	/**
+	 * Build suggested human replies for a chat.
+	 *
+	 * @param array<string, mixed> $conversation Conversation row.
+	 * @return array<int, string>
+	 */
+	private function build_chat_reply_suggestions( array $conversation ): array {
+		$messages            = $this->chat_messages->get_by_conversation( (int) $conversation['id'] );
+		$latest_user_text    = '';
+		$latest_user_message = array();
+		$conversation_id     = absint( $conversation['id'] ?? 0 );
+
+		for ( $index = count( $messages ) - 1; $index >= 0; --$index ) {
+			if ( 'user' === ( $messages[ $index ]['message_role'] ?? '' ) && ! empty( $messages[ $index ]['message_text'] ) ) {
+				$latest_user_message = $messages[ $index ];
+				$latest_user_text    = sanitize_textarea_field( (string) $latest_user_message['message_text'] );
+				break;
+			}
+		}
+
+		if ( '' === $latest_user_text ) {
+			return array(
+				__( 'Thanks for your message — I am picking this up now. How can I help further?', 'adaptive-customer-engagement' ),
+				__( 'I can help with product details, availability, or the next best option if you tell me what you need.', 'adaptive-customer-engagement' ),
+				__( 'Could you tell me a bit more about what you are looking for so I can point you in the right direction?', 'adaptive-customer-engagement' ),
+				__( 'If it helps, I can check the most relevant product or page details for you and summarise them here.', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		$cache_fragment = implode(
+			'|',
+			array(
+				(string) absint( $latest_user_message['id'] ?? 0 ),
+				sanitize_text_field( (string) ( $latest_user_message['created_at'] ?? '' ) ),
+				$latest_user_text,
+			)
+		);
+		$cache_key      = 'ace_chat_suggestions_' . $conversation_id . '_' . md5( $cache_fragment );
+		$cached         = get_transient( $cache_key );
+
+		if ( is_array( $cached ) ) {
+			$cached = array_values(
+				array_slice(
+					array_filter(
+						array_map(
+							static function ( $suggestion ): string {
+								return sanitize_textarea_field( is_string( $suggestion ) ? $suggestion : '' );
+							},
+							$cached
+						)
+					),
+					0,
+					4
+				)
+			);
+
+			if ( 4 === count( $cached ) ) {
+				return $cached;
+			}
+		}
+
+		$settings       = Settings::get();
+		$ai_agent       = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+		$api_key        = sanitize_text_field( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
+		$model          = sanitize_text_field( (string) ( $ai_agent['openai_model'] ?? 'gpt-4.1-mini' ) );
+		$site_context   = new SiteContextService();
+		$site_answer    = $site_context->answer_question( $latest_user_text, 3 );
+		$session_brief  = ! empty( $conversation['session_id'] ) ? $this->events->get_session_woocommerce_interest( (int) $conversation['session_id'] ) : array();
+		$company_brief  = ! empty( $conversation['company_id'] ) ? $this->events->get_company_woocommerce_interest( (int) $conversation['company_id'] ) : array();
+		$transcript     = array_slice( $messages, -8 );
+		$transcript_txt = implode(
+			"\n",
+			array_map(
+				static function ( array $message ): string {
+					$role = sanitize_key( (string) ( $message['message_role'] ?? 'message' ) );
+					$name = sanitize_text_field( (string) ( $message['author_name'] ?? ucfirst( $role ) ) );
+					$text = sanitize_textarea_field( (string) ( $message['message_text'] ?? '' ) );
+					return sprintf( '%s (%s): %s', $name, $role, $text );
+				},
+				$transcript
+			)
+		);
+
+		if ( '' !== $api_key ) {
+			$response = ( new OpenAIClient() )->create_chat_completion(
+				array(
+					array(
+						'role'    => 'system',
+						'content' => 'You help a human website agent reply in live chat. Return exactly four short reply suggestions in British English. Each suggestion must be plain text, no numbering, no bullets, no markdown, and suitable for sending as a direct human reply. Keep them concise, warm, and grounded in the supplied context. If product context is supplied, use it. If more information is needed, one suggestion may ask a concise clarifying question.',
+					),
+					array(
+						'role'    => 'user',
+						'content' => "Latest visitor message:\n{$latest_user_text}\n\nRecent transcript:\n{$transcript_txt}\n\nSite answer summary:\n" . sanitize_textarea_field( (string) ( $site_answer['answer'] ?? '' ) ) . "\n\nSession buying signals:\n" . sanitize_textarea_field( (string) ( $session_brief['summary'] ?? '' ) ) . "\n\nCompany buying signals:\n" . sanitize_textarea_field( (string) ( $company_brief['summary'] ?? '' ) ) . "\n\nReturn a JSON array with exactly 4 strings.",
+					),
+				),
+				array(
+					'api_key'             => $api_key,
+					'model'               => $model,
+					'temperature'         => 0.4,
+					'max_response_tokens' => 350,
+				)
+			);
+
+			if ( ! is_wp_error( $response ) ) {
+				$suggestions = json_decode( (string) ( $response['message'] ?? '' ), true );
+
+				if ( is_array( $suggestions ) ) {
+					$suggestions = array_values(
+						array_slice(
+							array_filter(
+								array_map(
+									static function ( $suggestion ): string {
+										return sanitize_textarea_field( is_string( $suggestion ) ? $suggestion : '' );
+									},
+									$suggestions
+								)
+							),
+							0,
+							4
+						)
+					);
+
+					if ( 4 === count( $suggestions ) ) {
+						set_transient( $cache_key, $suggestions, DAY_IN_SECONDS * 7 );
+						return $suggestions;
+					}
+				}
+			}
+		}
+
+		$site_summary = sanitize_textarea_field( (string) ( $site_answer['answer'] ?? '' ) );
+		$session_summary = sanitize_textarea_field( (string) ( $session_brief['summary'] ?? '' ) );
+
+		$suggestions = array(
+			sprintf(
+				/* translators: %s: latest user message context. */
+				__( 'Thanks for your message. Based on what you have asked, %s', 'adaptive-customer-engagement' ),
+				'' !== $site_summary ? lcfirst( rtrim( $site_summary, '.' ) ) . '.' : __( 'I am checking the most relevant details for you now.', 'adaptive-customer-engagement' )
+			),
+			'' !== $session_summary
+				? sprintf( __( 'I can see some related product interest already: %s', 'adaptive-customer-engagement' ), rtrim( $session_summary, '.' ) . '.' )
+				: __( 'I can help narrow this down if you tell me which product, size, or use case you have in mind.', 'adaptive-customer-engagement' ),
+			__( 'If you would like, I can recommend the most suitable option and explain why it fits what you need.', 'adaptive-customer-engagement' ),
+			__( 'Could you tell me a little more about the requirement so I can give you the most useful answer?', 'adaptive-customer-engagement' ),
+		);
+
+		set_transient( $cache_key, $suggestions, DAY_IN_SECONDS * 7 );
+
+		return $suggestions;
+	}
+
+	/**
+	 * Get chat owner options for the commercial workflow.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_chat_owner_options(): array {
+		$users   = get_users(
+			array(
+				'fields'     => array( 'ID', 'display_name', 'user_email' ),
+				'capability' => Capabilities::MANAGE,
+				'orderby'    => 'display_name',
+				'order'      => 'ASC',
+			)
+		);
+		$options = array();
+
+		foreach ( $users as $user ) {
+			$options[] = array(
+				'id'           => (int) $user->ID,
+				'display_name' => $user->display_name,
+				'user_email'   => $user->user_email,
+			);
+		}
+
+		return $options;
 	}
 
 	/**
@@ -1099,11 +1519,14 @@ final class AdminController {
 
 		return new WP_REST_Response(
 			array(
-				'format'      => 'adaptive-customer-engagement-settings',
-				'plugin'      => 'adaptive-customer-engagement',
-				'version'     => defined( 'ACE_PLUGIN_VERSION' ) ? sanitize_text_field( (string) ACE_PLUGIN_VERSION ) : '',
-				'exported_at' => gmdate( 'c' ),
-				'settings'    => $settings,
+				'format'             => 'adaptive-customer-engagement-settings',
+				'plugin'             => 'adaptive-customer-engagement',
+				'version'            => defined( 'ACE_PLUGIN_VERSION' ) ? sanitize_text_field( (string) ACE_PLUGIN_VERSION ) : '',
+				'exported_at'        => gmdate( 'c' ),
+				'settings'           => $settings,
+				'hash_salt'          => (string) get_option( Settings::HASH_SALT_OPTION, '' ),
+				'reporting_segments' => Settings::get_reporting_segments(),
+				'numbers'            => $this->get_exportable_numbers(),
 			)
 		);
 	}
@@ -1134,11 +1557,22 @@ final class AdminController {
 
 		$imported_settings = $this->maybe_enrich_connect_settings( $imported_settings );
 		$updated_settings  = Settings::update( $imported_settings );
+		$hash_salt         = isset( $payload['hash_salt'] ) ? substr( (string) $payload['hash_salt'], 0, 255 ) : '';
+		$segments          = isset( $payload['reporting_segments'] ) && is_array( $payload['reporting_segments'] ) ? Settings::update_reporting_segments( $payload['reporting_segments'] ) : Settings::get_reporting_segments();
+
+		if ( '' !== $hash_salt ) {
+			update_option( Settings::HASH_SALT_OPTION, $hash_salt, false );
+		}
+
+		if ( isset( $payload['numbers'] ) && is_array( $payload['numbers'] ) ) {
+			$this->import_number_configuration( $payload['numbers'] );
+		}
 
 		return new WP_REST_Response(
 			array(
-				'settings'    => $updated_settings,
-				'imported_at' => gmdate( 'c' ),
+				'settings'           => $this->build_settings_response( $updated_settings ),
+				'reporting_segments' => $segments,
+				'imported_at'        => gmdate( 'c' ),
 			)
 		);
 	}
@@ -2719,14 +3153,29 @@ final class AdminController {
 				'session_uuid'            => 'Session UUID',
 				'visitor_uuid'            => 'Visitor UUID',
 				'company_name'            => 'Company',
+				'owner_name'              => 'Owner',
+				'status'                  => 'Runtime status',
+				'commercial_status'       => 'Workflow status',
+				'commercial_outcome'      => 'Outcome',
+				'priority'                => 'Priority',
+				'follow_up_requested'     => 'Follow-up requested',
+				'follow_up_at'            => 'Follow-up due',
+				'contact_name'            => 'Contact name',
+				'contact_email'           => 'Contact email',
+				'contact_phone'           => 'Contact phone',
+				'contact_company'         => 'Contact company',
+				'contact_role'            => 'Contact role',
+				'lead_summary'            => 'Lead summary',
 				'provider'                => 'Provider',
 				'model'                   => 'Model',
 				'message_count'           => 'Messages',
 				'user_message_count'      => 'User messages',
 				'assistant_message_count' => 'Assistant messages',
+				'operator_message_count'  => 'Operator messages',
 				'page_title'              => 'Page title',
 				'page_url'                => 'Page URL',
 				'first_user_message'      => 'First user message',
+				'internal_notes'          => 'Internal notes',
 				'started_at'              => 'Started',
 				'last_message_at'         => 'Last message',
 			),
@@ -2935,6 +3384,139 @@ final class AdminController {
 			'is_active'                      => rest_sanitize_boolean( $payload['is_active'] ?? true ) ? 1 : 0,
 			'priority'                       => absint( $payload['priority'] ?? 10 ),
 		);
+	}
+
+	/**
+	 * Export local/connect-linked number rules as configuration payloads.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_exportable_numbers(): array {
+		return array_values(
+			array_map(
+				static function ( array $row ): array {
+					return array(
+						'label'                          => sanitize_text_field( (string) ( $row['label'] ?? '' ) ),
+						'display_number'                 => sanitize_text_field( (string) ( $row['display_number'] ?? '' ) ),
+						'e164_number'                    => sanitize_text_field( (string) ( $row['e164_number'] ?? '' ) ),
+						'source_type'                    => sanitize_key( (string) ( $row['source_type'] ?? '' ) ),
+						'source_value'                   => sanitize_text_field( (string) ( $row['source_value'] ?? '' ) ),
+						'page_match_type'                => sanitize_key( (string) ( $row['page_match_type'] ?? '' ) ),
+						'page_match_value'               => sanitize_text_field( (string) ( $row['page_match_value'] ?? '' ) ),
+						'campaign_match'                 => sanitize_text_field( (string) ( $row['campaign_match'] ?? '' ) ),
+						'amazon_connect_phone_number_id' => sanitize_text_field( (string) ( $row['amazon_connect_phone_number_id'] ?? '' ) ),
+						'amazon_connect_contact_flow_id' => sanitize_text_field( (string) ( $row['amazon_connect_contact_flow_id'] ?? '' ) ),
+						'is_default'                     => ! empty( $row['is_default'] ) ? 1 : 0,
+						'is_active'                      => ! empty( $row['is_active'] ) ? 1 : 0,
+						'priority'                       => absint( $row['priority'] ?? 10 ),
+					);
+				},
+				array_values(
+					array_filter(
+						$this->numbers->all(),
+						static function ( array $row ): bool {
+							return empty( $row['is_sample'] );
+						}
+					)
+				)
+			)
+		);
+	}
+
+	/**
+	 * Import number-rule configuration without disturbing historical call records.
+	 *
+	 * @param array<int, mixed> $numbers Number payloads.
+	 * @return void
+	 */
+	private function import_number_configuration( array $numbers ): void {
+		$existing = array_values(
+			array_filter(
+				$this->numbers->all(),
+				static function ( array $row ): bool {
+					return empty( $row['is_sample'] );
+				}
+			)
+		);
+		$touched_ids = array();
+
+		foreach ( $numbers as $number ) {
+			$payload = $this->sanitize_number_payload( $number );
+
+			if ( '' === $payload['label'] || '' === $payload['display_number'] || '' === $payload['e164_number'] ) {
+				continue;
+			}
+
+			$match = $this->find_import_number_match( $payload, $existing );
+
+			if ( ! empty( $match['id'] ) ) {
+				$updated = $this->numbers->update( (int) $match['id'], $payload );
+
+				if ( ! empty( $updated['id'] ) ) {
+					$touched_ids[] = (int) $updated['id'];
+				}
+
+				continue;
+			}
+
+			$created = $this->numbers->create( $payload );
+
+			if ( ! empty( $created['id'] ) ) {
+				$touched_ids[] = (int) $created['id'];
+			}
+		}
+
+		foreach ( $existing as $row ) {
+			$row_id = (int) ( $row['id'] ?? 0 );
+
+			if ( $row_id <= 0 || in_array( $row_id, $touched_ids, true ) ) {
+				continue;
+			}
+
+			$this->numbers->update(
+				$row_id,
+				array(
+					'is_active'  => 0,
+					'is_default' => 0,
+				)
+			);
+		}
+	}
+
+	/**
+	 * Match an imported number payload to an existing local number rule.
+	 *
+	 * @param array<string, mixed>      $payload  Imported number payload.
+	 * @param array<int, array<string,mixed>> $existing Existing numbers.
+	 * @return array<string, mixed>|null
+	 */
+	private function find_import_number_match( array $payload, array $existing ): ?array {
+		foreach ( $existing as $row ) {
+			if (
+				'' !== (string) $payload['amazon_connect_phone_number_id']
+				&& (string) ( $row['amazon_connect_phone_number_id'] ?? '' ) === (string) $payload['amazon_connect_phone_number_id']
+			) {
+				return $row;
+			}
+		}
+
+		foreach ( $existing as $row ) {
+			if ( (string) ( $row['e164_number'] ?? '' ) === (string) $payload['e164_number'] ) {
+				return $row;
+			}
+		}
+
+		foreach ( $existing as $row ) {
+			if (
+				(string) ( $row['label'] ?? '' ) === (string) $payload['label']
+				&& (string) ( $row['source_type'] ?? '' ) === (string) $payload['source_type']
+				&& (string) ( $row['source_value'] ?? '' ) === (string) $payload['source_value']
+			) {
+				return $row;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -4366,11 +4948,17 @@ final class AdminController {
 	private function get_chat_filters( WP_REST_Request $request ): array {
 		return $this->get_chat_filters_from_array(
 			array(
-				'search'    => $request->get_param( 'search' ),
-				'provider'  => $request->get_param( 'provider' ),
-				'model'     => $request->get_param( 'model' ),
-				'date_from' => $request->get_param( 'date_from' ),
-				'date_to'   => $request->get_param( 'date_to' ),
+				'search'             => $request->get_param( 'search' ),
+				'provider'           => $request->get_param( 'provider' ),
+				'model'              => $request->get_param( 'model' ),
+				'status'             => $request->get_param( 'status' ),
+				'commercial_status'  => $request->get_param( 'commercial_status' ),
+				'commercial_outcome' => $request->get_param( 'commercial_outcome' ),
+				'priority'           => $request->get_param( 'priority' ),
+				'owner_user_id'      => $request->get_param( 'owner_user_id' ),
+				'due_only'           => $request->get_param( 'due_only' ),
+				'date_from'          => $request->get_param( 'date_from' ),
+				'date_to'            => $request->get_param( 'date_to' ),
 			)
 		);
 	}
@@ -4383,11 +4971,17 @@ final class AdminController {
 	 */
 	private function get_chat_filters_from_array( array $values ): array {
 		return array(
-			'search'    => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
-			'provider'  => sanitize_key( (string) ( $values['provider'] ?? '' ) ),
-			'model'     => sanitize_text_field( (string) ( $values['model'] ?? '' ) ),
-			'date_from' => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
-			'date_to'   => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
+			'search'             => sanitize_text_field( (string) ( $values['search'] ?? '' ) ),
+			'provider'           => sanitize_key( (string) ( $values['provider'] ?? '' ) ),
+			'model'              => sanitize_text_field( (string) ( $values['model'] ?? '' ) ),
+			'status'             => sanitize_key( (string) ( $values['status'] ?? '' ) ),
+			'commercial_status'  => sanitize_key( (string) ( $values['commercial_status'] ?? '' ) ),
+			'commercial_outcome' => sanitize_key( (string) ( $values['commercial_outcome'] ?? '' ) ),
+			'priority'           => sanitize_key( (string) ( $values['priority'] ?? '' ) ),
+			'owner_user_id'      => (string) absint( $values['owner_user_id'] ?? 0 ),
+			'due_only'           => ! empty( $values['due_only'] ) ? '1' : '',
+			'date_from'          => sanitize_text_field( (string) ( $values['date_from'] ?? '' ) ),
+			'date_to'            => sanitize_text_field( (string) ( $values['date_to'] ?? '' ) ),
 		);
 	}
 

@@ -165,11 +165,41 @@ final class TrackingController {
 
 		register_rest_route(
 			$this->namespace,
+			'/ai/chat/typing',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_chat_typing' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/ai/chat/end',
 			array(
 				'methods'             => 'POST',
 				'permission_callback' => '__return_true',
 				'callback'            => array( $this, 'ai_chat_end' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/chat/availability',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_chat_availability' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/chat/contact',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_chat_contact' ),
 			)
 		);
 	}
@@ -331,6 +361,40 @@ final class TrackingController {
 	}
 
 	/**
+	 * Update visitor typing state for a frontend chat conversation.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_typing( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-typing';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 90, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many typing updates have been sent just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$response = $this->frontend_chat->update_typing( $payload );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new WP_REST_Response( $response );
+	}
+
+	/**
 	 * End a frontend chat conversation.
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -356,6 +420,67 @@ final class TrackingController {
 
 		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 		$response = $this->frontend_chat->end_conversation( $payload );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return new WP_REST_Response( $response );
+	}
+
+	/**
+	 * Get current admin watcher availability for frontend chats.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_availability( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-availability';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 120, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many chat availability checks have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		return new WP_REST_Response( $this->frontend_chat->get_availability() );
+	}
+
+	/**
+	 * Store a visitor follow-up request for the chat team.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_chat_contact( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-contact';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 10, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many follow-up requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$response = $this->frontend_chat->submit_follow_up_request( $payload );
 
 		if ( is_wp_error( $response ) ) {
 			return $response;

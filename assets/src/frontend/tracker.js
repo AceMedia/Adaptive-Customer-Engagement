@@ -409,6 +409,26 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				margin-top: 4px;
 				color: rgba(255, 255, 255, 0.75);
 			}
+			#ace-ai-chat-status {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				margin-top: 6px;
+				font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: rgba(255, 255, 255, 0.82);
+			}
+			#ace-ai-chat-status::before {
+				content: "";
+				width: 8px;
+				height: 8px;
+				border-radius: 999px;
+				background: #f59e0b;
+				box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+			}
+			#ace-ai-chat-status[data-online="true"]::before {
+				background: #22c55e;
+				box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+			}
 			#ace-ai-chat-close {
 				border: 0;
 				background: transparent;
@@ -435,6 +455,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				opacity: 0.6;
 				cursor: not-allowed;
 			}
+			#ace-ai-chat-contact-toggle {
+				border: 0;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.14);
+				color: #ffffff;
+				padding: 8px 12px;
+				font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+			}
+			#ace-ai-chat-contact-toggle[hidden] {
+				display: none;
+			}
 			#ace-ai-chat-messages {
 				flex: 1;
 				padding: 16px;
@@ -442,7 +474,51 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				background: #f8fafc;
 			}
 			.ace-ai-chat-message {
+				display: flex;
+				gap: 10px;
+				align-items: flex-start;
 				margin-bottom: 14px;
+			}
+			.ace-ai-chat-message[data-role="user"] {
+				justify-content: flex-end;
+			}
+			.ace-ai-chat-message-body {
+				max-width: min(88%, 100%);
+			}
+			.ace-ai-chat-message-meta {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin-bottom: 6px;
+			}
+			.ace-ai-chat-message[data-role="user"] .ace-ai-chat-message-meta {
+				justify-content: flex-end;
+			}
+			.ace-ai-chat-avatar {
+				flex: 0 0 32px;
+				width: 32px;
+				height: 32px;
+				border-radius: 999px;
+				object-fit: cover;
+				background: #dbeafe;
+				border: 1px solid rgba(15, 23, 42, 0.08);
+			}
+			.ace-ai-chat-avatar-placeholder {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				flex: 0 0 32px;
+				width: 32px;
+				height: 32px;
+				border-radius: 999px;
+				background: linear-gradient(135deg, #dbeafe, #eff6ff);
+				color: #1d4ed8;
+				font: 700 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				border: 1px solid rgba(15, 23, 42, 0.08);
+			}
+			.ace-ai-chat-message-name {
+				font: 700 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #334155;
 			}
 			.ace-ai-chat-bubble {
 				display: inline-block;
@@ -464,16 +540,49 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				border: 1px solid rgba(15, 23, 42, 0.08);
 			}
 			.ace-ai-chat-message[data-role="operator"] .ace-ai-chat-bubble {
-				background: #f5f3ff;
-				color: #4c1d95;
-				border: 1px solid rgba(124, 58, 237, 0.16);
-			}
-			.ace-ai-chat-message[data-role="user"] {
-				text-align: right;
+				background: #f8fafc;
+				color: #0f172a;
+				border: 1px solid rgba(99, 102, 241, 0.18);
 			}
 			.ace-ai-chat-message[data-role="user"] .ace-ai-chat-bubble {
 				background: #2563eb;
 				color: #ffffff;
+			}
+			.ace-ai-chat-message[data-role="typing"] .ace-ai-chat-bubble {
+				display: inline-flex;
+				align-items: center;
+				gap: 10px;
+				background: #ffffff;
+				color: #0f172a;
+				border: 1px dashed rgba(15, 23, 42, 0.14);
+			}
+			.ace-ai-chat-typing-dots {
+				display: inline-flex;
+				align-items: center;
+				gap: 4px;
+			}
+			.ace-ai-chat-typing-dots span {
+				width: 7px;
+				height: 7px;
+				border-radius: 999px;
+				background: #94a3b8;
+				animation: ace-ai-chat-typing 1.2s ease-in-out infinite;
+			}
+			.ace-ai-chat-typing-dots span:nth-child(2) {
+				animation-delay: 0.15s;
+			}
+			.ace-ai-chat-typing-dots span:nth-child(3) {
+				animation-delay: 0.3s;
+			}
+			@keyframes ace-ai-chat-typing {
+				0%, 80%, 100% {
+					opacity: 0.32;
+					transform: translateY(0);
+				}
+				40% {
+					opacity: 1;
+					transform: translateY(-2px);
+				}
 			}
 			.ace-ai-chat-sources {
 				display: grid;
@@ -579,11 +688,87 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				color: #0f172a;
 				border-color: rgba(15, 23, 42, 0.12);
 			}
+			.ace-ai-chat-source-action[disabled] {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
 			#ace-ai-chat-form {
 				box-sizing: border-box;
 				padding: 12px;
 				border-top: 1px solid rgba(15, 23, 42, 0.08);
 				background: #ffffff;
+			}
+			#ace-ai-chat-contact-panel {
+				display: grid;
+				gap: 10px;
+				margin-bottom: 12px;
+				padding: 12px;
+				border-radius: 14px;
+				background: #f8fafc;
+				border: 1px solid rgba(15, 23, 42, 0.08);
+			}
+			#ace-ai-chat-contact-panel[hidden] {
+				display: none;
+			}
+			#ace-ai-chat-starters {
+				display: grid;
+				gap: 8px;
+				margin-bottom: 12px;
+			}
+			#ace-ai-chat-starters[hidden] {
+				display: none;
+			}
+			.ace-ai-chat-starters-label {
+				margin: 0;
+				font: 700 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				color: #334155;
+			}
+			.ace-ai-chat-starters-list {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+			}
+			.ace-ai-chat-starter {
+				border: 1px solid rgba(37, 99, 235, 0.14);
+				border-radius: 999px;
+				background: #eff6ff;
+				color: #1d4ed8;
+				padding: 8px 12px;
+				font: 700 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+				text-align: left;
+			}
+			.ace-ai-chat-starter[disabled] {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
+			#ace-ai-chat-contact-panel p {
+				margin: 0;
+				color: #334155;
+				font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			.ace-ai-chat-contact-field {
+				display: block;
+				width: 100%;
+				box-sizing: border-box;
+				padding: 10px 12px;
+				border: 1px solid rgba(15, 23, 42, 0.14);
+				border-radius: 12px;
+				font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			#ace-ai-chat-contact-submit {
+				justify-self: start;
+				border: 0;
+				border-radius: 999px;
+				background: #0f172a;
+				color: #ffffff;
+				padding: 10px 14px;
+				font: 700 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				cursor: pointer;
+			}
+			#ace-ai-chat-contact-submit[disabled] {
+				opacity: 0.6;
+				cursor: not-allowed;
 			}
 			#ace-ai-chat-input {
 				display: block;
@@ -637,11 +822,22 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const header = document.createElement('div');
 	const titleWrap = document.createElement('div');
 	const title = document.createElement('strong');
+	const status = document.createElement('small');
 	const headerActions = document.createElement('div');
+	const contactToggle = document.createElement('button');
 	const endChat = document.createElement('button');
 	const close = document.createElement('button');
 	const messagesNode = document.createElement('div');
 	const form = document.createElement('form');
+	const contactPanel = document.createElement('div');
+	const contactCopy = document.createElement('p');
+	const contactName = document.createElement('input');
+	const contactEmail = document.createElement('input');
+	const contactPhone = document.createElement('input');
+	const contactCompany = document.createElement('input');
+	const contactRole = document.createElement('input');
+	const contactSubmit = document.createElement('button');
+	const starterQuestions = document.createElement('div');
 	const input = document.createElement('textarea');
 	const actions = document.createElement('div');
 	const meta = document.createElement('div');
@@ -655,9 +851,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		conversationStatus: 'open',
 		handoverEnabled: false,
 		endedAt: '',
+		availabilityOnline: false,
+		availabilityWatcherCount: 0,
+		followUpRequested: false,
+		typing: {},
 	};
 	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
 	let syncTimer = null;
+	let availabilityTimer = null;
+	let typingResetTimer = null;
+	let typingLastSentAt = 0;
+	let typingSentState = false;
 
 	launcher.id = 'ace-ai-chat-launcher';
 	launcher.type = 'button';
@@ -669,16 +873,25 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	header.id = 'ace-ai-chat-header';
 	title.textContent = chatConfig.title || chatConfig.botName || 'Site assistant';
+	status.id = 'ace-ai-chat-status';
+	status.dataset.online = 'false';
+	status.textContent = 'Checking team availability…';
 	titleWrap.appendChild(title);
+	titleWrap.appendChild(status);
 
 	close.id = 'ace-ai-chat-close';
 	close.type = 'button';
 	close.setAttribute('aria-label', 'Close chat');
 	close.textContent = '×';
+	contactToggle.id = 'ace-ai-chat-contact-toggle';
+	contactToggle.type = 'button';
+	contactToggle.textContent = 'Leave your details';
+	contactToggle.hidden = true;
 	endChat.id = 'ace-ai-chat-end';
 	endChat.type = 'button';
 	endChat.textContent = 'End chat';
 	headerActions.id = 'ace-ai-chat-header-actions';
+	headerActions.appendChild(contactToggle);
 	headerActions.appendChild(endChat);
 	headerActions.appendChild(close);
 
@@ -689,6 +902,29 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	messagesNode.setAttribute('aria-live', 'polite');
 
 	form.id = 'ace-ai-chat-form';
+	contactPanel.id = 'ace-ai-chat-contact-panel';
+	contactPanel.hidden = true;
+	contactCopy.textContent = 'Nobody is watching live chats just now. Leave your details and the team can get back to you.';
+	contactName.className = 'ace-ai-chat-contact-field';
+	contactName.type = 'text';
+	contactName.placeholder = 'Your name';
+	contactEmail.className = 'ace-ai-chat-contact-field';
+	contactEmail.type = 'email';
+	contactEmail.placeholder = 'Email address';
+	contactPhone.className = 'ace-ai-chat-contact-field';
+	contactPhone.type = 'tel';
+	contactPhone.placeholder = 'Phone number (optional)';
+	contactCompany.className = 'ace-ai-chat-contact-field';
+	contactCompany.type = 'text';
+	contactCompany.placeholder = 'Company or organisation';
+	contactRole.className = 'ace-ai-chat-contact-field';
+	contactRole.type = 'text';
+	contactRole.placeholder = 'Role or team (optional)';
+	contactSubmit.id = 'ace-ai-chat-contact-submit';
+	contactSubmit.type = 'button';
+	contactSubmit.textContent = 'Request follow-up';
+	starterQuestions.id = 'ace-ai-chat-starters';
+	starterQuestions.hidden = true;
 	input.id = 'ace-ai-chat-input';
 	input.rows = 1;
 	input.placeholder = chatConfig.placeholder || 'Ask about the company or products';
@@ -702,6 +938,15 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	actions.appendChild(meta);
 	actions.appendChild(send);
+	contactPanel.appendChild(contactCopy);
+	contactPanel.appendChild(contactName);
+	contactPanel.appendChild(contactEmail);
+	contactPanel.appendChild(contactPhone);
+	contactPanel.appendChild(contactCompany);
+	contactPanel.appendChild(contactRole);
+	contactPanel.appendChild(contactSubmit);
+	form.appendChild(contactPanel);
+	form.appendChild(starterQuestions);
 	form.appendChild(input);
 	form.appendChild(actions);
 
@@ -711,15 +956,30 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	document.body.appendChild(launcher);
 	document.body.appendChild(panel);
 
+	const ensureMessageKey = (message) => {
+		if (!message || typeof message !== 'object') {
+			return `ace-message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		}
+
+		if (!message.client_key) {
+			message.client_key = `ace-message-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		}
+
+		return message.client_key;
+	};
+
 	const pushMessage = (message) => {
-		state.messages.push(message);
+		state.messages.push(serialiseMessage(message));
 		persistChatState();
 	};
 
 	const serialiseMessage = (message) => ({
 		id: Number(message?.id || 0),
+		client_key: String(message?.client_key || ensureMessageKey(message)),
 		role: message?.role === 'user' ? 'user' : (message?.role === 'operator' ? 'operator' : 'assistant'),
 		content: String(message?.content || ''),
+		author_name: String(message?.author_name || ''),
+		author_avatar_url: String(message?.author_avatar_url || ''),
 		created_at: String(message?.created_at || ''),
 		is_error: !!message?.is_error,
 		sources: Array.isArray(message?.sources)
@@ -733,6 +993,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				source_type: String(source?.source_type || ''),
 				commerce: {
 					price: String(source?.commerce?.price || ''),
+					sku: String(source?.commerce?.sku || ''),
+					stock_status: String(source?.commerce?.stock_status || ''),
+					stock_quantity: Number.isFinite(Number(source?.commerce?.stock_quantity)) ? Number(source?.commerce?.stock_quantity) : null,
+					empty_weight_kg: Number.isFinite(Number(source?.commerce?.empty_weight_kg)) ? Number(source?.commerce?.empty_weight_kg) : null,
+					dimensions_cm: {
+						length: Number.isFinite(Number(source?.commerce?.dimensions_cm?.length)) ? Number(source?.commerce?.dimensions_cm?.length) : null,
+						width: Number.isFinite(Number(source?.commerce?.dimensions_cm?.width)) ? Number(source?.commerce?.dimensions_cm?.width) : null,
+						height: Number.isFinite(Number(source?.commerce?.dimensions_cm?.height)) ? Number(source?.commerce?.dimensions_cm?.height) : null,
+					},
+					needs_shipping: source?.commerce?.needs_shipping === null || typeof source?.commerce?.needs_shipping === 'undefined' ? null : !!source?.commerce?.needs_shipping,
+					shipping_class: String(source?.commerce?.shipping_class || ''),
 					variation_count: Number(source?.commerce?.variation_count || 0),
 					can_add_to_cart: !!source?.commerce?.can_add_to_cart,
 					add_to_cart_url: String(source?.commerce?.add_to_cart_url || ''),
@@ -751,11 +1022,53 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				conversationStatus: state.conversationStatus || 'open',
 				handoverEnabled: !!state.handoverEnabled,
 				endedAt: state.endedAt || '',
+				followUpRequested: !!state.followUpRequested,
 				messages: state.messages.slice(-20).map(serialiseMessage),
 			}));
 		} catch (error) {
 			// Ignore storage failures in the browser.
 		}
+	};
+
+	const getMessageAuthor = (message) => {
+		const role = String(message?.role || '');
+		const explicitName = String(message?.author_name || '').trim();
+		const explicitAvatar = String(message?.author_avatar_url || '').trim();
+
+		if (role === 'user') {
+			return {
+				name: explicitName || 'You',
+				avatarUrl: explicitAvatar,
+			};
+		}
+
+		if (role === 'operator') {
+			return {
+				name: explicitName || 'Agent',
+				avatarUrl: explicitAvatar,
+			};
+		}
+
+		return {
+			name: explicitName || chatConfig.botName || chatConfig.title || 'Site assistant',
+			avatarUrl: explicitAvatar || String(chatConfig.botAvatarUrl || '').trim(),
+		};
+	};
+
+	const buildAvatarNode = ({ name, avatarUrl }) => {
+		if (avatarUrl) {
+			const image = document.createElement('img');
+			image.className = 'ace-ai-chat-avatar';
+			image.src = avatarUrl;
+			image.alt = name || '';
+			image.loading = 'lazy';
+			return image;
+		}
+
+		const fallback = document.createElement('span');
+		fallback.className = 'ace-ai-chat-avatar-placeholder';
+		fallback.textContent = String(name || '').trim().charAt(0).toUpperCase() || '•';
+		return fallback;
 	};
 
 	const restoreChatState = () => {
@@ -778,6 +1091,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			state.conversationStatus = String(saved.conversationStatus || 'open');
 			state.handoverEnabled = !!saved.handoverEnabled;
 			state.endedAt = String(saved.endedAt || '');
+			state.followUpRequested = !!saved.followUpRequested;
 			state.messages = Array.isArray(saved.messages) ? saved.messages.map(serialiseMessage) : [];
 
 			if (!state.started && (state.messages.length || state.conversationUuid)) {
@@ -803,14 +1117,13 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
 	};
 
-	const scrollMessagesToBottom = () => {
-		const run = () => {
-			messagesNode.scrollTop = messagesNode.scrollHeight;
-		};
+	const scrollLatestMessageIntoView = (node) => {
+		if (!(node instanceof HTMLElement)) {
+			return;
+		}
 
 		window.requestAnimationFrame(() => {
-			run();
-			window.setTimeout(run, 40);
+			node.scrollIntoView({ block: 'start', inline: 'nearest' });
 		});
 	};
 
@@ -818,11 +1131,30 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		? 'Replies can include links to relevant company and product information.'
 		: 'Ask about the company, products, or services.');
 
+	const updateAvailabilityUi = () => {
+		status.dataset.online = state.availabilityOnline ? 'true' : 'false';
+		status.textContent = state.availabilityOnline
+			? `Team online now${state.availabilityWatcherCount > 1 ? ` (${state.availabilityWatcherCount})` : ''}`
+			: 'No agent watching chats just now';
+		contactToggle.hidden = state.availabilityOnline || state.conversationStatus === 'ended' || state.followUpRequested;
+		contactSubmit.disabled = state.pending || state.availabilityOnline || state.conversationStatus === 'ended';
+		if (state.availabilityOnline || state.conversationStatus === 'ended' || state.followUpRequested) {
+			contactPanel.hidden = true;
+		}
+		if (state.followUpRequested) {
+			contactPanel.hidden = true;
+		}
+	};
+
 	const updateChatMeta = () => {
 		if (state.conversationStatus === 'ended') {
 			meta.textContent = 'This chat has ended. Open the chat again to start a new conversation.';
 		} else if (state.handoverEnabled) {
 			meta.textContent = 'A member of the team can reply here while this chat is in handover.';
+		} else if (state.followUpRequested) {
+			meta.textContent = 'Thanks, your details have been saved and the team can follow up with you.';
+		} else if (!state.availabilityOnline) {
+			meta.textContent = 'Nobody is watching live chats just now. You can still chat here or leave your details for a follow-up.';
 		} else {
 			meta.textContent = getDefaultMetaText();
 		}
@@ -830,29 +1162,58 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		endChat.disabled = !state.started || state.pending || state.conversationStatus === 'ended';
 		input.disabled = state.pending || state.conversationStatus === 'ended';
 		send.disabled = state.pending || state.conversationStatus === 'ended';
+		updateAvailabilityUi();
 	};
 
 	const applyConversationSnapshot = (snapshot) => {
 		const conversation = snapshot?.conversation || {};
 		const messages = Array.isArray(snapshot?.messages) ? snapshot.messages.map(serialiseMessage) : null;
+		const typing = snapshot?.typing || conversation?.typing || {};
 
 		if (conversation && typeof conversation === 'object') {
 			state.conversationUuid = String(conversation.conversation_uuid || state.conversationUuid || '');
 			state.conversationStatus = String(conversation.status || state.conversationStatus || 'open');
 			state.handoverEnabled = !!conversation.handover_enabled;
 			state.endedAt = String(conversation.ended_at || '');
+			state.followUpRequested = !!conversation.follow_up_requested;
 			state.started = !!state.conversationUuid || !!state.started;
 		}
 
 		if (messages) {
-			state.messages = messages;
+			state.messages = messages.map((message, index) => {
+				const previous = state.messages[index];
+
+				if (
+					previous
+					&& previous.role === message.role
+					&& previous.content === message.content
+					&& previous.created_at === message.created_at
+					&& previous.client_key
+				) {
+					return {
+						...message,
+						client_key: previous.client_key,
+					};
+				}
+
+				return serialiseMessage(message);
+			});
 		}
+
+		state.typing = (typing && typeof typing === 'object') ? typing : {};
 
 		persistChatState();
 		updateChatMeta();
 	};
 
 	const resetConversationState = ({ keepOpen = false } = {}) => {
+		if (typingResetTimer) {
+			window.clearTimeout(typingResetTimer);
+			typingResetTimer = null;
+		}
+
+		typingSentState = false;
+		typingLastSentAt = 0;
 		state.open = keepOpen;
 		state.started = false;
 		state.pending = false;
@@ -860,7 +1221,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		state.conversationStatus = 'open';
 		state.handoverEnabled = false;
 		state.endedAt = '';
+		state.followUpRequested = false;
 		state.messages = [];
+		state.typing = {};
 		send.textContent = 'Send';
 		panel.hidden = !keepOpen;
 		launcher.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
@@ -870,66 +1233,209 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			sources: [],
 		});
 		updateChatMeta();
-		renderMessages();
+		renderMessages({ force: true, focusLatest: true });
+	};
+
+	const renderStarterQuestions = () => {
+		const questions = Array.isArray(chatConfig.starterQuestions)
+			? chatConfig.starterQuestions.map((question) => String(question || '').trim()).filter(Boolean).slice(0, 3)
+			: [];
+		const hasUserMessages = state.messages.some((message) => message?.role === 'user');
+
+		starterQuestions.innerHTML = '';
+
+		if (!questions.length || hasUserMessages || state.conversationStatus === 'ended') {
+			starterQuestions.hidden = true;
+			return;
+		}
+
+		const label = document.createElement('p');
+		const list = document.createElement('div');
+		label.className = 'ace-ai-chat-starters-label';
+		label.textContent = 'Popular questions';
+		list.className = 'ace-ai-chat-starters-list';
+
+		questions.forEach((question) => {
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'ace-ai-chat-starter';
+			button.disabled = state.pending;
+			button.textContent = question;
+			button.addEventListener('click', () => {
+				if (!state.pending) {
+					sendMessage(question).catch(() => {});
+				}
+			});
+			list.appendChild(button);
+		});
+
+		starterQuestions.appendChild(label);
+		starterQuestions.appendChild(list);
+		starterQuestions.hidden = false;
+	};
+
+	const fetchAvailability = async () => {
+		const headers = {};
+
+		if (chatConfig.restNonce) {
+			headers['X-WP-Nonce'] = chatConfig.restNonce;
+		}
+
+		const response = await fetch(chatConfig.availabilityEndpoint || `${config.root}${config.namespace}/ai/chat/availability`, {
+			method: 'GET',
+			credentials: 'same-origin',
+			headers,
+		});
+
+		if (!response.ok) {
+			return;
+		}
+
+		const data = await response.json();
+		state.availabilityOnline = !!data?.online;
+		state.availabilityWatcherCount = Number(data?.watcher_count || 0);
+		updateChatMeta();
 	};
 
 	const normaliseSourceTitle = (title) => String(title || '').trim().toLowerCase();
 
-	const appendLinkedText = (container, text, sources) => {
-		const content = String(text || '');
+	const normaliseTelHref = (value) => {
+		const raw = String(value || '').trim();
+
+		if (!raw) {
+			return '';
+		}
+
+		const withoutPrefix = raw.replace(/^tel:/i, '').trim();
+		const cleaned = withoutPrefix.replace(/[^+\d]/g, '');
+
+		if (!cleaned) {
+			return '';
+		}
+
+		return `tel:${cleaned}`;
+	};
+
+	const getTextMatches = (content, sources) => {
+		const matches = [];
 		const linkableSources = Array.isArray(sources)
 			? sources
 				.filter((source) => source?.url && source?.title)
 				.sort((left, right) => String(right.title || '').length - String(left.title || '').length)
 			: [];
 
-		if (!content || !linkableSources.length) {
+		linkableSources.forEach((source) => {
+			const title = String(source.title || '');
+			const titleLower = normaliseSourceTitle(title);
+
+			if (!titleLower) {
+				return;
+			}
+
+			let searchFrom = 0;
+			const contentLower = content.toLowerCase();
+
+			while (searchFrom < content.length) {
+				const index = contentLower.indexOf(titleLower, searchFrom);
+
+				if (index === -1) {
+					break;
+				}
+
+				matches.push({
+					index,
+					length: title.length,
+					href: source.url,
+					text: content.slice(index, index + title.length),
+					external: true,
+				});
+				searchFrom = index + title.length;
+			}
+		});
+
+		Array.from(content.matchAll(/\btel:\+?[0-9][0-9()\s.-]{5,}\b/gi)).forEach((match) => {
+			const value = String(match[0] || '');
+			const index = Number(match.index || 0);
+			const href = normaliseTelHref(value);
+
+			if (!href) {
+				return;
+			}
+
+			matches.push({
+				index,
+				length: value.length,
+				href,
+				text: value.replace(/^tel:/i, ''),
+				external: false,
+			});
+		});
+
+		Array.from(content.matchAll(/(^|[^\w])(\+?\d[\d\s().-]{7,}\d)\b/g)).forEach((match) => {
+			const value = String(match[2] || '');
+			const leading = String(match[1] || '');
+			const index = Number(match.index || 0) + leading.length;
+			const href = normaliseTelHref(value);
+
+			if (!href) {
+				return;
+			}
+
+			matches.push({
+				index,
+				length: value.length,
+				href,
+				text: value,
+				external: false,
+			});
+		});
+
+		matches.sort((left, right) => {
+			if (left.index === right.index) {
+				return right.length - left.length;
+			}
+
+			return left.index - right.index;
+		});
+
+		return matches;
+	};
+
+	const appendLinkedText = (container, text, sources) => {
+		const content = String(text || '');
+		const matches = getTextMatches(content, sources);
+
+		if (!content || !matches.length) {
 			container.appendChild(document.createTextNode(content));
 			return;
 		}
 
-		const contentLower = content.toLowerCase();
 		let cursor = 0;
 
-		while (cursor < content.length) {
-			let nextMatch = null;
-
-			linkableSources.forEach((source) => {
-				const title = String(source.title || '');
-				const titleLower = normaliseSourceTitle(title);
-
-				if (!titleLower) {
-					return;
-				}
-
-				const index = contentLower.indexOf(titleLower, cursor);
-
-				if (index === -1) {
-					return;
-				}
-
-				if (!nextMatch || index < nextMatch.index || (index === nextMatch.index && title.length > nextMatch.title.length)) {
-					nextMatch = { index, title, source };
-				}
-			});
-
-			if (!nextMatch) {
-				container.appendChild(document.createTextNode(content.slice(cursor)));
-				break;
+		matches.forEach((match) => {
+			if (match.index < cursor) {
+				return;
 			}
 
-			if (nextMatch.index > cursor) {
-				container.appendChild(document.createTextNode(content.slice(cursor, nextMatch.index)));
+			if (match.index > cursor) {
+				container.appendChild(document.createTextNode(content.slice(cursor, match.index)));
 			}
 
 			const link = document.createElement('a');
-			link.href = nextMatch.source.url;
-			link.target = '_blank';
-			link.rel = 'noopener noreferrer';
-			link.textContent = content.slice(nextMatch.index, nextMatch.index + nextMatch.title.length);
-			container.appendChild(link);
+			link.href = match.href;
+			link.textContent = match.text;
 
-			cursor = nextMatch.index + nextMatch.title.length;
+			if (match.external) {
+				link.target = '_blank';
+				link.rel = 'noopener noreferrer';
+			}
+
+			container.appendChild(link);
+			cursor = match.index + match.length;
+		});
+
+		if (cursor < content.length) {
+			container.appendChild(document.createTextNode(content.slice(cursor)));
 		}
 	};
 
@@ -970,8 +1476,13 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	const buildSourceMeta = (source) => {
 		const meta = [];
+		const typeLabel = getSourceTypeLabel(source);
 		const price = String(source?.commerce?.price || '').trim();
 		const variationCount = Number(source?.commerce?.variation_count || 0);
+
+		if (typeLabel && String(source?.source_type || '') !== 'product') {
+			meta.push(typeLabel);
+		}
 
 		if (price) {
 			meta.push(price);
@@ -994,6 +1505,108 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		window.location.assign(url);
 	};
 
+	const getWooAjaxUrl = () => {
+		const template = window.wc_add_to_cart_params?.wc_ajax_url || window.woocommerce_params?.wc_ajax_url || `${window.location.origin}/?wc-ajax=%%endpoint%%`;
+		return String(template).replace('%%endpoint%%', 'add_to_cart');
+	};
+
+	const getAddToCartRequestData = (source) => {
+		const addToCartUrl = String(source?.commerce?.add_to_cart_url || '').trim();
+
+		if (!addToCartUrl) {
+			return null;
+		}
+
+		const parsed = new URL(addToCartUrl, window.location.origin);
+		const params = parsed.searchParams;
+		const productId = params.get('add-to-cart') || params.get('product_id') || params.get('variation_id') || '';
+
+		if (!productId) {
+			return null;
+		}
+
+		return {
+			product_id: productId,
+			quantity: params.get('quantity') || '1',
+		};
+	};
+
+	const refreshCartFragments = (fragments) => {
+		if (fragments && typeof fragments === 'object') {
+			Object.entries(fragments).forEach(([selector, markup]) => {
+				document.querySelectorAll(selector).forEach((node) => {
+					node.outerHTML = markup;
+				});
+			});
+		}
+
+		if (window.jQuery) {
+			window.jQuery(document.body).trigger('wc_fragment_refresh');
+			window.jQuery(document.body).trigger('wc_fragments_loaded');
+		}
+	};
+
+	const openMiniCartDrawer = () => {
+		const trigger = document.querySelector('.wc-block-mini-cart__button');
+
+		if (trigger instanceof HTMLElement) {
+			window.setTimeout(() => trigger.click(), 120);
+		}
+	};
+
+	const addSourceToCart = async (source, triggerButton) => {
+		const data = getAddToCartRequestData(source);
+
+		if (!data) {
+			throw new Error('This item could not be added to the basket just now.');
+		}
+
+		if (triggerButton instanceof HTMLButtonElement) {
+			triggerButton.disabled = true;
+			triggerButton.textContent = 'Adding…';
+		}
+
+		try {
+			const payload = new URLSearchParams(data);
+
+			if (window.jQuery) {
+				window.jQuery(document.body).trigger('adding_to_cart', [window.jQuery(triggerButton), data]);
+			}
+
+			const response = await fetch(getWooAjaxUrl(), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+				},
+				body: payload.toString(),
+			});
+			const result = await response.json();
+
+			if (!response.ok) {
+				throw new Error(result?.message || 'This item could not be added to the basket just now.');
+			}
+
+			if (result?.error && result?.product_url) {
+				throw new Error('This item needs to be selected on the product page.');
+			}
+
+			refreshCartFragments(result?.fragments);
+
+			if (window.jQuery) {
+				window.jQuery(document.body).trigger('added_to_cart', [result?.fragments || {}, result?.cart_hash || '', window.jQuery(triggerButton)]);
+			}
+
+			document.body.dispatchEvent(new CustomEvent('wc-blocks_added_to_cart', { bubbles: true }));
+			openMiniCartDrawer();
+		} finally {
+			if (triggerButton instanceof HTMLButtonElement) {
+				triggerButton.disabled = false;
+				triggerButton.textContent = 'Add to basket';
+			}
+		}
+	};
+
 	const getSourceTypeLabel = (source) => {
 		const contentType = String(source?.content_type || '').trim();
 
@@ -1008,6 +1621,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		switch (String(source?.source_type || '').trim()) {
 			case 'product':
 				return 'Product';
+			case 'document':
+				return 'PDF document';
 			case 'page':
 				return 'Page';
 			case 'post':
@@ -1018,6 +1633,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 
 	const getSourceViewLabel = (source) => {
+		if (source?.source_type === 'document') {
+			return 'Open PDF';
+		}
+
 		if (source?.source_type === 'product') {
 			return source?.commerce?.variation_count > 0 ? 'View options' : 'View product';
 		}
@@ -1029,6 +1648,73 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		return `View ${typeLabel || 'content'}`;
+	};
+
+	const getTypingIndicators = () => {
+		const indicators = [];
+		const typing = (state.typing && typeof state.typing === 'object') ? state.typing : {};
+		const assistantName = String(chatConfig.botName || chatConfig.title || 'Assistant').trim() || 'Assistant';
+
+		if (state.pending && state.conversationStatus !== 'ended' && !state.handoverEnabled) {
+			indicators.push({
+				key: 'assistant-pending',
+				name: assistantName,
+				avatar: String(chatConfig.botAvatarUrl || '').trim(),
+				text: 'is thinking…',
+			});
+		} else if (typing.assistant) {
+			indicators.push({
+				key: 'assistant-live',
+				name: String(typing.assistant.name || typing.assistant.label || assistantName).trim() || assistantName,
+				avatar: String(chatConfig.botAvatarUrl || '').trim(),
+				text: 'is thinking…',
+			});
+		}
+
+		if (typing.agent && state.conversationStatus !== 'ended') {
+			indicators.push({
+				key: 'agent-live',
+				name: String(typing.agent.name || typing.agent.label || 'Agent').trim() || 'Agent',
+				avatar: '',
+				text: 'is typing…',
+			});
+		}
+
+		return indicators;
+	};
+
+	const buildTypingMessage = (indicator) => {
+		const item = document.createElement('div');
+		const body = document.createElement('div');
+		const metaRow = document.createElement('div');
+		const nameNode = document.createElement('span');
+		const bubble = document.createElement('div');
+		const dots = document.createElement('span');
+		const text = document.createElement('span');
+		const avatar = buildAvatarNode({
+			name: indicator.name,
+			avatarUrl: indicator.avatar,
+		});
+
+		item.className = 'ace-ai-chat-message';
+		item.dataset.role = 'typing';
+		body.className = 'ace-ai-chat-message-body';
+		metaRow.className = 'ace-ai-chat-message-meta';
+		nameNode.className = 'ace-ai-chat-message-name';
+		nameNode.textContent = indicator.name;
+		bubble.className = 'ace-ai-chat-bubble';
+		dots.className = 'ace-ai-chat-typing-dots';
+		dots.innerHTML = '<span></span><span></span><span></span>';
+		text.textContent = `${indicator.name} ${indicator.text}`;
+		metaRow.appendChild(avatar);
+		metaRow.appendChild(nameNode);
+		bubble.appendChild(dots);
+		bubble.appendChild(text);
+		body.appendChild(metaRow);
+		body.appendChild(bubble);
+		item.appendChild(body);
+
+		return item;
 	};
 
 	const buildSourceCard = (source) => {
@@ -1051,7 +1737,6 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			thumb.src = source.image_url;
 			thumb.alt = source.title;
 			thumb.loading = 'lazy';
-			thumb.addEventListener('load', scrollMessagesToBottom);
 		} else {
 			thumb.className = 'ace-ai-chat-source-thumb-placeholder';
 			thumb.textContent = String(source.title || '').trim().charAt(0).toUpperCase() || '•';
@@ -1081,7 +1766,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			addButton.type = 'button';
 			addButton.className = 'ace-ai-chat-source-action';
 			addButton.textContent = 'Add to basket';
-			addButton.addEventListener('click', () => navigateWithChatState(source.commerce.add_to_cart_url));
+			addButton.addEventListener('click', async () => {
+				try {
+					await addSourceToCart(source, addButton);
+				} catch (error) {
+					pushMessage({
+						role: 'assistant',
+						content: error?.message || 'This item could not be added to the basket just now.',
+						sources: [],
+					});
+					renderMessages({ focusLatest: true });
+				}
+			});
 			actionsNode.appendChild(addButton);
 		}
 
@@ -1104,21 +1800,33 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		return card;
 	};
 
-	const renderMessages = () => {
-		messagesNode.innerHTML = '';
-
-		state.messages.forEach((message) => {
+	const buildMessageNode = (message) => {
 			const item = document.createElement('div');
+			const body = document.createElement('div');
+			const metaRow = document.createElement('div');
+			const nameNode = document.createElement('span');
 			const bubble = document.createElement('div');
+			const author = getMessageAuthor(message);
+			const avatar = buildAvatarNode(author);
 
 			item.className = 'ace-ai-chat-message';
+			item.dataset.aceMessage = 'true';
+			item.dataset.messageKey = String(message.client_key || message.id || '');
 			item.dataset.role = message.role;
+			body.className = 'ace-ai-chat-message-body';
+			metaRow.className = 'ace-ai-chat-message-meta';
+			nameNode.className = 'ace-ai-chat-message-name';
+			nameNode.textContent = author.name;
 			bubble.className = 'ace-ai-chat-bubble';
 			renderBubbleContent(bubble, message);
-			item.appendChild(bubble);
+			metaRow.appendChild(avatar);
+			metaRow.appendChild(nameNode);
+			body.appendChild(metaRow);
+			body.appendChild(bubble);
+			item.appendChild(body);
 
-			if (chatConfig.showSources && Array.isArray(message.sources) && message.sources.length) {
-				const list = document.createElement('div');
+		if (chatConfig.showSources && Array.isArray(message.sources) && message.sources.length) {
+			const list = document.createElement('div');
 				const leadWrap = document.createElement('div');
 				const moreWrap = document.createElement('div');
 				list.className = 'ace-ai-chat-sources';
@@ -1160,14 +1868,54 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				}
 
 				if (list.childNodes.length) {
-					item.appendChild(list);
+					body.appendChild(list);
 				}
-			}
+		}
 
-			messagesNode.appendChild(item);
+		return item;
+	};
+
+	const renderTypingIndicators = () => {
+		Array.from(messagesNode.querySelectorAll('[data-ace-typing="true"]')).forEach((node) => node.remove());
+
+		getTypingIndicators().forEach((indicator) => {
+			const typingNode = buildTypingMessage(indicator);
+			typingNode.dataset.aceTyping = 'true';
+			typingNode.dataset.typingKey = indicator.key;
+			messagesNode.appendChild(typingNode);
 		});
+	};
 
-		scrollMessagesToBottom();
+	const renderMessages = ({ force = false, focusLatest = false } = {}) => {
+		const existingNodes = Array.from(messagesNode.querySelectorAll('[data-ace-message="true"]'));
+		const existingKeys = existingNodes.map((node) => node.dataset.messageKey || '');
+		const desiredKeys = state.messages.map((message) => String(message.client_key || message.id || ''));
+		const canAppendOnly = !force
+			&& existingKeys.length <= desiredKeys.length
+			&& existingKeys.every((key, index) => key === desiredKeys[index]);
+		let latestNode = null;
+
+		if (!canAppendOnly) {
+			messagesNode.innerHTML = '';
+			state.messages.forEach((message) => {
+				const node = buildMessageNode(message);
+				messagesNode.appendChild(node);
+				latestNode = node;
+			});
+		} else {
+			state.messages.slice(existingKeys.length).forEach((message) => {
+				const node = buildMessageNode(message);
+				messagesNode.appendChild(node);
+				latestNode = node;
+			});
+		}
+
+		renderTypingIndicators();
+		renderStarterQuestions();
+
+		if (focusLatest && latestNode) {
+			scrollLatestMessageIntoView(latestNode);
+		}
 	};
 
 	restoreChatState();
@@ -1199,7 +1947,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		applyConversationSnapshot(await response.json());
-		renderMessages();
+		renderMessages({ focusLatest: true });
 	};
 
 	const stopSync = () => {
@@ -1207,6 +1955,75 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			window.clearInterval(syncTimer);
 			syncTimer = null;
 		}
+	};
+
+	const stopAvailabilityPolling = () => {
+		if (availabilityTimer) {
+			window.clearInterval(availabilityTimer);
+			availabilityTimer = null;
+		}
+	};
+
+	const postTypingState = async (isTyping) => {
+		if (!state.conversationUuid || state.conversationStatus === 'ended' || !state.messages.some((message) => Number(message?.id || 0) > 0)) {
+			return;
+		}
+
+		const headers = {
+			'Content-Type': 'application/json',
+		};
+
+		if (chatConfig.restNonce) {
+			headers['X-WP-Nonce'] = chatConfig.restNonce;
+		}
+
+		const response = await fetch(chatConfig.typingEndpoint || `${config.root}${config.namespace}/ai/chat/typing`, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers,
+			body: JSON.stringify({
+				conversation_uuid: state.conversationUuid || '',
+				session_uuid: sessionUuid || '',
+				visitor_uuid: visitorUuid || '',
+				is_typing: !!isTyping,
+			}),
+		});
+
+		if (!response.ok) {
+			return;
+		}
+
+		const data = await response.json();
+		state.typing = (data?.typing && typeof data.typing === 'object') ? data.typing : (state.typing || {});
+		typingSentState = !!isTyping;
+		typingLastSentAt = Date.now();
+		renderMessages();
+	};
+
+	const queueTypingState = (isTyping, { force = false } = {}) => {
+		if (typingResetTimer) {
+			window.clearTimeout(typingResetTimer);
+			typingResetTimer = null;
+		}
+
+		if (!isTyping) {
+			if (typingSentState || force) {
+				postTypingState(false).catch(() => {});
+			}
+			return;
+		}
+
+		if (state.conversationStatus === 'ended') {
+			return;
+		}
+
+		if (!typingSentState || force || (Date.now() - typingLastSentAt) > 4000) {
+			postTypingState(true).catch(() => {});
+		}
+
+		typingResetTimer = window.setTimeout(() => {
+			queueTypingState(false, { force: true });
+		}, 2200);
 	};
 
 	const startSync = () => {
@@ -1221,6 +2038,21 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				syncConversation().catch(() => {});
 			}
 		}, Number(chatConfig.pollIntervalMs || 5000));
+	};
+
+	const startAvailabilityPolling = () => {
+		stopAvailabilityPolling();
+
+		if (!state.open) {
+			return;
+		}
+
+		fetchAvailability().catch(() => {});
+		availabilityTimer = window.setInterval(() => {
+			if (state.open) {
+				fetchAvailability().catch(() => {});
+			}
+		}, Number(chatConfig.availabilityPollIntervalMs || 15000));
 	};
 
 	const endCurrentConversation = async () => {
@@ -1252,7 +2084,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			// Ignore end-chat transport failures and reset the local state anyway.
 		}
 
+		queueTypingState(false, { force: true });
 		stopSync();
+		stopAvailabilityPolling();
 		resetConversationState({ keepOpen: false });
 	};
 
@@ -1283,13 +2117,16 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			input.focus();
 			updateInputHeight();
 			startSync();
+			startAvailabilityPolling();
 		} else if (nextOpen) {
 			updateInputHeight();
-			scrollMessagesToBottom();
+			renderMessages({ force: true, focusLatest: true });
 			syncConversation().catch(() => {});
 			startSync();
+			startAvailabilityPolling();
 		} else {
 			stopSync();
+			stopAvailabilityPolling();
 		}
 	};
 
@@ -1313,8 +2150,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			return;
 		}
 
+		queueTypingState(false, { force: true });
 		pushMessage({ role: 'user', content });
-		renderMessages();
+		renderMessages({ focusLatest: true });
 		setPending(true);
 
 		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
@@ -1381,7 +2219,84 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			});
 		} finally {
 			setPending(false);
-			renderMessages();
+			renderMessages({ focusLatest: true });
+			persistChatState();
+		}
+	};
+
+	const submitFollowUpRequest = async () => {
+		const name = contactName.value.trim();
+		const email = contactEmail.value.trim();
+		const phone = contactPhone.value.trim();
+		const company = contactCompany.value.trim();
+		const role = contactRole.value.trim();
+
+		if (state.pending || state.conversationStatus === 'ended') {
+			return;
+		}
+
+		setPending(true);
+
+		try {
+			const headers = {
+				'Content-Type': 'application/json',
+			};
+
+			if (chatConfig.restNonce) {
+				headers['X-WP-Nonce'] = chatConfig.restNonce;
+			}
+
+			const response = await fetch(chatConfig.contactEndpoint || `${config.root}${config.namespace}/ai/chat/contact`, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers,
+				body: JSON.stringify({
+					conversation_uuid: state.conversationUuid || '',
+					session_uuid: sessionUuid || '',
+					visitor_uuid: visitorUuid || '',
+					page_url: window.location.href,
+					page_title: document.title || '',
+					contact_name: name,
+					contact_email: email,
+					contact_phone: phone,
+					contact_company: company,
+					contact_role: role,
+				}),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data?.message || 'Your follow-up request could not be saved just now.');
+			}
+
+			if (!state.started) {
+				state.started = true;
+			}
+
+			if (data?.conversation || Array.isArray(data?.messages)) {
+				applyConversationSnapshot(data);
+			}
+
+			pushMessage({
+				role: 'assistant',
+				content: 'Thanks. I have passed your details to the team and marked this chat for follow-up.',
+				sources: [],
+			});
+			contactPanel.hidden = true;
+			contactName.value = '';
+			contactEmail.value = '';
+			contactPhone.value = '';
+			contactCompany.value = '';
+			contactRole.value = '';
+		} catch (error) {
+			pushMessage({
+				role: 'assistant',
+				content: error?.message || 'Your follow-up request could not be saved just now.',
+				sources: [],
+			});
+		} finally {
+			setPending(false);
+			renderMessages({ focusLatest: true });
 			persistChatState();
 		}
 	};
@@ -1390,14 +2305,24 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		resetConversationState({ keepOpen: false });
 	}
 	updateChatMeta();
-	renderMessages();
+	renderMessages({ force: true });
 	updateInputHeight();
+	fetchAvailability().catch(() => {});
 	if (state.open) {
 		setOpen(true);
 	}
 
 	launcher.addEventListener('click', () => setOpen(!state.open));
 	close.addEventListener('click', () => setOpen(false));
+	contactToggle.addEventListener('click', () => {
+		contactPanel.hidden = !contactPanel.hidden;
+		if (!contactPanel.hidden) {
+			contactName.focus();
+		}
+	});
+	contactSubmit.addEventListener('click', () => {
+		submitFollowUpRequest();
+	});
 	endChat.addEventListener('click', () => {
 		endCurrentConversation().catch(() => {});
 	});
@@ -1414,6 +2339,16 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		sendMessage(content);
 	});
 	input.addEventListener('input', updateInputHeight);
+	input.addEventListener('input', () => {
+		if (input.value.trim()) {
+			queueTypingState(true);
+		} else {
+			queueTypingState(false, { force: true });
+		}
+	});
+	input.addEventListener('blur', () => {
+		queueTypingState(false, { force: true });
+	});
 	input.addEventListener('keydown', (event) => {
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();

@@ -1,6 +1,6 @@
 import apiFetch from '@wordpress/api-fetch';
 import { Button, Card, CardBody, CheckboxControl, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
-import { createElement, Fragment, useEffect, useMemo, useState } from '@wordpress/element';
+import { createElement, Fragment, useEffect, useMemo, useRef, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { BarChart } from '@mui/x-charts/BarChart';
 import { LineChart } from '@mui/x-charts/LineChart';
@@ -41,9 +41,16 @@ const CHAT_FILTER_DEFAULTS = {
 	search: '',
 	provider: '',
 	model: '',
+	status: '',
+	commercial_status: '',
+	commercial_outcome: '',
+	priority: '',
+	owner_user_id: '',
+	due_only: '',
 	date_from: '',
 	date_to: '',
 };
+const CHAT_POLL_INTERVAL = 5000;
 const DASHBOARD_FILTER_DEFAULTS = {
 	date_from: '',
 	date_to: '',
@@ -352,7 +359,7 @@ function getExportUrl(action, params = {}) {
 	return url.toString();
 }
 
-function AdminShell({ page, children }) {
+function AdminShell({ page, alerts = [], onDismissAlert, hideHero = false, children }) {
 	const meta = PAGE_META[page] || {
 		title: __('Adaptive Customer Engagement', 'adaptive-customer-engagement'),
 		description: __('Adaptive Customer Engagement admin surface.', 'adaptive-customer-engagement'),
@@ -383,12 +390,36 @@ function AdminShell({ page, children }) {
 			createElement(
 				'div',
 				{ className: 'ace-admin-main__inner' },
-				createElement(
+				!hideHero && createElement(
 					'header',
 					{ className: 'ace-admin-hero' },
 					createElement('h2', { className: 'ace-admin-hero__title' }, meta.title),
 					createElement('p', { className: 'ace-admin-hero__description' }, meta.description)
 				),
+				alerts.map((alert) => createElement(
+					Notice,
+					{
+						key: alert.id,
+						status: 'warning',
+						isDismissible: true,
+						onRemove: () => onDismissAlert && onDismissAlert(alert.id),
+					},
+					createElement('strong', null, __('Visitor requested an agent', 'adaptive-customer-engagement')),
+					' ',
+					alert.latest_user_message || __('A visitor has asked to speak to the team.', 'adaptive-customer-engagement'),
+					' ',
+					createElement(
+						Button,
+						{
+							variant: 'secondary',
+							href: alert.chat_url,
+							target: '_blank',
+							rel: 'noreferrer noopener',
+							style: { marginLeft: '8px' },
+						},
+						__('Open chat in new tab', 'adaptive-customer-engagement')
+					)
+				)),
 				createElement('div', { className: 'ace-admin-view ace-admin-stack' }, children)
 			)
 		)
@@ -1663,7 +1694,7 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 			createElement(
 				'tr',
 				null,
-				['Last message', 'Status', 'Provider', 'Model', 'Company', 'Session', 'Messages', 'First question', 'Actions'].map((label) =>
+				['Last message', 'Runtime', 'Workflow', 'Priority', 'Owner', 'Company', 'Session', 'Messages', 'First question', 'Actions'].map((label) =>
 					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
 				)
 			)
@@ -1693,8 +1724,9 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 							: (item.last_message_at || item.started_at || '—')
 					),
 					createElement('td', null, item.status || __('Open', 'adaptive-customer-engagement')),
-					createElement('td', null, item.provider || '—'),
-					createElement('td', null, item.model || '—'),
+					createElement('td', null, item.commercial_status || __('New', 'adaptive-customer-engagement')),
+					createElement('td', null, item.priority || __('Normal', 'adaptive-customer-engagement')),
+					createElement('td', null, item.owner_name || '—'),
 					createElement(
 						'td',
 						null,
@@ -1722,10 +1754,23 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 	);
 }
 
-function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, busy = false }) {
+function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowSave, onTypingChange, suggestions = [], suggestionsBusy = false, onRefreshSuggestions, busy = false }) {
 	const conversation = detail?.conversation || {};
 	const messages = detail?.messages || [];
+	const sessionCommerce = detail?.session_commerce || {};
+	const companyCommerce = detail?.company_commerce || {};
+	const workflowOptions = detail?.workflow_options || {};
+	const ownerOptions = detail?.owner_options || [];
 	const [replyText, setReplyText] = useState('');
+	const [workflowValues, setWorkflowValues] = useState({
+		owner_user_id: '',
+		commercial_status: 'new',
+		commercial_outcome: '',
+		priority: 'normal',
+		follow_up_at: '',
+		internal_notes: '',
+	});
+	const transcriptRef = useRef(null);
 	const detailMetrics = [
 		{ label: __('Messages', 'adaptive-customer-engagement'), value: conversation.message_count || messages.length || 0 },
 		{ label: __('User messages', 'adaptive-customer-engagement'), value: conversation.user_message_count || 0 },
@@ -1734,149 +1779,479 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, busy = fals
 		{ label: __('Errors', 'adaptive-customer-engagement'), value: messages.filter((item) => !!item.is_error).length },
 	];
 	const isEnded = !!conversation.ended_at || conversation.status === 'ended';
-	const isHandover = !!conversation.handover_enabled || conversation.status === 'handover';
+	const hasPendingHandoverRequest = !!conversation.handover_requested_at || !!conversation.handover_requested;
+	const isManualMode = !!conversation.handover_enabled;
+	const formatFollowUpDate = (value) => (value ? String(value).slice(0, 10) : '');
+	const parseFollowUpDate = (value) => (value ? `${value} 23:59:59` : '');
+	const summariseCommerce = (dataset) => {
+		const products = Array.isArray(dataset?.products) ? dataset.products.slice(0, 3).map((item) => item.name || item.product_name).filter(Boolean) : [];
+		const categories = Array.isArray(dataset?.categories) ? dataset.categories.slice(0, 3).map((item) => item.name).filter(Boolean) : [];
+
+		return {
+			summary: dataset?.summary || dataset?.repeat_interest_summary || __('No repeat product interest captured yet.', 'adaptive-customer-engagement'),
+			products: products.length ? products.join(', ') : '—',
+			categories: categories.length ? categories.join(', ') : '—',
+		};
+	};
+	const sessionSummary = summariseCommerce(sessionCommerce);
+	const companySummary = summariseCommerce(companyCommerce);
+	const factRows = [
+		['Conversation UUID', conversation.conversation_uuid || '—'],
+		['Session UUID', conversation.session_uuid || '—'],
+		['Visitor UUID', conversation.visitor_uuid || '—'],
+		['Company', conversation.company_name || '—'],
+		['Owner', conversation.owner_name || '—'],
+		['Follow-up requested', conversation.follow_up_requested ? __('Yes', 'adaptive-customer-engagement') : __('No', 'adaptive-customer-engagement')],
+		['Contact name', conversation.contact_name || '—'],
+		['Contact email', conversation.contact_email || '—'],
+		['Contact phone', conversation.contact_phone || '—'],
+		['Contact company', conversation.contact_company || '—'],
+		['Contact role', conversation.contact_role || '—'],
+		['Lead summary', conversation.lead_summary || '—'],
+		['Workflow status', conversation.commercial_status || '—'],
+		['Outcome', conversation.commercial_outcome || '—'],
+		['Priority', conversation.priority || '—'],
+		['Follow-up due', conversation.follow_up_at || '—'],
+		['Manual agent mode', isManualMode ? __('Active', 'adaptive-customer-engagement') : __('Inactive', 'adaptive-customer-engagement')],
+		['Agent requested', hasPendingHandoverRequest ? __('Yes', 'adaptive-customer-engagement') : __('No', 'adaptive-customer-engagement')],
+		['Page title', conversation.page_title || '—'],
+		['Page URL', conversation.page_url || '—'],
+		['Started', conversation.started_at || '—'],
+		['Last message', conversation.last_message_at || '—'],
+		['Ended', conversation.ended_at || '—'],
+	];
+	const getRoleLabel = (message) => {
+		if (message.author_name) {
+			return message.author_name;
+		}
+
+		if (message.message_role === 'user') {
+			return __('Customer', 'adaptive-customer-engagement');
+		}
+
+		if (message.message_role === 'operator') {
+			return __('Team', 'adaptive-customer-engagement');
+		}
+
+		return __('Assistant', 'adaptive-customer-engagement');
+	};
+	const getAvatarUrl = (message) => {
+		if (message.author_avatar_url) {
+			return message.author_avatar_url;
+		}
+
+		if (message.message_role === 'user') {
+			return '';
+		}
+
+		return config.siteIconUrl || config.logoUrl || '';
+	};
+	const typingIndicators = Object.values(detail?.typing || {}).filter(Boolean);
+
+	useEffect(() => {
+		setWorkflowValues({
+			owner_user_id: conversation.owner_user_id ? String(conversation.owner_user_id) : '',
+			commercial_status: conversation.commercial_status || 'new',
+			commercial_outcome: conversation.commercial_outcome || '',
+			priority: conversation.priority || 'normal',
+			follow_up_at: formatFollowUpDate(conversation.follow_up_at),
+			internal_notes: conversation.internal_notes || '',
+		});
+	}, [conversation.id, conversation.owner_user_id, conversation.commercial_status, conversation.commercial_outcome, conversation.priority, conversation.follow_up_at, conversation.internal_notes]);
+
+	useEffect(() => {
+		if (!transcriptRef.current) {
+			return;
+		}
+
+		transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+	}, [conversation.id, messages.length, typingIndicators.length]);
+
+	useEffect(() => {
+		if (!onTypingChange || !conversation.id || isEnded) {
+			return undefined;
+		}
+
+		const timeoutId = window.setTimeout(() => {
+			onTypingChange(!!String(replyText || '').trim());
+		}, 250);
+
+		return () => window.clearTimeout(timeoutId);
+	}, [replyText, conversation.id, isEnded, onTypingChange]);
+
+	useEffect(() => () => {
+		if (onTypingChange && conversation.id) {
+			onTypingChange(false);
+		}
+	}, [conversation.id, onTypingChange]);
 
 	return createElement(
 		'div',
-		{ className: 'ace-admin-detail' },
-		createElement(DetailHeader, {
-			eyebrow: __('Chat detail', 'adaptive-customer-engagement'),
-			title: conversation.conversation_uuid || __('Chat conversation', 'adaptive-customer-engagement'),
-			description: __('Review the stored transcript, linked session, and company context for this frontend assistant conversation.', 'adaptive-customer-engagement'),
-			meta: [
-				{ label: __('Status', 'adaptive-customer-engagement'), value: conversation.status || __('Open', 'adaptive-customer-engagement') },
-				{ label: __('Provider', 'adaptive-customer-engagement'), value: conversation.provider || '—' },
-				{ label: __('Model', 'adaptive-customer-engagement'), value: conversation.model || '—' },
-				{ label: __('Company', 'adaptive-customer-engagement'), value: conversation.company_name || '—' },
-				{ label: __('Last message', 'adaptive-customer-engagement'), value: conversation.last_message_at || '—' },
-			],
-			onClose,
-		}),
-		createElement(DetailMetricGrid, { items: detailMetrics }),
+		{ className: 'ace-admin-chat-console' },
 		createElement(
-			Card,
-			null,
+			'div',
+			{ className: 'ace-admin-chat-console__layout' },
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Handover and replies', 'adaptive-customer-engagement')),
-				isEnded
-					? createElement(Notice, { status: 'warning', isDismissible: false }, __('This chat has ended. The stored transcript remains available, but no further replies can be sent.', 'adaptive-customer-engagement'))
-					: createElement(Notice, { status: isHandover ? 'success' : 'info', isDismissible: false }, isHandover
-						? __('Handover is active. Team replies sent here will appear back in the customer chat window.', 'adaptive-customer-engagement')
-						: __('The assistant is still handling this chat. Take over the conversation here if you want the team to reply directly.', 'adaptive-customer-engagement')),
-				createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' } },
-					!isEnded && !isHandover
-						? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Take over chat', 'adaptive-customer-engagement'))
-						: null,
-					!isEnded && isHandover
-						? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
-						: null,
-					!isEnded
-						? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('end'), isBusy: busy, disabled: busy }, __('End chat', 'adaptive-customer-engagement'))
-						: null
-				),
-				!isEnded && isHandover
-					? createElement(Fragment, null,
-						createElement(TextareaControl, {
-							label: __('Reply to customer', 'adaptive-customer-engagement'),
-							help: __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement'),
-							value: replyText,
-							onChange: setReplyText,
-						}),
-						createElement(Button, {
-							variant: 'primary',
-							onClick: async () => {
-								if (!onReply || !String(replyText || '').trim()) {
-									return;
-								}
-								await onReply(replyText);
-								setReplyText('');
-							},
-							isBusy: busy,
-							disabled: busy || !String(replyText || '').trim(),
-						}, __('Send reply', 'adaptive-customer-engagement'))
-					)
-					: null
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Conversation facts', 'adaptive-customer-engagement')),
+				Card,
+				{ className: 'ace-admin-chat-console__thread-card' },
 				createElement(
-					'table',
-					{ className: 'widefat striped', style: { marginBottom: 0 } },
+					CardBody,
+					{ className: 'ace-admin-chat-console__thread-body' },
 					createElement(
-						'tbody',
-						null,
-						[
-							['Conversation UUID', conversation.conversation_uuid || '—'],
-							['Session UUID', conversation.session_uuid || '—'],
-							['Visitor UUID', conversation.visitor_uuid || '—'],
-							['Company', conversation.company_name || '—'],
-							['Handover', isHandover ? __('Active', 'adaptive-customer-engagement') : __('Inactive', 'adaptive-customer-engagement')],
-							['Page title', conversation.page_title || '—'],
-							['Page URL', conversation.page_url || '—'],
-							['Started', conversation.started_at || '—'],
-							['Last message', conversation.last_message_at || '—'],
-							['Ended', conversation.ended_at || '—'],
-						].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
-					)
-				)
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Transcript', 'adaptive-customer-engagement')),
-				messages.length
-					? createElement(
 						'div',
-						{ style: { display: 'grid', gap: '12px' } },
-						messages.map((message) =>
-							createElement(
-								'div',
-								{
-									key: message.id,
-									style: {
-										border: '1px solid #e2e8f0',
-										borderLeft: `4px solid ${message.message_role === 'user' ? '#2563eb' : '#0f766e'}`,
-										padding: '12px',
-										borderRadius: '8px',
-										background: message.is_error ? '#fff7ed' : '#ffffff',
+						{ className: 'ace-admin-chat-console__thread-topbar' },
+						createElement('h3', { className: 'ace-admin-chat-console__section-title' }, __('Transcript', 'adaptive-customer-engagement')),
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__status' },
+							isEnded
+								? createElement('span', { className: 'ace-admin-chat-console__status-pill is-ended' }, __('Ended', 'adaptive-customer-engagement'))
+								: isManualMode
+									? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Manual agent mode', 'adaptive-customer-engagement'))
+									: hasPendingHandoverRequest
+										? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Agent requested', 'adaptive-customer-engagement'))
+									: createElement('span', { className: 'ace-admin-chat-console__status-pill is-ai' }, __('AI live', 'adaptive-customer-engagement'))
+						)
+					),
+					isEnded
+						? createElement(Notice, { status: 'warning', isDismissible: false }, __('This chat has ended. The transcript remains available, but no further replies can be sent.', 'adaptive-customer-engagement'))
+						: createElement(Notice, { status: isManualMode ? 'success' : (hasPendingHandoverRequest ? 'warning' : 'info'), isDismissible: false }, isManualMode
+							? __('Manual agent mode is active. Team replies sent here go straight back into the customer chat until you hand the conversation back to the AI assistant.', 'adaptive-customer-engagement')
+							: hasPendingHandoverRequest
+								? __('The visitor has asked for a person, but the AI assistant is still live. This view does not take over the chat — use Go manual only when you want an agent to step in.', 'adaptive-customer-engagement')
+								: __('You are viewing this chat live while the AI assistant is still handling it. Switch into manual agent mode when you want the team to take over.', 'adaptive-customer-engagement')),
+					createElement(
+						'div',
+						{ className: 'ace-admin-chat-console__messages', ref: transcriptRef },
+						messages.length
+							? messages.map((message) =>
+								createElement(
+									'article',
+									{
+										key: message.id,
+										className: `ace-admin-chat-message ${message.message_role === 'user' ? 'is-user' : 'is-agent'} ${message.is_error ? 'is-error' : ''}`,
 									},
-								},
-								createElement('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' } },
-									createElement('strong', null, message.message_role === 'operator' ? __('Team', 'adaptive-customer-engagement') : (message.message_role || 'message')),
-									createElement('span', { style: { color: '#64748b' } }, message.created_at || '—')
-								),
-								createElement('p', { style: { margin: '0 0 8px' } }, message.message_text || '—'),
-								Array.isArray(message.sources) && message.sources.length
-									? createElement(
-										'ol',
-										{ style: { margin: 0, paddingLeft: '18px' } },
-										message.sources.map((source, index) =>
-											createElement(
-												'li',
-												{ key: `${message.id}-${index}` },
-												source?.url
-													? createElement('a', { href: source.url, target: '_blank', rel: 'noreferrer noopener' }, source.title || source.url)
-													: (source?.title || '—')
+									createElement(
+										'div',
+										{ className: 'ace-admin-chat-message__avatar' },
+										getAvatarUrl(message)
+											? createElement('img', { src: getAvatarUrl(message), alt: getRoleLabel(message) })
+											: createElement('span', null, getRoleLabel(message).slice(0, 1).toUpperCase())
+									),
+									createElement(
+										'div',
+										{ className: 'ace-admin-chat-message__bubble' },
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-message__meta' },
+											createElement('strong', null, getRoleLabel(message)),
+											createElement('span', null, message.created_at || '—')
+										),
+										createElement('p', { className: 'ace-admin-chat-message__text' }, message.message_text || '—'),
+										Array.isArray(message.sources) && message.sources.length
+											? createElement(
+												'ol',
+												{ className: 'ace-admin-chat-message__sources' },
+												message.sources.map((source, index) =>
+													createElement(
+														'li',
+														{ key: `${message.id}-${index}` },
+														source?.url
+															? createElement('a', { href: source.url, target: '_blank', rel: 'noreferrer noopener' }, source.title || source.url)
+															: (source?.title || '—')
+													)
+												)
 											)
+											: null
+									)
+								)
+							  )
+							: createElement(Notice, { status: 'info', isDismissible: false }, __('No stored transcript messages are available yet.', 'adaptive-customer-engagement'))
+						,
+						typingIndicators.map((indicator) =>
+							createElement(
+								'article',
+								{
+									key: `typing-${indicator.actor || indicator.label}`,
+									className: 'ace-admin-chat-message ace-admin-chat-message--typing is-agent',
+								},
+								createElement(
+									'div',
+									{ className: 'ace-admin-chat-message__avatar' },
+									indicator.actor === 'assistant' && (config.siteIconUrl || config.logoUrl)
+										? createElement('img', { src: config.siteIconUrl || config.logoUrl, alt: indicator.name || indicator.label || __('Assistant', 'adaptive-customer-engagement') })
+										: createElement('span', null, String(indicator.name || indicator.label || indicator.actor || '•').slice(0, 1).toUpperCase())
+								),
+								createElement(
+									'div',
+									{ className: 'ace-admin-chat-message__bubble' },
+									createElement(
+										'div',
+										{ className: 'ace-admin-chat-message__meta' },
+										createElement('strong', null, indicator.name || indicator.label || __('Participant', 'adaptive-customer-engagement')),
+										createElement('span', null, indicator.actor === 'assistant' ? __('Thinking…', 'adaptive-customer-engagement') : __('Typing…', 'adaptive-customer-engagement'))
+									),
+									createElement(
+										'div',
+										{ className: 'ace-admin-chat-message__typing' },
+										createElement('span', null),
+										createElement('span', null),
+										createElement('span', null)
+									)
+								)
+							)
+						)
+					),
+					createElement(
+						'div',
+						{ className: 'ace-admin-chat-console__composer' },
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__composer-actions' },
+							!isEnded && !isManualMode
+								? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Go manual', 'adaptive-customer-engagement'))
+								: null,
+							!isEnded && isManualMode
+								? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
+								: null,
+							!isEnded
+								? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('end'), isBusy: busy, disabled: busy }, __('End chat', 'adaptive-customer-engagement'))
+								: null
+						),
+						!isEnded
+							? createElement(
+								Fragment,
+								null,
+								isManualMode
+									? createElement(
+										Fragment,
+										null,
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-console__suggestions' },
+											createElement(
+												'div',
+												{ className: 'ace-admin-chat-console__suggestions-header' },
+												createElement('strong', null, __('Suggested replies', 'adaptive-customer-engagement')),
+												createElement('span', null, suggestionsBusy ? __('Updating…', 'adaptive-customer-engagement') : __('Tap one to drop it into the reply box.', 'adaptive-customer-engagement'))
+											),
+											suggestions.length
+												? createElement(
+													'div',
+													{ className: 'ace-admin-chat-console__suggestion-list' },
+													suggestions.map((suggestion, index) =>
+														createElement(
+															Button,
+															{
+																key: `${conversation.id || 'chat'}-${index}`,
+																variant: 'secondary',
+																className: 'ace-admin-chat-console__suggestion',
+																onClick: () => setReplyText(suggestion),
+																disabled: busy,
+															},
+															suggestion
+														)
+													)
+												)
+												: createElement('p', { className: 'ace-admin-chat-console__suggestions-empty' }, __('Suggestions will appear here once the assistant has enough context.', 'adaptive-customer-engagement'))
+										),
+										createElement(TextareaControl, {
+											label: __('Reply to customer', 'adaptive-customer-engagement'),
+											help: __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement'),
+											value: replyText,
+											onChange: setReplyText,
+											rows: 3,
+										}),
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-console__composer-submit' },
+											createElement(Button, {
+												variant: 'primary',
+												onClick: async () => {
+													if (!onReply || !String(replyText || '').trim()) {
+														return;
+													}
+
+													await onReply(replyText);
+													setReplyText('');
+												},
+												isBusy: busy,
+												disabled: busy || !String(replyText || '').trim(),
+											}, __('Send reply', 'adaptive-customer-engagement'))
 										)
 									)
-									: null
+									: createElement(
+										Notice,
+										{ status: 'info', isDismissible: false },
+										__('This chat is currently in view-only mode. Use Go manual when you want an agent to take over and reply from here.', 'adaptive-customer-engagement')
+									)
+							)
+							: null
+					)
+				)
+			),
+			createElement(
+				'aside',
+				{ className: 'ace-admin-chat-console__sidebar' },
+				createElement(
+					Card,
+					{ className: 'ace-admin-chat-console__header-card' },
+					createElement(
+						CardBody,
+						{ className: 'ace-admin-chat-console__header' },
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__header-copy' },
+							createElement('p', { className: 'ace-admin-chat-console__eyebrow' }, __('Chat console', 'adaptive-customer-engagement')),
+							createElement('h2', { className: 'ace-admin-chat-console__title' }, conversation.conversation_uuid || __('Chat conversation', 'adaptive-customer-engagement')),
+							createElement('p', { className: 'ace-admin-chat-console__description' }, __('Work the live transcript, use suggested replies, and keep the commercial follow-up state updated without leaving the queue.', 'adaptive-customer-engagement'))
+						),
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__header-actions' },
+							createElement(Button, { variant: 'secondary', onClick: onRefreshSuggestions, disabled: busy || suggestionsBusy }, suggestionsBusy ? __('Refreshing suggestions…', 'adaptive-customer-engagement') : __('Refresh suggestions', 'adaptive-customer-engagement')),
+							createElement(Button, { variant: 'secondary', onClick: onClose }, __('Back to chats', 'adaptive-customer-engagement'))
+						),
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__meta' },
+							[
+								{ label: __('Status', 'adaptive-customer-engagement'), value: conversation.status || __('Open', 'adaptive-customer-engagement') },
+								{ label: __('Workflow', 'adaptive-customer-engagement'), value: conversation.commercial_status || __('New', 'adaptive-customer-engagement') },
+								{ label: __('Priority', 'adaptive-customer-engagement'), value: conversation.priority || __('Normal', 'adaptive-customer-engagement') },
+								{ label: __('Owner', 'adaptive-customer-engagement'), value: conversation.owner_name || '—' },
+								{ label: __('Company', 'adaptive-customer-engagement'), value: conversation.company_name || '—' },
+								{ label: __('Last message', 'adaptive-customer-engagement'), value: conversation.last_message_at || '—' },
+							].map((item) =>
+								createElement(
+									'div',
+									{ className: 'ace-admin-chat-console__meta-item', key: item.label },
+									createElement('span', { className: 'ace-admin-chat-console__meta-label' }, item.label),
+									createElement('strong', { className: 'ace-admin-chat-console__meta-value' }, item.value)
+								)
 							)
 						)
 					)
-					: createElement(Notice, { status: 'info', isDismissible: false }, __('No stored transcript messages are available yet.', 'adaptive-customer-engagement'))
+				),
+				createElement(DetailMetricGrid, { items: detailMetrics }),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Commercial workflow', 'adaptive-customer-engagement')),
+						createElement('div', { className: 'ace-admin-chat-console__workflow-grid' },
+							createElement(SelectControl, {
+								label: __('Owner', 'adaptive-customer-engagement'),
+								value: workflowValues.owner_user_id,
+								options: [{ label: __('Unassigned', 'adaptive-customer-engagement'), value: '' }].concat(
+									ownerOptions.map((owner) => ({ label: owner.display_name, value: String(owner.id) }))
+								),
+								onChange: (next) => setWorkflowValues({ ...workflowValues, owner_user_id: next }),
+							}),
+							createElement(SelectControl, {
+								label: __('Workflow status', 'adaptive-customer-engagement'),
+								value: workflowValues.commercial_status,
+								options: (workflowOptions.statuses || []).map((entry) => ({ label: entry, value: entry })),
+								onChange: (next) => setWorkflowValues({ ...workflowValues, commercial_status: next }),
+							}),
+							createElement(SelectControl, {
+								label: __('Outcome', 'adaptive-customer-engagement'),
+								value: workflowValues.commercial_outcome,
+								options: [{ label: __('None set', 'adaptive-customer-engagement'), value: '' }].concat(
+									(workflowOptions.outcomes || []).map((entry) => ({ label: entry, value: entry }))
+								),
+								onChange: (next) => setWorkflowValues({ ...workflowValues, commercial_outcome: next }),
+							}),
+							createElement(SelectControl, {
+								label: __('Priority', 'adaptive-customer-engagement'),
+								value: workflowValues.priority,
+								options: (workflowOptions.priorities || []).map((entry) => ({ label: entry, value: entry })),
+								onChange: (next) => setWorkflowValues({ ...workflowValues, priority: next }),
+							}),
+							createElement(TextControl, {
+								label: __('Follow-up due', 'adaptive-customer-engagement'),
+								type: 'date',
+								value: workflowValues.follow_up_at,
+								onChange: (next) => setWorkflowValues({ ...workflowValues, follow_up_at: next }),
+							})
+						),
+						createElement(TextareaControl, {
+							label: __('Internal notes', 'adaptive-customer-engagement'),
+							help: __('Keep internal handover and follow-up notes here for the team.', 'adaptive-customer-engagement'),
+							value: workflowValues.internal_notes,
+							onChange: (next) => setWorkflowValues({ ...workflowValues, internal_notes: next }),
+						}),
+						createElement(Button, {
+							variant: 'primary',
+							isBusy: busy,
+							disabled: busy,
+							onClick: async () => {
+								if (!onWorkflowSave) {
+									return;
+								}
+
+								await onWorkflowSave({
+									owner_user_id: workflowValues.owner_user_id ? Number(workflowValues.owner_user_id) : 0,
+									commercial_status: workflowValues.commercial_status,
+									commercial_outcome: workflowValues.commercial_outcome,
+									priority: workflowValues.priority,
+									follow_up_at: parseFollowUpDate(workflowValues.follow_up_at),
+									internal_notes: workflowValues.internal_notes,
+								});
+							},
+						}, __('Save workflow details', 'adaptive-customer-engagement'))
+					)
+				),
+				[
+					{ key: 'session', title: __('Session buying signals', 'adaptive-customer-engagement'), data: sessionSummary },
+					{ key: 'company', title: __('Company buying signals', 'adaptive-customer-engagement'), data: companySummary },
+				].map((card) =>
+					createElement(
+						Card,
+						{ key: card.key },
+						createElement(
+							CardBody,
+							null,
+							createElement('h3', { style: { marginTop: 0 } }, card.title),
+							createElement('p', { style: { marginTop: 0 } }, card.data.summary),
+							createElement('p', { style: { margin: '0 0 6px' } }, createElement('strong', null, __('Top products', 'adaptive-customer-engagement')), `: ${card.data.products}`),
+							createElement('p', { style: { margin: 0 } }, createElement('strong', null, __('Top categories', 'adaptive-customer-engagement')), `: ${card.data.categories}`)
+						)
+					)
+				),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Conversation facts', 'adaptive-customer-engagement')),
+						createElement(
+							'table',
+							{ className: 'widefat striped', style: { marginBottom: 0 } },
+							createElement(
+								'tbody',
+								null,
+								factRows.map(([label, value]) =>
+									createElement(
+										'tr',
+										{ key: label },
+										createElement('th', null, __(label, 'adaptive-customer-engagement')),
+										createElement(
+											'td',
+											null,
+											label === 'Page URL' && value && value !== '—'
+												? createElement('a', { href: value, target: '_blank', rel: 'noreferrer noopener' }, value)
+												: value
+										)
+									)
+								)
+							)
+						)
+					)
+				)
 			)
 		)
 	);
@@ -1886,16 +2261,87 @@ function ChatsView({ active, route }) {
 	const [data, setData] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [detailBusy, setDetailBusy] = useState(false);
+	const [replySuggestions, setReplySuggestions] = useState([]);
+	const [suggestionsBusy, setSuggestionsBusy] = useState(false);
+	const [suggestionsMessageKey, setSuggestionsMessageKey] = useState('');
 	const [segments, setSegments] = useState([]);
 	const [segmentName, setSegmentName] = useState('');
 	const [pagination, setPagination] = useState({ page: 1, per_page: 25, total: 0, total_pages: 1 });
 	const [filters, setFilters] = useState(CHAT_FILTER_DEFAULTS);
+	const typingStateRef = useRef(false);
+	const typingLastSentAtRef = useRef(0);
 
 	const load = async (nextFilters = filters, nextPage = pagination.page) => {
 		const response = await request(withQuery('/admin/chats', { ...nextFilters, page: nextPage, per_page: pagination.per_page }));
 		setData(response);
 		setSegments(response.segments || []);
 		setPagination(response.pagination || { page: 1, per_page: 25, total: 0, total_pages: 1 });
+	};
+	const getLatestUserMessageKey = (chatDetail) => {
+		const latestUserMessage = [...(chatDetail?.messages || [])]
+			.reverse()
+			.find((message) => message?.message_role === 'user' && String(message?.message_text || '').trim());
+
+		if (!latestUserMessage) {
+			return '';
+		}
+
+		return String(latestUserMessage.id || latestUserMessage.created_at || latestUserMessage.message_text || '');
+	};
+	const loadDetail = async (chatId) => {
+		const response = await request(`/admin/chats/${chatId}`);
+		setDetail(response);
+		return response;
+	};
+	const loadSuggestions = async (chatDetail, options = {}) => {
+		const chatId = chatDetail?.conversation?.id;
+		const messageKey = getLatestUserMessageKey(chatDetail);
+		const force = !!options.force;
+
+		if (!chatId || !messageKey) {
+			setReplySuggestions([]);
+			setSuggestionsMessageKey('');
+			return;
+		}
+
+		if (!force && messageKey === suggestionsMessageKey) {
+			return;
+		}
+
+		setSuggestionsBusy(true);
+		try {
+			const response = await request(`/admin/chats/${chatId}/suggestions`);
+			setReplySuggestions(response.suggestions || []);
+			setSuggestionsMessageKey(messageKey);
+		} catch (error) {
+			setReplySuggestions([]);
+		} finally {
+			setSuggestionsBusy(false);
+		}
+	};
+	const updateAdminTyping = async (isTyping) => {
+		const chatId = detail?.conversation?.id;
+
+		if (!chatId) {
+			return;
+		}
+
+		if (typingStateRef.current === !!isTyping && (!isTyping || (Date.now() - typingLastSentAtRef.current) < 4000)) {
+			return;
+		}
+
+		try {
+			const response = await request(`/admin/chats/${chatId}/typing`, {
+				method: 'POST',
+				data: { is_typing: !!isTyping },
+			});
+
+			typingStateRef.current = !!isTyping;
+			typingLastSentAtRef.current = Date.now();
+			setDetail((current) => (current && current.conversation?.id === chatId ? { ...current, typing: response?.typing || {} } : current));
+		} catch (error) {
+			// Ignore background typing transport failures.
+		}
 	};
 
 	const saveSegment = async () => {
@@ -1926,11 +2372,35 @@ function ChatsView({ active, route }) {
 
 		if (!chatId) {
 			setDetail(null);
+			setReplySuggestions([]);
+			setSuggestionsMessageKey('');
 			return;
 		}
 
-		request(`/admin/chats/${chatId}`).then(setDetail);
+		loadDetail(chatId).then((response) => loadSuggestions(response));
 	}, [active, route]);
+
+	useEffect(() => {
+		if (!active) {
+			return undefined;
+		}
+
+		const interval = window.setInterval(() => {
+			if (detailBusy) {
+				return;
+			}
+
+			load(filters, pagination.page);
+
+			const chatId = route?.params?.get('ace_chat');
+
+			if (chatId) {
+				loadDetail(chatId).then((response) => loadSuggestions(response));
+			}
+		}, CHAT_POLL_INTERVAL);
+
+		return () => window.clearInterval(interval);
+	}, [active, route, filters, pagination.page, detailBusy, suggestionsMessageKey]);
 
 	useEffect(() => {
 		const segmentId = getQueryParam('ace_segment');
@@ -1951,6 +2421,20 @@ function ChatsView({ active, route }) {
 		clearQueryParam('ace_segment');
 	}, [segments]);
 
+	useEffect(() => {
+		typingStateRef.current = false;
+		typingLastSentAtRef.current = 0;
+	}, [detail?.conversation?.id]);
+
+	useEffect(() => () => {
+		if (typingStateRef.current && detail?.conversation?.id) {
+			request(`/admin/chats/${detail.conversation.id}/typing`, {
+				method: 'POST',
+				data: { is_typing: false },
+			}).catch(() => {});
+		}
+	}, [detail?.conversation?.id]);
+
 	if (!data) {
 		return createElement(Spinner);
 	}
@@ -1959,6 +2443,10 @@ function ChatsView({ active, route }) {
 		return createElement(ChatDetailPanel, {
 			detail,
 			busy: detailBusy,
+			suggestions: replySuggestions,
+			suggestionsBusy,
+			onRefreshSuggestions: () => loadSuggestions(detail),
+			onTypingChange: updateAdminTyping,
 			onStatusChange: async (action) => {
 				setDetailBusy(true);
 				try {
@@ -1967,12 +2455,14 @@ function ChatsView({ active, route }) {
 						data: { action },
 					});
 					setDetail(response);
+					await loadSuggestions(response);
 					await load(filters, pagination.page);
 				} finally {
 					setDetailBusy(false);
 				}
 			},
 			onReply: async (message) => {
+				await updateAdminTyping(false);
 				setDetailBusy(true);
 				try {
 					const response = await request(`/admin/chats/${detail?.conversation?.id}/reply`, {
@@ -1980,6 +2470,21 @@ function ChatsView({ active, route }) {
 						data: { message },
 					});
 					setDetail(response);
+					await loadSuggestions(response);
+					await load(filters, pagination.page);
+				} finally {
+					setDetailBusy(false);
+				}
+			},
+			onWorkflowSave: async (payload) => {
+				setDetailBusy(true);
+				try {
+					const response = await request(`/admin/chats/${detail?.conversation?.id}/workflow`, {
+						method: 'POST',
+						data: payload,
+					});
+					setDetail(response);
+					await loadSuggestions(response);
 					await load(filters, pagination.page);
 				} finally {
 					setDetailBusy(false);
@@ -1987,6 +2492,8 @@ function ChatsView({ active, route }) {
 			},
 			onClose: () => {
 				setDetail(null);
+				setReplySuggestions([]);
+				setSuggestionsMessageKey('');
 				clearQueryParam('ace_chat');
 			},
 		});
@@ -2001,6 +2508,10 @@ function ChatsView({ active, route }) {
 			[
 				['Conversations', data.metrics?.conversations || 0],
 				['Messages', data.metrics?.messages || 0],
+				['In handover', data.metrics?.handover || 0],
+				['New chats', data.metrics?.new || 0],
+				['Follow-up due', data.metrics?.due_follow_up || 0],
+				['Agents watching', data.agent_availability?.watcher_count || 0],
 			].map(([label, value]) =>
 				createElement(Card, { key: label }, createElement(CardBody, null, createElement('strong', null, __(label, 'adaptive-customer-engagement')), createElement('div', { style: { fontSize: '24px', marginTop: '8px' } }, value)))
 			)
@@ -2032,8 +2543,26 @@ function ChatsView({ active, route }) {
 			selects: [
 				{ key: 'provider', label: 'Provider', options: data.filters?.providers || [] },
 				{ key: 'model', label: 'Model', options: data.filters?.models || [] },
+				{ key: 'status', label: 'Runtime status', options: data.filters?.runtime_statuses || [] },
+				{ key: 'commercial_status', label: 'Workflow status', options: data.filters?.statuses || [] },
+				{ key: 'commercial_outcome', label: 'Outcome', options: data.filters?.outcomes || [] },
+				{ key: 'priority', label: 'Priority', options: data.filters?.priorities || [] },
+				{ key: 'owner_user_id', label: 'Owner', options: (data.filters?.owners || []).map((owner) => ({ label: owner.display_name, value: String(owner.id) })) },
 			],
 		}),
+		createElement(
+			Card,
+			{ style: { marginBottom: '16px' } },
+			createElement(
+				CardBody,
+				null,
+				createElement(CheckboxControl, {
+					label: __('Only show chats with follow-up due', 'adaptive-customer-engagement'),
+					checked: !!filters.due_only,
+					onChange: (next) => setFilters({ ...filters, due_only: next ? '1' : '' }),
+				})
+			)
+		),
 		createElement(ExportPanel, {
 			label: __('Export current chats', 'adaptive-customer-engagement'),
 			href: getExportUrl('ace_export_chats', filters),
@@ -3362,7 +3891,9 @@ function FilterPanel({ filters, onChange, onApply, onReset, selects = [], showSe
 						label: __(select.label, 'adaptive-customer-engagement'),
 						value: filters[select.key] || '',
 						options: [{ label: __('All', 'adaptive-customer-engagement'), value: '' }].concat(
-							(select.options || []).map((entry) => ({ label: entry, value: entry }))
+							(select.options || []).map((entry) => (typeof entry === 'object' && entry !== null
+								? { label: entry.label ?? entry.value ?? '', value: entry.value ?? '' }
+								: { label: entry, value: entry }))
 						),
 						onChange: (next) => onChange({ ...filters, [select.key]: next }),
 					})
@@ -5216,7 +5747,7 @@ function SettingsView({ section = 'settings', active }) {
 			}),
 			createElement(SettingsPanel, {
 				title: __('Settings import and export', 'adaptive-customer-engagement'),
-				description: __('Download or restore plugin configuration only. This does not include sample data, tracked sessions, companies, calls, or reporting history.', 'adaptive-customer-engagement'),
+				description: __('Download or restore plugin configuration, saved reporting segments, number rules, and secrets. This does not include sample data, tracked sessions, companies, calls, or chat history.', 'adaptive-customer-engagement'),
 				tone: 'soft',
 			},
 			createElement(SettingsFieldGrid, { compact: true },
@@ -5241,7 +5772,7 @@ function SettingsView({ section = 'settings', active }) {
 				createElement(Button, { variant: 'secondary', onClick: exportSettingsConfig, disabled: busy }, __('Export settings', 'adaptive-customer-engagement')),
 				createElement(Button, { variant: 'primary', onClick: importSettingsConfig, disabled: busy || !settingsImportFile }, __('Import settings', 'adaptive-customer-engagement'))
 			),
-			createElement(Notice, { status: 'info', isDismissible: false }, __('Secrets such as AWS keys, widget security keys, webhook secrets, and the current plugin configuration are included in the export so you can move the setup between environments.', 'adaptive-customer-engagement'))
+			createElement(Notice, { status: 'info', isDismissible: false }, __('Secrets such as AWS keys, widget security keys, webhook secrets, saved reporting segments, number rules, and the current plugin configuration are included in the export so you can move the setup between environments.', 'adaptive-customer-engagement'))
 			)
 		),
 	};
@@ -5284,6 +5815,8 @@ function App() {
 	const [page, setPage] = useState(initialSection);
 	const [route, setRoute] = useState(initialRoute);
 	const [visited, setVisited] = useState([initialSection]);
+	const [handoverAlerts, setHandoverAlerts] = useState([]);
+	const seenAlertIds = useRef(new Set());
 
 	useEffect(() => {
 		const currentPage = (config.page || 'dashboard').replace(/^ace-/, '');
@@ -5313,6 +5846,82 @@ function App() {
 	useEffect(() => {
 		syncWpAdminSidebar(page);
 	}, [page]);
+
+	useEffect(() => {
+		const sendHeartbeat = (active = true) => request('/admin/chats/availability', {
+			method: 'POST',
+			data: { active },
+		}).catch(() => {});
+
+		sendHeartbeat(true);
+
+		const timer = window.setInterval(() => {
+			sendHeartbeat(true);
+		}, 20000);
+
+		return () => {
+			window.clearInterval(timer);
+			sendHeartbeat(false);
+		};
+	}, []);
+
+	useEffect(() => {
+		let cancelled = false;
+		let lastPollAt = '';
+
+		const maybeNotify = (alert) => {
+			if (!window.Notification || Notification.permission !== 'granted') {
+				return;
+			}
+
+			const notification = new Notification(__('Visitor requested an agent', 'adaptive-customer-engagement'), {
+				body: alert.latest_user_message || __('A visitor has asked to speak to the team.', 'adaptive-customer-engagement'),
+			});
+
+			notification.onclick = () => {
+				window.open(alert.chat_url, '_blank', 'noopener');
+			};
+		};
+
+		const pollAlerts = async () => {
+			try {
+				const response = await request(withQuery('/admin/chats/alerts', { since: lastPollAt }));
+
+				if (cancelled) {
+					return;
+				}
+
+				lastPollAt = response.generated_at || lastPollAt;
+
+				const incoming = Array.isArray(response.items) ? response.items.filter((item) => !seenAlertIds.current.has(item.id)) : [];
+
+				if (!incoming.length) {
+					return;
+				}
+
+				incoming.forEach((item) => {
+					seenAlertIds.current.add(item.id);
+					maybeNotify(item);
+				});
+
+				setHandoverAlerts((current) => incoming.concat(current).slice(0, 12));
+			} catch (error) {
+				// Ignore alert polling failures.
+			}
+		};
+
+		if (window.Notification && Notification.permission === 'default') {
+			Notification.requestPermission().catch(() => {});
+		}
+
+		pollAlerts();
+		const timer = window.setInterval(pollAlerts, 10000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(timer);
+		};
+	}, []);
 
 	useEffect(() => {
 		const adminMenu = document.getElementById('adminmenu');
@@ -5355,6 +5964,7 @@ function App() {
 	}, []);
 
 	const screenOrder = ['dashboard', 'sessions', 'companies', 'commerce', 'calls', 'chats', 'numbers', 'settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent', 'import-export'];
+	const hideHero = page === 'chats' && !!route?.params?.get('ace_chat');
 	const screenMap = {
 		dashboard: createElement(DashboardView, { active: page === 'dashboard' }),
 		sessions: createElement(SessionsView, { active: page === 'sessions', route }),
@@ -5373,7 +5983,12 @@ function App() {
 
 	return createElement(
 		AdminShell,
-		{ page },
+		{
+			page,
+			hideHero,
+			alerts: handoverAlerts,
+			onDismissAlert: (id) => setHandoverAlerts((current) => current.filter((item) => item.id !== id)),
+		},
 		screenOrder.map((section) =>
 			visited.includes(section)
 				? createElement(ScreenMount, { key: section, active: page === section }, screenMap[section])

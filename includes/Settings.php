@@ -189,6 +189,20 @@ final class Settings {
 	}
 
 	/**
+	 * Replace all saved reporting segments.
+	 *
+	 * @param array<int, mixed> $segments Segment payloads.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function update_reporting_segments( array $segments ): array {
+		$sanitized = self::sanitize_reporting_segments( $segments );
+		$sanitized = array_slice( $sanitized, 0, 50 );
+		update_option( self::REPORTING_SEGMENTS_OPTION, $sanitized, false );
+
+		return $sanitized;
+	}
+
+	/**
 	 * Delete a reporting segment.
 	 *
 	 * @param string $segment_id Segment ID.
@@ -584,18 +598,25 @@ final class Settings {
 	private static function sanitize_reporting_segment( array $segment ): array {
 		$view    = sanitize_key( (string) ( $segment['view'] ?? 'sessions' ) );
 		$filters = isset( $segment['filters'] ) && is_array( $segment['filters'] ) ? $segment['filters'] : array();
-		$view    = in_array( $view, array( 'sessions', 'companies', 'calls', 'commerce' ), true ) ? $view : 'sessions';
+		$view    = in_array( $view, array( 'sessions', 'companies', 'calls', 'chats', 'commerce' ), true ) ? $view : 'sessions';
 
 		$sanitized_filters = array(
-			'search'     => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
-			'confidence' => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
-			'source'     => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
-			'provider'   => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
-			'status'     => sanitize_text_field( (string) ( $filters['status'] ?? '' ) ),
-			'date_from'  => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
-			'date_to'    => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
-			'match_only' => rest_sanitize_boolean( $filters['match_only'] ?? false ) ? '1' : '',
-			'repeat_only'=> rest_sanitize_boolean( $filters['repeat_only'] ?? false ) ? '1' : '',
+			'search'             => sanitize_text_field( (string) ( $filters['search'] ?? '' ) ),
+			'confidence'         => sanitize_key( (string) ( $filters['confidence'] ?? '' ) ),
+			'source'             => sanitize_text_field( (string) ( $filters['source'] ?? '' ) ),
+			'provider'           => sanitize_text_field( (string) ( $filters['provider'] ?? '' ) ),
+			'model'              => sanitize_text_field( (string) ( $filters['model'] ?? '' ) ),
+			'status'             => sanitize_text_field( (string) ( $filters['status'] ?? '' ) ),
+			'commercial_status'  => sanitize_text_field( (string) ( $filters['commercial_status'] ?? '' ) ),
+			'commercial_outcome' => sanitize_text_field( (string) ( $filters['commercial_outcome'] ?? '' ) ),
+			'priority'           => sanitize_text_field( (string) ( $filters['priority'] ?? '' ) ),
+			'owner_user_id'      => absint( $filters['owner_user_id'] ?? 0 ) ? (string) absint( $filters['owner_user_id'] ?? 0 ) : '',
+			'date_from'          => sanitize_text_field( (string) ( $filters['date_from'] ?? '' ) ),
+			'date_to'            => sanitize_text_field( (string) ( $filters['date_to'] ?? '' ) ),
+			'match_only'         => rest_sanitize_boolean( $filters['match_only'] ?? false ) ? '1' : '',
+			'repeat_only'        => rest_sanitize_boolean( $filters['repeat_only'] ?? false ) ? '1' : '',
+			'due_only'           => rest_sanitize_boolean( $filters['due_only'] ?? false ) ? '1' : '',
+			'connect_import_only'=> rest_sanitize_boolean( $filters['connect_import_only'] ?? false ) ? '1' : '',
 		);
 
 		return array(

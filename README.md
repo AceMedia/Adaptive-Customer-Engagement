@@ -120,6 +120,12 @@ adaptive-customer-engagement/v1
 - `GET /admin/commerce`
 - `GET /admin/calls`
 - `GET /admin/calls/{id}`
+- `GET /admin/chats`
+- `GET /admin/chats/{id}`
+- `POST /admin/chats/{id}/reply`
+- `POST /admin/chats/{id}/status`
+- `POST /admin/chats/{id}/workflow`
+- `GET /admin/chats/{id}/suggestions`
 - `GET /admin/numbers`
 - `GET /admin/numbers/{id}`
 - `POST /admin/numbers`
@@ -177,14 +183,19 @@ It currently supports:
 - product-aware comparison answers, including size and capacity ranking where the catalogue provides those signals
 - inline linked titles in assistant replies when relevant sources are mentioned
 - a lead source card with thumbnail, short summary, price display, and variation counts where available
-- product actions for viewing a product, viewing options, or adding simple products straight to the basket
+- product actions for viewing a product, viewing options, or adding simple products straight to the basket without leaving the page, including mini-cart opening where the site basket supports it
 - a collapsed list of extra options with cleaner spacing for longer product-result sets
 - persistent chat state across page changes for the same visitor, including reopening the chat after product navigation
 - live context post-type detection with a selectable allowlist in the AI settings screen
 - explicit end-chat handling for visitors, plus consistent auto-scroll when restored or newly updated
+- live team availability status based on admins actively watching the plugin admin area, plus follow-up contact capture when nobody is online
+- human-handover detection when a visitor asks for an agent, with admin alert links that open the chat in a new tab
+- named chat messages with avatars for the bot and live agents, using the site icon for the bot avatar where available
 - handover-aware chat state so the team can take over a live conversation and stop the AI replying over the top
 - a two-way admin chats detail screen where staff can take over, reply to the customer, return the thread to the AI assistant, or end the conversation
+- a chatroom-style admin operator console with a sticky transcript, bottom reply composer, auto-refreshing queue/detail state, and AI-suggested human replies
 - stored chat conversations and transcripts in the plugin reporting surfaces
+- commercial workflow handling on chats, including owner assignment, priority, outcome, follow-up dates, internal notes, and linked WooCommerce buying-signal summaries for the matched session or company
 
 ## Setup and connection guidance
 

@@ -175,6 +175,12 @@ final class SiteContextService {
 			);
 		}
 
+		$shipping_answer = $this->answer_shipping_question( $question, $limit );
+
+		if ( ! empty( $shipping_answer ) ) {
+			return $shipping_answer;
+		}
+
 		$product_comparison = $this->answer_product_comparison_question( $question, $limit );
 
 		if ( ! empty( $product_comparison ) ) {
@@ -215,12 +221,52 @@ final class SiteContextService {
 		$top_score  = (float) ( $top['score'] ?? 0 );
 		$confidence = $top_score >= 18 ? 'high' : ( $top_score >= 8 ? 'medium' : 'low' );
 		$answer     = $this->build_answer_text( $question, $documents );
+		$sources    = $this->select_response_sources( $question, $documents, $limit );
+		$sources    = $this->enrich_sources_with_product_documents( $sources, max( $limit, 5 ) );
 
 		return array(
 			'answer'     => $answer,
-			'sources'    => array_map( array( $this, 'format_source_document' ), $documents ),
+			'sources'    => array_map( array( $this, 'format_source_document' ), $sources ),
 			'confidence' => $confidence,
 			'fallback'   => false,
+		);
+	}
+
+	/**
+	 * Infer relevant product-led sources from arbitrary text.
+	 *
+	 * Useful for manual operator replies where we still want product cards and
+	 * linked PDFs to appear if a product has been mentioned explicitly.
+	 *
+	 * @param string $text  Free text.
+	 * @param int    $limit Maximum source count.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function infer_message_sources( string $text, int $limit = 5 ): array {
+		$text  = $this->normalise_text( $text );
+		$limit = max( 1, min( 8, $limit ) );
+
+		if ( '' === $text ) {
+			return array();
+		}
+
+		$product_documents = $this->search( $this->expand_query_for_search( $text ), min( 3, $limit ), array( 'product' ), false );
+		$product_documents = array_values(
+			array_filter(
+				$product_documents,
+				static function ( array $document ): bool {
+					return 'product' === sanitize_key( (string) ( $document['source_type'] ?? '' ) ) && (float) ( $document['score'] ?? 0 ) > 0;
+				}
+			)
+		);
+
+		if ( empty( $product_documents ) ) {
+			return array();
+		}
+
+		return array_map(
+			array( $this, 'format_source_document' ),
+			$this->enrich_sources_with_product_documents( array_slice( $product_documents, 0, min( 2, $limit ) ), $limit )
 		);
 	}
 
@@ -388,7 +434,7 @@ final class SiteContextService {
 			$product_text
 		);
 
-		if ( count( $documents ) > 1 ) {
+		if ( count( $documents ) > 1 && $this->should_mention_related_documents( $question, $documents ) ) {
 			$related_titles = array();
 
 			foreach ( array_slice( $documents, 1, 2 ) as $document ) {
@@ -413,6 +459,102 @@ final class SiteContextService {
 		}
 
 		return sanitize_textarea_field( trim( $answer ) );
+	}
+
+	/**
+	 * Select which sources should be shown back to the frontend.
+	 *
+	 * Products should stay visible for product-intent questions, while content links
+	 * should only appear when they add useful further-reading context.
+	 *
+	 * @param string                            $question  User question.
+	 * @param array<int, array<string, mixed>> $documents Matching documents.
+	 * @param int                               $limit     Maximum source count.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function select_response_sources( string $question, array $documents, int $limit ): array {
+		$limit               = max( 1, min( 8, $limit ) );
+		$is_product_question = $this->is_product_question( $question );
+
+		if ( $is_product_question ) {
+			$product_documents = array_values(
+				array_filter(
+					$documents,
+					static function ( array $document ): bool {
+						return 'product' === sanitize_key( (string) ( $document['source_type'] ?? '' ) );
+					}
+				)
+			);
+
+			return array_slice( ! empty( $product_documents ) ? $product_documents : $documents, 0, $limit );
+		}
+
+		if ( ! $this->should_offer_further_reading( $question, $documents ) ) {
+			return array();
+		}
+
+		$content_documents = array_values(
+			array_filter(
+				$documents,
+				static function ( array $document ): bool {
+					return 'product' !== sanitize_key( (string) ( $document['source_type'] ?? '' ) );
+				}
+			)
+		);
+
+		return array_slice( ! empty( $content_documents ) ? $content_documents : $documents, 0, min( 3, $limit ) );
+	}
+
+	/**
+	 * Decide whether related-document titles should be mentioned in the answer body.
+	 *
+	 * @param string                            $question  User question.
+	 * @param array<int, array<string, mixed>> $documents Matching documents.
+	 * @return bool
+	 */
+	private function should_mention_related_documents( string $question, array $documents ): bool {
+		if ( $this->is_product_question( $question ) ) {
+			return true;
+		}
+
+		return $this->should_offer_further_reading( $question, $documents );
+	}
+
+	/**
+	 * Decide whether non-product links add useful further-reading context.
+	 *
+	 * @param string                            $question  User question.
+	 * @param array<int, array<string, mixed>> $documents Matching documents.
+	 * @return bool
+	 */
+	private function should_offer_further_reading( string $question, array $documents ): bool {
+		$question = $this->normalise_text( $question );
+
+		if ( '' === $question || empty( $documents ) ) {
+			return false;
+		}
+
+		if ( preg_match( '/\b(read|reading|learn more|more detail|more details|more info|more information|further|page|pages|post|posts|article|articles|blog|case stud(?:y|ies)|news|link|links)\b/', $question ) ) {
+			return true;
+		}
+
+		$non_product_documents = array_values(
+			array_filter(
+				$documents,
+				static function ( array $document ): bool {
+					return 'product' !== sanitize_key( (string) ( $document['source_type'] ?? '' ) );
+				}
+			)
+		);
+
+		if ( count( $non_product_documents ) < 2 ) {
+			return false;
+		}
+
+		$top_score    = (float) ( $non_product_documents[0]['score'] ?? 0 );
+		$second_score = (float) ( $non_product_documents[1]['score'] ?? 0 );
+
+		return $top_score >= 8 && $second_score >= 8;
 	}
 
 	/**
@@ -476,12 +618,22 @@ final class SiteContextService {
 			'/\b(about|about us|company|history|story|team|contact|phone|email|address|get in touch|location|locations|blog|news|article|articles|post|posts|case stud(?:y|ies)|project|projects|portfolio|faq|support|returns?|delivery|shipping|warranty)\b/',
 			$question
 		);
-		$is_product_question = (bool) preg_match(
-			'/\b(product|products|bin|bins|container|containers|capacity|size|sizes|litre|litres|price|prices|cost|quote|buy|basket|cart|model|models|range|ranges|wheelie)\b/',
-			$question
-		);
+		$is_product_question = $this->is_product_question( $question );
 
 		return $is_content_question && ! $is_product_question;
+	}
+
+	/**
+	 * Decide whether the question is clearly product-led.
+	 *
+	 * @param string $question User question.
+	 * @return bool
+	 */
+	private function is_product_question( string $question ): bool {
+		return (bool) preg_match(
+			'/\b(product|products|bin|bins|container|containers|capacity|size|sizes|litre|litres|price|prices|cost|quote|buy|basket|cart|model|models|range|ranges|wheelie)\b/',
+			$this->normalise_text( $question )
+		);
 	}
 
 	/**
@@ -769,6 +921,13 @@ final class SiteContextService {
 		$is_simple         = $product->is_type( 'simple' );
 		$variation_count   = $is_variable && method_exists( $product, 'get_children' ) ? count( $product->get_children() ) : 0;
 		$price_html        = sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) );
+		$direct_weight     = method_exists( $product, 'get_weight' ) ? (float) $product->get_weight() : 0.0;
+		$length_cm         = method_exists( $product, 'get_length' ) ? (float) $product->get_length() : 0.0;
+		$width_cm          = method_exists( $product, 'get_width' ) ? (float) $product->get_width() : 0.0;
+		$height_cm         = method_exists( $product, 'get_height' ) ? (float) $product->get_height() : 0.0;
+		$stock_quantity    = method_exists( $product, 'get_stock_quantity' ) ? $product->get_stock_quantity() : null;
+		$shipping_class    = method_exists( $product, 'get_shipping_class' ) ? (string) $product->get_shipping_class() : '';
+		$needs_shipping    = method_exists( $product, 'needs_shipping' ) ? (bool) $product->needs_shipping() : ! ( method_exists( $product, 'is_virtual' ) && $product->is_virtual() );
 		$can_add_to_cart   = $is_simple && ! $is_variable && $product->is_purchasable() && $product->is_in_stock() && '' !== $product_permalink;
 		$add_to_cart_url   = $can_add_to_cart ? add_query_arg( 'add-to-cart', (string) $product->get_id(), $product_permalink ) : '';
 		$measurements = array_merge(
@@ -780,7 +939,7 @@ final class SiteContextService {
 			)
 		);
 		$capacity_litres = $this->extract_measurement_value( $measurements, '/(\d+(?:\.\d+)?)\s*(?:litres?|ltr|l)\b/i' );
-		$weight_kg       = $this->extract_measurement_value( $measurements, '/(\d+(?:\.\d+)?)\s*kg\b/i' );
+		$weight_kg       = $direct_weight > 0 ? $direct_weight : $this->extract_measurement_value( $measurements, '/(\d+(?:\.\d+)?)\s*kg\b/i' );
 		$product_kind    = $this->classify_product_kind( (string) $post->post_title, $categories );
 
 		return array_filter(
@@ -793,6 +952,20 @@ final class SiteContextService {
 				'attributes'       => $attributes,
 				'capacity_litres'  => $capacity_litres > 0 ? $capacity_litres : null,
 				'empty_weight_kg'  => $weight_kg > 0 ? $weight_kg : null,
+				'dimensions_cm'    => array_filter(
+					array(
+						'length' => $length_cm > 0 ? $length_cm : null,
+						'width'  => $width_cm > 0 ? $width_cm : null,
+						'height' => $height_cm > 0 ? $height_cm : null,
+					),
+					static function ( $value ): bool {
+						return null !== $value;
+					}
+				),
+				'needs_shipping'   => $needs_shipping,
+				'stock_quantity'   => null !== $stock_quantity ? (int) $stock_quantity : null,
+				'shipping_class'   => sanitize_text_field( $shipping_class ),
+				'tax_status'       => method_exists( $product, 'get_tax_status' ) ? sanitize_key( (string) $product->get_tax_status() ) : '',
 				'product_kind'     => $product_kind,
 				'product_type'     => sanitize_key( $product->get_type() ),
 				'variation_count'  => $variation_count,
@@ -839,6 +1012,50 @@ final class SiteContextService {
 			);
 		}
 
+		if ( ! empty( $commerce['dimensions_cm'] ) && is_array( $commerce['dimensions_cm'] ) ) {
+			$dimension_parts = array();
+
+			foreach ( array( 'length' => 'L', 'width' => 'W', 'height' => 'H' ) as $key => $label ) {
+				if ( empty( $commerce['dimensions_cm'][ $key ] ) ) {
+					continue;
+				}
+
+				$dimension_parts[] = $label . ' ' . number_format_i18n( (float) $commerce['dimensions_cm'][ $key ], 0 ) . 'cm';
+			}
+
+			if ( ! empty( $dimension_parts ) ) {
+				$parts[] = sprintf(
+					/* translators: %s: compact dimensions text. */
+					__( 'Dimensions: %s.', 'adaptive-customer-engagement' ),
+					implode( ', ', $dimension_parts )
+				);
+			}
+		}
+
+		if ( ! empty( $commerce['sku'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: product SKU. */
+				__( 'SKU: %s.', 'adaptive-customer-engagement' ),
+				sanitize_text_field( (string) $commerce['sku'] )
+			);
+		}
+
+		if ( ! empty( $commerce['variation_count'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: variation count. */
+				_n( '%s variation available.', '%s variations available.', (int) $commerce['variation_count'], 'adaptive-customer-engagement' ),
+				number_format_i18n( (int) $commerce['variation_count'] )
+			);
+		}
+
+		if ( ! empty( $commerce['shipping_class'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: shipping class label. */
+				__( 'Shipping class: %s.', 'adaptive-customer-engagement' ),
+				sanitize_text_field( (string) $commerce['shipping_class'] )
+			);
+		}
+
 		if ( ! empty( $commerce['categories'] ) && is_array( $commerce['categories'] ) ) {
 			$parts[] = sprintf(
 				/* translators: %s: comma-separated product categories. */
@@ -848,6 +1065,193 @@ final class SiteContextService {
 		}
 
 		return trim( implode( ' ', array_filter( $parts ) ) );
+	}
+
+	/**
+	 * Build a structured answer for shipping and delivery questions.
+	 *
+	 * @param string $question User question.
+	 * @param int    $limit    Source document limit.
+	 * @return array<string, mixed>
+	 */
+	private function answer_shipping_question( string $question, int $limit ): array {
+		if ( ! $this->is_shipping_question( $question ) || ! class_exists( 'WC_Shipping_Zones' ) ) {
+			return array();
+		}
+
+		$product_query     = $this->extract_product_query_from_shipping_question( $question );
+		$product_documents = array_values(
+			array_filter(
+				$this->search( $this->expand_query_for_search( $product_query ), max( 1, min( 3, $limit ) ), array( 'product' ), false ),
+				static function ( array $document ): bool {
+					return 'product' === sanitize_key( (string) ( $document['source_type'] ?? '' ) ) && (float) ( $document['score'] ?? 0 ) > 0;
+				}
+			)
+		);
+
+		if ( ! $this->should_match_product_for_shipping_question( $question, $product_query, $product_documents ) ) {
+			$product_documents = array();
+		}
+
+		$product_document  = ! empty( $product_documents ) ? $product_documents[0] : array();
+		$shipping_context  = $this->get_shipping_context_for_question( $question, $product_document );
+
+		if ( empty( $shipping_context ) ) {
+			return array(
+				'answer'     => __( 'I can see the site has live WooCommerce shipping methods configured, but I need the delivery postcode and, ideally, the product to work out the matching shipping zone and estimate the current delivery charge.', 'adaptive-customer-engagement' ),
+				'sources'    => array(),
+				'confidence' => 'medium',
+				'fallback'   => false,
+			);
+		}
+
+		$sources = ! empty( $product_documents )
+			? $this->enrich_sources_with_product_documents( array_slice( $product_documents, 0, min( 2, $limit ) ), max( $limit, 5 ) )
+			: array();
+
+		return array(
+			'answer'     => $this->build_shipping_answer_text( $shipping_context, $product_document ),
+			'sources'    => array_map( array( $this, 'format_source_document' ), $sources ),
+			'confidence' => ! empty( $shipping_context['zone_name'] ) ? 'high' : 'medium',
+			'fallback'   => false,
+		);
+	}
+
+	/**
+	 * Remove destination/shipping wording so product lookup can stay focused.
+	 *
+	 * @param string $question Raw shipping question.
+	 * @return string
+	 */
+	private function extract_product_query_from_shipping_question( string $question ): string {
+		$query = wp_strip_all_tags( $question );
+		$query = preg_replace( '/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}|[A-Z]{1,2}\d[A-Z\d]?)\b/i', ' ', $query ) ?: $query;
+		$query = preg_replace( '/\b(ship|shipping|delivery|deliver|delivers|delivered|postcode|post code|estimate|cost|charge|charges|courier|freight|to|for|my|postcode)\b/i', ' ', $query ) ?: $query;
+
+		foreach ( array_keys( $this->get_shipping_city_postcode_aliases() ) as $city ) {
+			$query = preg_replace( '/\b' . preg_quote( $city, '/' ) . '\b/i', ' ', $query ) ?: $query;
+		}
+
+		$query = preg_replace( '/\s+/', ' ', $query ) ?: $query;
+		$query = trim( $query );
+
+		return '' !== $query ? $query : $question;
+	}
+
+	/**
+	 * Decide whether a shipping question names a product clearly enough to attach one.
+	 *
+	 * @param string                            $question          Raw visitor question.
+	 * @param string                            $product_query     Shipping-focused product query.
+	 * @param array<int, array<string, mixed>> $product_documents Matched product documents.
+	 * @return bool
+	 */
+	private function should_match_product_for_shipping_question( string $question, string $product_query, array $product_documents ): bool {
+		$question      = $this->normalise_text( $question );
+		$product_query = $this->normalise_text( $product_query );
+
+		if ( '' === $question || '' === $product_query || empty( $product_documents ) ) {
+			return false;
+		}
+
+		if ( ! preg_match( '/\b(product|products|bin|bins|container|containers|lid|lids|model|models|range|ranges|sku|part|parts|wheelie|body|housing|castor|lock|drainplug|din)\b/', $question ) ) {
+			return false;
+		}
+
+		$top_document = $product_documents[0];
+		$top_title    = $this->normalise_text( (string) ( $top_document['title'] ?? '' ) );
+		$top_score    = (float) ( $top_document['score'] ?? 0 );
+
+		if ( '' === $top_title || $top_score < 18 ) {
+			return false;
+		}
+
+		if ( false !== strpos( $question, $top_title ) ) {
+			return true;
+		}
+
+		$query_terms = $this->extract_shipping_product_reference_terms( $product_query );
+		$title_terms = $this->extract_shipping_product_reference_terms( $top_title );
+
+		if ( empty( $query_terms ) || empty( $title_terms ) ) {
+			return false;
+		}
+
+		return count( array_intersect( $query_terms, $title_terms ) ) >= min( 2, count( $title_terms ) );
+	}
+
+	/**
+	 * Extract the meaningful product-reference terms from a shipping question.
+	 *
+	 * @param string $text Input text.
+	 * @return array<int, string>
+	 */
+	private function extract_shipping_product_reference_terms( string $text ): array {
+		$ignored = array(
+			'ship',
+			'shipping',
+			'delivery',
+			'deliver',
+			'delivers',
+			'delivered',
+			'cost',
+			'costs',
+			'charge',
+			'charges',
+			'quote',
+			'quotes',
+			'postcode',
+			'postcodes',
+			'post',
+			'code',
+			'does',
+			'do',
+			'you',
+			'your',
+			'how',
+			'much',
+			'what',
+			'which',
+			'for',
+			'from',
+			'with',
+			'that',
+			'this',
+			'these',
+			'those',
+			'into',
+			'onto',
+			'area',
+			'current',
+			'basket',
+			'cart',
+			'egbert',
+			'sheffield',
+			'leeds',
+			'uk',
+			'gb',
+		);
+
+		return array_values(
+			array_filter(
+				$this->extract_terms( $text ),
+				static function ( string $term ) use ( $ignored ): bool {
+					if ( in_array( $term, $ignored, true ) ) {
+						return false;
+					}
+
+					if ( preg_match( '/^\d+$/', $term ) ) {
+						return false;
+					}
+
+					if ( preg_match( '/^\d+(l|kg)$/', $term ) ) {
+						return true;
+					}
+
+					return strlen( $term ) >= 3;
+				}
+			)
+		);
 	}
 
 	/**
@@ -1000,11 +1404,872 @@ final class SiteContextService {
 			'image_url'    => esc_url_raw( (string) ( $document['image_url'] ?? '' ) ),
 			'commerce'     => array(
 				'price'           => sanitize_text_field( (string) ( $commerce['price'] ?? '' ) ),
+				'sku'             => sanitize_text_field( (string) ( $commerce['sku'] ?? '' ) ),
+				'stock_status'    => sanitize_key( (string) ( $commerce['stock_status'] ?? '' ) ),
+				'stock_quantity'  => isset( $commerce['stock_quantity'] ) ? (int) $commerce['stock_quantity'] : null,
+				'empty_weight_kg' => ! empty( $commerce['empty_weight_kg'] ) ? (float) $commerce['empty_weight_kg'] : null,
+				'dimensions_cm'   => ! empty( $commerce['dimensions_cm'] ) && is_array( $commerce['dimensions_cm'] ) ? array(
+					'length' => ! empty( $commerce['dimensions_cm']['length'] ) ? (float) $commerce['dimensions_cm']['length'] : null,
+					'width'  => ! empty( $commerce['dimensions_cm']['width'] ) ? (float) $commerce['dimensions_cm']['width'] : null,
+					'height' => ! empty( $commerce['dimensions_cm']['height'] ) ? (float) $commerce['dimensions_cm']['height'] : null,
+				) : array(),
+				'needs_shipping'  => isset( $commerce['needs_shipping'] ) ? ! empty( $commerce['needs_shipping'] ) : null,
+				'shipping_class'  => sanitize_text_field( (string) ( $commerce['shipping_class'] ?? '' ) ),
 				'variation_count' => absint( $commerce['variation_count'] ?? 0 ),
 				'can_add_to_cart' => ! empty( $commerce['can_add_to_cart'] ),
 				'add_to_cart_url' => esc_url_raw( (string) ( $commerce['add_to_cart_url'] ?? '' ) ),
 				'view_url'        => esc_url_raw( (string) ( $commerce['view_url'] ?? $document['url'] ?? '' ) ),
 			),
+		);
+	}
+
+	/**
+	 * Detect whether the current question is about shipping or delivery.
+	 *
+	 * @param string $question User question.
+	 * @return bool
+	 */
+	private function is_shipping_question( string $question ): bool {
+		return (bool) preg_match(
+			'/\b(ship|shipping|delivery|deliver|delivers|delivered|postage|courier|freight|postcode|post code|shipping cost|delivery cost|estimate shipping|delivery charge)\b/i',
+			$question
+		);
+	}
+
+	/**
+	 * Build a live shipping context snapshot from WooCommerce/Flexible Shipping.
+	 *
+	 * @param string               $question         User question.
+	 * @param array<string, mixed> $product_document Matched product document.
+	 * @return array<string, mixed>
+	 */
+	private function get_shipping_context_for_question( string $question, array $product_document ): array {
+		$destination = $this->extract_shipping_destination( $question );
+		$zone_data   = $this->find_shipping_zone_for_destination( $destination );
+
+		if ( empty( $zone_data ) ) {
+			return array(
+				'destination' => $destination,
+				'zone_name'   => '',
+				'methods'     => array(),
+				'postcodes'   => array(),
+				'estimate'    => array(),
+			);
+		}
+
+		$quote_method = $this->get_quoteable_shipping_method( $zone_data['methods'] ?? array() );
+		$estimate     = array();
+
+		if ( ! empty( $quote_method ) && ! empty( $product_document['commerce'] ) && is_array( $product_document['commerce'] ) ) {
+			$estimate = $this->estimate_shipping_cost_for_product( $quote_method, $product_document['commerce'] );
+		}
+
+		$zone_data['destination'] = $destination;
+		$zone_data['estimate']    = $estimate;
+
+		return $zone_data;
+	}
+
+	/**
+	 * Build a human-readable shipping answer from live WooCommerce data.
+	 *
+	 * @param array<string, mixed> $shipping_context Shipping context.
+	 * @param array<string, mixed> $product_document Product document.
+	 * @return string
+	 */
+	private function build_shipping_answer_text( array $shipping_context, array $product_document ): string {
+		$destination      = is_array( $shipping_context['destination'] ?? null ) ? $shipping_context['destination'] : array();
+		$destination_type = sanitize_key( (string) ( $destination['type'] ?? '' ) );
+		$destination_name = sanitize_text_field( (string) ( $destination['label'] ?? __( 'that area', 'adaptive-customer-engagement' ) ) );
+		$zone_name        = sanitize_text_field( (string) ( $shipping_context['zone_name'] ?? '' ) );
+		$estimate         = is_array( $shipping_context['estimate'] ?? null ) ? $shipping_context['estimate'] : array();
+		$product_name     = sanitize_text_field( (string) ( $product_document['title'] ?? '' ) );
+		$product_has_data = ! empty( $product_document['commerce'] ) && is_array( $product_document['commerce'] );
+		$needs_shipping   = ! empty( $product_document['commerce']['needs_shipping'] ) || ! $product_has_data;
+		$zone_fragment    = '' !== $zone_name
+			? sprintf(
+				/* translators: %s: shipping zone name. */
+				__( 'the %s shipping zone', 'adaptive-customer-engagement' ),
+				$zone_name
+			)
+			: __( 'the configured shipping setup', 'adaptive-customer-engagement' );
+		$location_fragment = 'city' === $destination_type
+			? sprintf(
+				/* translators: %s: destination city. */
+				__( '%s-area postcodes', 'adaptive-customer-engagement' ),
+				$destination_name
+			)
+			: $destination_name;
+		$match_verb = 'postcode' === $destination_type ? __( 'matches', 'adaptive-customer-engagement' ) : __( 'match', 'adaptive-customer-engagement' );
+
+		if ( empty( $shipping_context['methods'] ) ) {
+			return __( 'I could not find a live shipping method for that destination in the current WooCommerce setup. If you send the delivery postcode I can try a more exact check.', 'adaptive-customer-engagement' );
+		}
+
+		if ( $product_has_data && ! $needs_shipping ) {
+			return sprintf(
+				/* translators: 1: product title, 2: zone fragment. */
+				__( '%1$s does not appear to need physical shipping in the current WooCommerce data, so a delivery estimate is not needed for %2$s.', 'adaptive-customer-engagement' ),
+				$product_name,
+				$zone_fragment
+			);
+		}
+
+		if ( ! empty( $estimate['cost_label'] ) && ! empty( $estimate['weight_kg'] ) ) {
+			return sprintf(
+				/* translators: 1: destination, 2: zone name, 3: product title, 4: shipping cost, 5: weight in kg. */
+				__( 'Yes — %1$s %2$s %3$s. Based on the current WooCommerce shipping table, the estimated delivery charge for %4$s is %5$s at roughly %6$skg shipping weight.', 'adaptive-customer-engagement' ),
+				$location_fragment,
+				$match_verb,
+				$zone_fragment,
+				$product_name,
+				$estimate['cost_label'],
+				number_format_i18n( (float) $estimate['weight_kg'], 2 )
+			);
+		}
+
+		if ( '' !== $product_name && empty( $estimate ) ) {
+			return sprintf(
+				/* translators: 1: destination, 2: zone name, 3: product title. */
+				__( 'Yes — %1$s %2$s %3$s. I can see delivery is configured there, but I cannot give a reliable estimate for %4$s from the current product data yet. If you share the exact postcode and chosen option, the team can confirm the final shipping charge.', 'adaptive-customer-engagement' ),
+				$location_fragment,
+				$match_verb,
+				$zone_fragment,
+				$product_name
+			);
+		}
+
+		return sprintf(
+			/* translators: 1: destination, 2: zone name. */
+			__( 'Yes — %1$s %2$s %3$s in the current WooCommerce shipping setup. If you share the product and delivery postcode, I can try to estimate the configured delivery charge from the live shipping table.', 'adaptive-customer-engagement' ),
+			$location_fragment,
+			$match_verb,
+			$zone_fragment
+		);
+	}
+
+	/**
+	 * Extract a shipping destination hint from the question.
+	 *
+	 * @param string $question User question.
+	 * @return array<string, mixed>
+	 */
+	private function extract_shipping_destination( string $question ): array {
+		$upper_question = strtoupper( wp_strip_all_tags( $question ) );
+		$normalised     = $this->normalise_text( $question );
+
+		if ( preg_match( '/\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}|[A-Z]{1,2}\d[A-Z\d]?)\b/', $upper_question, $matches ) && ! empty( $matches[1] ) ) {
+			$postcode = trim( preg_replace( '/\s+/', ' ', (string) $matches[1] ) ?: '' );
+
+			return array(
+				'type'     => 'postcode',
+				'label'    => $postcode,
+				'postcode' => $postcode,
+				'country'  => 'GB',
+			);
+		}
+
+		foreach ( $this->get_shipping_city_postcode_aliases() as $city => $patterns ) {
+			if ( false === strpos( $normalised, $city ) ) {
+				continue;
+			}
+
+			return array(
+				'type'              => 'city',
+				'label'             => ucwords( $city ),
+				'postcode_patterns' => $patterns,
+				'country'           => 'GB',
+			);
+		}
+
+		return array(
+			'type'    => 'unknown',
+			'label'   => __( 'the requested destination', 'adaptive-customer-engagement' ),
+			'country' => preg_match( '/\b(uk|gb|great britain|united kingdom|england|scotland|wales)\b/i', $question ) ? 'GB' : '',
+		);
+	}
+
+	/**
+	 * Map common UK city names to outward postcode patterns for regional shipping checks.
+	 *
+	 * @return array<string, array<int, string>>
+	 */
+	private function get_shipping_city_postcode_aliases(): array {
+		return array(
+			'sheffield'   => array( 'S1*', 'S2*', 'S3*', 'S4*', 'S5*', 'S6*', 'S7*', 'S8*', 'S9*' ),
+			'leeds'       => array( 'LS*' ),
+			'wakefield'   => array( 'WF*' ),
+			'york'        => array( 'YO*' ),
+			'hull'        => array( 'HU*' ),
+			'newcastle'   => array( 'NE*' ),
+			'sunderland'  => array( 'SR*' ),
+			'birmingham'  => array( 'B1*', 'B2*', 'B3*', 'B4*', 'B5*', 'B6*', 'B7*', 'B8*', 'B9*' ),
+			'coventry'    => array( 'CV*' ),
+			'glasgow'     => array( 'G1*', 'G2*', 'G3*', 'G4*', 'G5*', 'G6*', 'G7*', 'G8*', 'G9*' ),
+			'edinburgh'   => array( 'EH*' ),
+			'cardiff'     => array( 'CF*' ),
+			'swansea'     => array( 'SA*' ),
+			'bristol'     => array( 'BS*' ),
+			'cambridge'   => array( 'CB*' ),
+			'leicester'   => array( 'LE*' ),
+			'nottingham'  => array( 'NG*' ),
+			'milton keynes' => array( 'MK*' ),
+			'oxford'      => array( 'OX*' ),
+			'reading'     => array( 'RG*' ),
+			'london'      => array( 'EC*', 'SE*', 'SW*', 'WC*', 'NW*' ),
+			'liverpool'   => array( 'L1*', 'L2*', 'L3*', 'L4*', 'L5*', 'L6*', 'L7*', 'L8*', 'L9*' ),
+			'manchester'  => array( 'M*' ),
+		);
+	}
+
+	/**
+	 * Find the live WooCommerce shipping zone that best matches the destination.
+	 *
+	 * @param array<string, mixed> $destination Destination hint.
+	 * @return array<string, mixed>
+	 */
+	private function find_shipping_zone_for_destination( array $destination ): array {
+		$type = sanitize_key( (string) ( $destination['type'] ?? '' ) );
+
+		if ( 'postcode' === $type && ! empty( $destination['postcode'] ) ) {
+			$zone = \WC_Shipping_Zones::get_zone_matching_package(
+				array(
+					'destination' => array(
+						'country'   => sanitize_text_field( (string) ( $destination['country'] ?? 'GB' ) ),
+						'state'     => '',
+						'postcode'  => sanitize_text_field( (string) $destination['postcode'] ),
+						'city'      => '',
+						'address'   => '',
+						'address_1' => '',
+						'address_2' => '',
+					),
+					'contents'      => array(),
+					'contents_cost' => 0,
+				)
+			);
+
+			if ( is_object( $zone ) ) {
+				return $this->build_shipping_zone_payload( $zone );
+			}
+		}
+
+		if ( 'city' === $type && ! empty( $destination['postcode_patterns'] ) && is_array( $destination['postcode_patterns'] ) ) {
+			foreach ( \WC_Shipping_Zones::get_zones() as $zone_row ) {
+				$zone = new \WC_Shipping_Zone( (int) ( $zone_row['zone_id'] ?? 0 ) );
+
+				if ( ! is_object( $zone ) ) {
+					continue;
+				}
+
+				$payload = $this->build_shipping_zone_payload( $zone );
+
+				if ( $this->shipping_zone_matches_patterns( (array) ( $payload['postcodes'] ?? array() ), $destination['postcode_patterns'] ) ) {
+					return $payload;
+				}
+			}
+		}
+
+		return array();
+	}
+
+	/**
+	 * Build a compact shipping-zone payload from a WooCommerce shipping zone object.
+	 *
+	 * @param object $zone WooCommerce shipping zone.
+	 * @return array<string, mixed>
+	 */
+	private function build_shipping_zone_payload( $zone ): array {
+		$zone_id   = method_exists( $zone, 'get_id' ) ? (int) $zone->get_id() : 0;
+		$zone_name = method_exists( $zone, 'get_zone_name' ) ? sanitize_text_field( (string) $zone->get_zone_name() ) : '';
+		$methods   = method_exists( $zone, 'get_shipping_methods' ) ? $zone->get_shipping_methods( true ) : array();
+
+		return array(
+			'zone_id'   => $zone_id,
+			'zone_name' => $zone_name,
+			'postcodes' => $this->get_zone_location_postcodes( $zone_id ),
+			'methods'   => is_array( $methods ) ? array_values( $methods ) : array(),
+		);
+	}
+
+	/**
+	 * Read postcode rules saved against a WooCommerce shipping zone.
+	 *
+	 * @param int $zone_id Zone ID.
+	 * @return array<int, string>
+	 */
+	private function get_zone_location_postcodes( int $zone_id ): array {
+		global $wpdb;
+
+		if ( $zone_id < 0 ) {
+			return array();
+		}
+
+		$table = $wpdb->prefix . 'woocommerce_shipping_zone_locations';
+		$rows  = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT location_code FROM {$table} WHERE zone_id = %d AND location_type = %s ORDER BY location_code ASC",
+				$zone_id,
+				'postcode'
+			)
+		);
+
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( $row ): string {
+						return sanitize_text_field( (string) $row );
+					},
+					is_array( $rows ) ? $rows : array()
+				)
+			)
+		);
+	}
+
+	/**
+	 * Check whether a zone's postcode rules match any of the target patterns.
+	 *
+	 * @param array<int, string> $zone_postcodes Zone postcode rules.
+	 * @param array<int, string> $patterns       Target patterns.
+	 * @return bool
+	 */
+	private function shipping_zone_matches_patterns( array $zone_postcodes, array $patterns ): bool {
+		$zone_postcodes = array_map( array( $this, 'normalise_shipping_postcode_pattern' ), $zone_postcodes );
+		$patterns       = array_map( array( $this, 'normalise_shipping_postcode_pattern' ), $patterns );
+
+		foreach ( $patterns as $pattern ) {
+			if ( '' === $pattern ) {
+				continue;
+			}
+
+			if ( in_array( $pattern, $zone_postcodes, true ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Pick the most useful shipping method for a delivery estimate.
+	 *
+	 * @param array<int, mixed> $methods Zone shipping methods.
+	 * @return object|null
+	 */
+	private function get_quoteable_shipping_method( array $methods ) {
+		foreach ( $methods as $method ) {
+			if ( is_object( $method ) && ! empty( $method->enabled ) && 'local_pickup' !== ( $method->id ?? '' ) ) {
+				return $method;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Estimate a shipping cost for a product from a shipping method.
+	 *
+	 * @param object               $method  Shipping method object.
+	 * @param array<string, mixed> $commerce Product commerce data.
+	 * @return array<string, mixed>
+	 */
+	private function estimate_shipping_cost_for_product( $method, array $commerce ): array {
+		$weight_kg = ! empty( $commerce['empty_weight_kg'] ) ? (float) $commerce['empty_weight_kg'] : 0.0;
+
+		if ( 'flexible_shipping_single' === ( $method->id ?? '' ) ) {
+			if ( $weight_kg <= 0 ) {
+				return array();
+			}
+
+			$rules = method_exists( $method, 'get_option' ) ? $method->get_option( 'method_rules', '' ) : '';
+
+			if ( empty( $rules ) && method_exists( $method, 'get_option' ) ) {
+				$rules = $method->get_option( 'fs_method_rules', '' );
+			}
+
+			$rules = is_string( $rules ) ? json_decode( $rules, true ) : $rules;
+
+			if ( ! is_array( $rules ) ) {
+				return array();
+			}
+
+			foreach ( $rules as $rule ) {
+				$conditions = is_array( $rule['conditions'] ?? null ) ? $rule['conditions'] : array();
+
+				foreach ( $conditions as $condition ) {
+					if ( 'weight' !== sanitize_key( (string) ( $condition['condition_id'] ?? '' ) ) ) {
+						continue;
+					}
+
+					$min = isset( $condition['min'] ) ? (float) $condition['min'] : 0.0;
+					$max = isset( $condition['max'] ) ? (float) $condition['max'] : 0.0;
+
+					if ( $weight_kg < $min || ( $max > 0 && $weight_kg > $max ) ) {
+						continue;
+					}
+
+					$cost = isset( $rule['cost_per_order'] ) ? (float) $rule['cost_per_order'] : 0.0;
+
+					return array(
+						'cost_raw'   => $cost,
+						'cost_label' => wp_strip_all_tags( html_entity_decode( wc_price( $cost ), ENT_QUOTES ) ),
+						'weight_kg'  => $weight_kg,
+					);
+				}
+			}
+		}
+
+		if ( 'flat_rate' === ( $method->id ?? '' ) && method_exists( $method, 'get_option' ) ) {
+			$cost = (float) $method->get_option( 'cost', 0 );
+
+			if ( $cost > 0 ) {
+				return array(
+					'cost_raw'   => $cost,
+					'cost_label' => wp_strip_all_tags( html_entity_decode( wc_price( $cost ), ENT_QUOTES ) ),
+					'weight_kg'  => $weight_kg,
+				);
+			}
+		}
+
+		return array();
+	}
+
+	/**
+	 * Normalise postcode-style shipping patterns for matching.
+	 *
+	 * @param string $pattern Pattern text.
+	 * @return string
+	 */
+	private function normalise_shipping_postcode_pattern( string $pattern ): string {
+		return strtoupper( preg_replace( '/\s+/', '', trim( $pattern ) ) ?: '' );
+	}
+
+	/**
+	 * Append related PDF documents for any product sources.
+	 *
+	 * @param array<int, array<string, mixed>> $sources Source documents.
+	 * @param int                               $limit   Maximum source count.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function enrich_sources_with_product_documents( array $sources, int $limit ): array {
+		$limit    = max( 1, min( 8, $limit ) );
+		$enriched = array();
+		$seen     = array();
+
+		foreach ( $sources as $source ) {
+			$source_key = sanitize_key( (string) ( $source['source_type'] ?? '' ) ) . ':' . absint( $source['id'] ?? 0 ) . ':' . esc_url_raw( (string) ( $source['url'] ?? '' ) );
+
+			if ( isset( $seen[ $source_key ] ) ) {
+				continue;
+			}
+
+			$enriched[]         = $source;
+			$seen[ $source_key ] = true;
+
+			if ( count( $enriched ) >= $limit ) {
+				break;
+			}
+
+			if ( 'product' !== sanitize_key( (string) ( $source['source_type'] ?? '' ) ) ) {
+				continue;
+			}
+
+			foreach ( $this->get_product_document_sources( absint( $source['id'] ?? 0 ), $source ) as $document_source ) {
+				$document_key = sanitize_key( (string) ( $document_source['source_type'] ?? '' ) ) . ':' . absint( $document_source['id'] ?? 0 ) . ':' . esc_url_raw( (string) ( $document_source['url'] ?? '' ) );
+
+				if ( isset( $seen[ $document_key ] ) ) {
+					continue;
+				}
+
+				$enriched[]              = $document_source;
+				$seen[ $document_key ] = true;
+
+				if ( count( $enriched ) >= $limit ) {
+					break 2;
+				}
+			}
+		}
+
+		return array_slice( $enriched, 0, $limit );
+	}
+
+	/**
+	 * Get related PDF documents for a product source.
+	 *
+	 * @param int                  $product_id      Product ID.
+	 * @param array<string, mixed> $product_source  Product source document.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_product_document_sources( int $product_id, array $product_source ): array {
+		$product_post = get_post( $product_id );
+
+		if ( ! $product_post instanceof \WP_Post ) {
+			return array();
+		}
+
+		$attachments = $this->collect_product_pdf_attachments( $product_post, $product_source );
+		$collected   = array();
+
+		foreach ( $attachments as $attachment ) {
+			$key = absint( $attachment->ID );
+
+			if ( isset( $collected[ $key ] ) ) {
+				continue;
+			}
+
+			$document = $this->build_pdf_document( $attachment, $product_post );
+
+			if ( empty( $document ) ) {
+				continue;
+			}
+
+			$collected[ $key ] = $document;
+		}
+
+		return array_values( $collected );
+	}
+
+	/**
+	 * Collect likely PDF attachments for a product, including related range items.
+	 *
+	 * @param \WP_Post               $product_post   Product post.
+	 * @param array<string, mixed>   $product_source Product source document.
+	 * @return array<int, \WP_Post>
+	 */
+	private function collect_product_pdf_attachments( \WP_Post $product_post, array $product_source ): array {
+		$attachments = array();
+		$seen        = array();
+
+		$append_attachment = static function ( \WP_Post $attachment ) use ( &$attachments, &$seen ): void {
+			$key = absint( $attachment->ID );
+
+			if ( $key <= 0 || isset( $seen[ $key ] ) ) {
+				return;
+			}
+
+			$attachments[] = $attachment;
+			$seen[ $key ]  = true;
+		};
+
+		foreach ( $this->get_attached_pdf_posts( array( (int) $product_post->ID ) ) as $attachment ) {
+			$append_attachment( $attachment );
+		}
+
+		foreach ( $this->extract_linked_pdf_attachments( $product_post ) as $attachment ) {
+			$append_attachment( $attachment );
+		}
+
+		if ( ! empty( $attachments ) ) {
+			return $attachments;
+		}
+
+		foreach ( $this->get_related_product_posts_for_documents( $product_post, $product_source ) as $related_post ) {
+			foreach ( $this->get_attached_pdf_posts( array( (int) $related_post->ID ) ) as $attachment ) {
+				$append_attachment( $attachment );
+			}
+
+			foreach ( $this->extract_linked_pdf_attachments( $related_post ) as $attachment ) {
+				$append_attachment( $attachment );
+			}
+
+			if ( count( $attachments ) >= 4 ) {
+				break;
+			}
+		}
+
+		if ( ! empty( $attachments ) ) {
+			return array_slice( $attachments, 0, 4 );
+		}
+
+		foreach ( $this->search_pdf_attachments_by_terms( $this->get_product_document_search_terms( $product_post, $product_source ) ) as $attachment ) {
+			$append_attachment( $attachment );
+
+			if ( count( $attachments ) >= 4 ) {
+				break;
+			}
+		}
+
+		return array_slice( $attachments, 0, 4 );
+	}
+
+	/**
+	 * Get PDF attachments directly attached to one or more posts.
+	 *
+	 * @param array<int, int> $post_ids Post IDs.
+	 * @return array<int, \WP_Post>
+	 */
+	private function get_attached_pdf_posts( array $post_ids ): array {
+		$post_ids = array_values(
+			array_filter(
+				array_map( 'absint', $post_ids )
+			)
+		);
+
+		if ( empty( $post_ids ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				get_posts(
+					array(
+						'post_type'      => 'attachment',
+						'post_status'    => 'inherit',
+						'post_mime_type' => 'application/pdf',
+						'post_parent__in'=> $post_ids,
+						'posts_per_page' => 8,
+						'orderby'        => 'date',
+						'order'          => 'DESC',
+					)
+				),
+				static function ( $post ): bool {
+					return $post instanceof \WP_Post;
+				}
+			)
+		);
+	}
+
+	/**
+	 * Find related products whose PDFs may apply to the current product's range.
+	 *
+	 * @param \WP_Post             $product_post   Product post.
+	 * @param array<string, mixed> $product_source Product source document.
+	 * @return array<int, \WP_Post>
+	 */
+	private function get_related_product_posts_for_documents( \WP_Post $product_post, array $product_source ): array {
+		$term_ids = wp_get_post_terms( $product_post->ID, 'product_cat', array( 'fields' => 'ids' ) );
+		$term_ids = is_wp_error( $term_ids ) ? array() : array_values( array_filter( array_map( 'absint', (array) $term_ids ) ) );
+		$related  = array();
+		$seen     = array(
+			(int) $product_post->ID => true,
+		);
+
+		if ( ! empty( $term_ids ) ) {
+			foreach ( get_posts(
+				array(
+					'post_type'      => 'product',
+					'post_status'    => 'publish',
+					'posts_per_page' => 6,
+					'post__not_in'   => array( (int) $product_post->ID ),
+					'tax_query'      => array(
+						array(
+							'taxonomy' => 'product_cat',
+							'field'    => 'term_id',
+							'terms'    => $term_ids,
+						),
+					),
+					'orderby'        => 'modified',
+					'order'          => 'DESC',
+				)
+			) as $candidate ) {
+				if ( $candidate instanceof \WP_Post && ! isset( $seen[ (int) $candidate->ID ] ) ) {
+					$related[]                  = $candidate;
+					$seen[ (int) $candidate->ID ] = true;
+				}
+			}
+		}
+
+		foreach ( $this->search_related_products_by_terms( $this->get_product_document_search_terms( $product_post, $product_source ), (int) $product_post->ID ) as $candidate ) {
+			if ( ! isset( $seen[ (int) $candidate->ID ] ) ) {
+				$related[]                  = $candidate;
+				$seen[ (int) $candidate->ID ] = true;
+			}
+		}
+
+		return array_slice( $related, 0, 6 );
+	}
+
+	/**
+	 * Build search terms that can link a product to range-level PDF documents.
+	 *
+	 * @param \WP_Post             $product_post   Product post.
+	 * @param array<string, mixed> $product_source Product source document.
+	 * @return array<int, string>
+	 */
+	private function get_product_document_search_terms( \WP_Post $product_post, array $product_source ): array {
+		$categories = array_values(
+			array_filter(
+				array_map(
+					'sanitize_text_field',
+					(array) ( $product_source['commerce']['categories'] ?? array() )
+				)
+			)
+		);
+		$title_terms = array_values(
+			array_filter(
+				$this->extract_terms( (string) $product_post->post_title ),
+				static function ( string $term ): bool {
+					return ! in_array( $term, array( 'bin', 'bins', 'body', 'wheelie', 'container', 'containers', 'litre', 'litres', 'range' ), true );
+				}
+			)
+		);
+
+		return array_values(
+			array_unique(
+				array_filter(
+					array_merge(
+						array(
+							sanitize_text_field( (string) ( $product_source['title'] ?? '' ) ),
+							sanitize_text_field( (string) ( $product_source['commerce']['sku'] ?? '' ) ),
+						),
+						$categories,
+						array_slice( $title_terms, 0, 4 )
+					)
+				)
+			)
+		);
+	}
+
+	/**
+	 * Search for related products using broad matching terms.
+	 *
+	 * @param array<int, string> $terms              Search terms.
+	 * @param int                $excluded_product_id Product to exclude.
+	 * @return array<int, \WP_Post>
+	 */
+	private function search_related_products_by_terms( array $terms, int $excluded_product_id ): array {
+		$results = array();
+		$seen    = array();
+
+		foreach ( array_slice( $terms, 0, 4 ) as $term ) {
+			if ( '' === $term ) {
+				continue;
+			}
+
+			foreach ( get_posts(
+				array(
+					'post_type'      => 'product',
+					'post_status'    => 'publish',
+					'posts_per_page' => 4,
+					'post__not_in'   => array( $excluded_product_id ),
+					's'              => $term,
+					'orderby'        => 'modified',
+					'order'          => 'DESC',
+				)
+			) as $candidate ) {
+				if ( ! $candidate instanceof \WP_Post ) {
+					continue;
+				}
+
+				$key = (int) $candidate->ID;
+
+				if ( isset( $seen[ $key ] ) ) {
+					continue;
+				}
+
+				$results[]   = $candidate;
+				$seen[ $key ] = true;
+			}
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Search PDF attachments by a set of related product terms.
+	 *
+	 * @param array<int, string> $terms Search terms.
+	 * @return array<int, \WP_Post>
+	 */
+	private function search_pdf_attachments_by_terms( array $terms ): array {
+		$results = array();
+		$seen    = array();
+
+		foreach ( array_slice( $terms, 0, 5 ) as $term ) {
+			if ( '' === $term ) {
+				continue;
+			}
+
+			foreach ( get_posts(
+				array(
+					'post_type'      => 'attachment',
+					'post_status'    => 'inherit',
+					'post_mime_type' => 'application/pdf',
+					'posts_per_page' => 4,
+					's'              => $term,
+					'orderby'        => 'date',
+					'order'          => 'DESC',
+				)
+			) as $attachment ) {
+				if ( ! $attachment instanceof \WP_Post ) {
+					continue;
+				}
+
+				$key = (int) $attachment->ID;
+
+				if ( isset( $seen[ $key ] ) ) {
+					continue;
+				}
+
+				$results[]   = $attachment;
+				$seen[ $key ] = true;
+			}
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Extract explicitly linked PDF attachments from product content.
+	 *
+	 * @param \WP_Post $product_post Product post.
+	 * @return array<int, \WP_Post>
+	 */
+	private function extract_linked_pdf_attachments( \WP_Post $product_post ): array {
+		$matches = array();
+		$posts   = array();
+		$content = (string) $product_post->post_content . "\n" . (string) $product_post->post_excerpt;
+
+		if ( preg_match_all( '#https?://[^\s"\']+?\.pdf(?:\?[^\s"\']*)?#i', $content, $matches ) ) {
+			foreach ( array_unique( $matches[0] ) as $url ) {
+				$attachment_id = function_exists( 'attachment_url_to_postid' ) ? absint( attachment_url_to_postid( $url ) ) : 0;
+
+				if ( $attachment_id <= 0 ) {
+					continue;
+				}
+
+				$attachment = get_post( $attachment_id );
+
+				if ( $attachment instanceof \WP_Post ) {
+					$posts[] = $attachment;
+				}
+			}
+		}
+
+		return $posts;
+	}
+
+	/**
+	 * Build a source document for a PDF attachment.
+	 *
+	 * @param \WP_Post $attachment   Attachment post.
+	 * @param \WP_Post $product_post Product post.
+	 * @return array<string, mixed>
+	 */
+	private function build_pdf_document( \WP_Post $attachment, \WP_Post $product_post ): array {
+		$url = wp_get_attachment_url( $attachment->ID );
+
+		if ( empty( $url ) || 'application/pdf' !== get_post_mime_type( $attachment ) ) {
+			return array();
+		}
+
+		$title = sanitize_text_field( get_the_title( $attachment ) ?: basename( (string) $url ) );
+		$summary = sprintf(
+			/* translators: 1: document title, 2: product title. */
+			__( '%1$s is a PDF document related to %2$s.', 'adaptive-customer-engagement' ),
+			$title,
+			sanitize_text_field( get_the_title( $product_post ) )
+		);
+
+		return array(
+			'id'           => (int) $attachment->ID,
+			'title'        => $title,
+			'url'          => esc_url_raw( $url ),
+			'source_type'  => 'document',
+			'content_type' => __( 'PDF document', 'adaptive-customer-engagement' ),
+			'source_label' => __( 'PDF document', 'adaptive-customer-engagement' ),
+			'summary'      => sanitize_textarea_field( $summary ),
+			'image_url'    => '',
+			'commerce'     => array(),
 		);
 	}
 

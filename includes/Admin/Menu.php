@@ -134,6 +134,7 @@ final class Menu {
 					'adminPostUrl' => esc_url_raw( admin_url( 'admin-post.php' ) ),
 					'page'         => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
 					'logoUrl'      => esc_url_raw( ACE_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
+					'siteIconUrl'  => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
 				)
 			),
 			'before'
