@@ -903,7 +903,7 @@ final class AdminController {
 		$since = sanitize_text_field( (string) $request->get_param( 'since' ) );
 		$items = array_map(
 			function ( array $item ): array {
-				$item['chat_url'] = esc_url_raw( admin_url( 'admin.php?page=ace-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) );
+				$item['chat_url'] = esc_url_raw( ace_make_local_url( admin_url( 'admin.php?page=ace-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) ) );
 				return $item;
 			},
 			$this->chat_conversations->get_handover_alerts( $since )

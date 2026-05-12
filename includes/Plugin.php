@@ -159,7 +159,7 @@ final class Plugin {
 			'ace-frontend',
 			'window.ACEFrontendConfig = ' . wp_json_encode(
 				array(
-					'root'      => esc_url_raw( rest_url() ),
+					'root'      => esc_url_raw( ace_make_local_url( rest_url() ) ),
 					'namespace' => 'adaptive-customer-engagement/v1',
 					'enabled'   => (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
@@ -201,12 +201,12 @@ final class Plugin {
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
-			'endpoint'          => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ),
-			'syncEndpoint'      => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ),
-			'typingEndpoint'    => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ),
-			'endEndpoint'       => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ),
-			'availabilityEndpoint' => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/availability' ) ),
-			'contactEndpoint'   => esc_url_raw( rest_url( 'adaptive-customer-engagement/v1/ai/chat/contact' ) ),
+			'endpoint'          => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ) ),
+			'syncEndpoint'      => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ) ),
+			'typingEndpoint'    => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ) ),
+			'endEndpoint'       => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ) ),
+			'availabilityEndpoint' => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/availability' ) ) ),
+			'contactEndpoint'   => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/contact' ) ) ),
 			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 			'title'             => $bot_name,
 			'botName'           => $bot_name,

@@ -107,12 +107,12 @@ final class Menu {
 			'ace-admin',
 			'window.ACEAdminConfig = ' . wp_json_encode(
 				array(
-					'root'         => esc_url_raw( rest_url() ),
+					'root'         => esc_url_raw( ace_make_local_url( rest_url() ) ),
 					'namespace'    => 'adaptive-customer-engagement/v1',
 					'nonce'        => wp_create_nonce( 'wp_rest' ),
 					'exportNonce'  => wp_create_nonce( 'ace_export_report' ),
-					'adminUrl'     => esc_url_raw( admin_url( 'admin.php' ) ),
-					'adminPostUrl' => esc_url_raw( admin_url( 'admin-post.php' ) ),
+					'adminUrl'     => esc_url_raw( ace_make_local_url( admin_url( 'admin.php' ) ) ),
+					'adminPostUrl' => esc_url_raw( ace_make_local_url( admin_url( 'admin-post.php' ) ) ),
 					'page'         => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
 					'logoUrl'      => esc_url_raw( ACE_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
 					'siteIconUrl'  => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
@@ -190,7 +190,7 @@ final class Menu {
 	 */
 	private function render_page( string $page ): void {
 		if ( 'dashboard' !== $page ) {
-			wp_safe_redirect( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) );
+			wp_safe_redirect( ace_make_local_url( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) ) );
 			exit;
 		}
 
