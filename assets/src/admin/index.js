@@ -1764,7 +1764,7 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 	);
 }
 
-function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowSave, onTypingChange, suggestions = [], suggestionsBusy = false, onRefreshSuggestions, busy = false, heartbeatTick = 0 }) {
+function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowSave, onTypingChange, suggestions = [], suggestionsBusy = false, onRefreshSuggestions, busy = false, heartbeatTick = 0, highlightTakeover = false }) {
 	const conversation = detail?.conversation || {};
 	const messages = detail?.messages || [];
 	const sessionCommerce = detail?.session_commerce || {};
@@ -1890,9 +1890,8 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 		return config.siteIconUrl || config.logoUrl || '';
 	};
 	const typingState = (detail?.typing && typeof detail.typing === 'object') ? detail.typing : {};
-	const typingIndicators = typingState.agent
-		? [typingState.agent].filter(Boolean)
-		: Object.values(typingState).filter(Boolean);
+	const typingIndicators = typingState.customer ? [typingState.customer].filter(Boolean) : [];
+	const showTakeoverHighlight = !!highlightTakeover && hasPendingHandoverRequest && !isManualMode && !isEnded;
 
 	useEffect(() => {
 		setWorkflowValues({
@@ -2059,7 +2058,7 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 								'div',
 								{ className: 'ace-admin-chat-console__composer-actions' },
 								!isEnded && !isManualMode
-									? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Go manual', 'adaptive-customer-engagement'))
+										? createElement(Button, { variant: 'primary', className: `ace-admin-chat-console__handover-button${showTakeoverHighlight ? ' is-highlighted' : ''}`, onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, showTakeoverHighlight ? __('Take over now', 'adaptive-customer-engagement') : __('Go manual', 'adaptive-customer-engagement'))
 									: null,
 								!isEnded && isManualMode
 									? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
@@ -2104,17 +2103,20 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 										)
 										: createElement(
 											Notice,
-											{ status: 'info', isDismissible: false },
-											__('Viewing this chat does not take over from the AI. You can press Go manual first, or simply send a team reply and the chat will switch into manual agent mode at that point.', 'adaptive-customer-engagement')
+											{ status: showTakeoverHighlight ? 'warning' : 'info', isDismissible: false },
+											showTakeoverHighlight
+												? __('This chat came in from an agent-request alert. The AI assistant is still live until you press Take over now.', 'adaptive-customer-engagement')
+												: __('Viewing this chat does not take over from the AI. Press Go manual first when you want a team member to step in.', 'adaptive-customer-engagement')
 										),
 									createElement(TextareaControl, {
 										label: __('Reply to customer', 'adaptive-customer-engagement'),
 										help: isManualMode
 											? __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement')
-											: __('Type a team reply here if you want to step in. Sending it will switch this chat into manual agent mode.', 'adaptive-customer-engagement'),
+											: __('Take over first if you want to send a team reply into this live conversation.', 'adaptive-customer-engagement'),
 										value: replyText,
 										onChange: setReplyText,
 										rows: 3,
+										disabled: busy || !isManualMode,
 									}),
 									createElement(
 										'div',
@@ -2122,7 +2124,7 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 										createElement(Button, {
 											variant: 'primary',
 											onClick: async () => {
-												if (!onReply || !String(replyText || '').trim()) {
+												if (!onReply || !isManualMode || !String(replyText || '').trim()) {
 													return;
 												}
 
@@ -2130,8 +2132,8 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 												setReplyText('');
 											},
 											isBusy: busy,
-											disabled: busy || !String(replyText || '').trim(),
-										}, isManualMode ? __('Send reply', 'adaptive-customer-engagement') : __('Send and take over', 'adaptive-customer-engagement'))
+											disabled: busy || !isManualMode || !String(replyText || '').trim(),
+										}, __('Send reply', 'adaptive-customer-engagement'))
 									)
 								)
 								: null
@@ -2310,7 +2312,11 @@ function ChatsView({ active, route }) {
 			return '';
 		}
 
-		return String(latestUserMessage.id || latestUserMessage.created_at || latestUserMessage.message_text || '');
+		return [
+			String(latestUserMessage.id || latestUserMessage.created_at || latestUserMessage.message_text || ''),
+			chatDetail?.conversation?.handover_enabled ? 'manual' : 'ai',
+			String(chatDetail?.conversation?.owner_user_id || ''),
+		].join('|');
 	};
 	const loadDetail = async (chatId) => {
 		const response = await request(`/admin/chats/${chatId}`);
@@ -2470,6 +2476,7 @@ function ChatsView({ active, route }) {
 			detail,
 			busy: detailBusy,
 			heartbeatTick,
+			highlightTakeover: route?.params?.get('ace_handover_request') === '1',
 			suggestions: replySuggestions,
 			suggestionsBusy,
 			onRefreshSuggestions: () => loadSuggestions(detail),

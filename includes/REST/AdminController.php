@@ -124,14 +124,29 @@ final class AdminController {
 	private $connect;
 
 	/**
+	 * Site context helper.
+	 *
+	 * @var SiteContextService
+	 */
+	private $site_context;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param SessionRepository $sessions Session repository.
-	 * @param EventRepository   $events   Event repository.
-	 * @param NumberRepository         $numbers            Number repository.
-	 * @param Privacy                  $privacy            Privacy helper.
+	 * @param SessionRepository $sessions           Session repository.
+	 * @param EventRepository   $events             Event repository.
+	 * @param NumberRepository  $numbers            Number repository.
+	 * @param CompanyRepository $companies          Company repository.
+	 * @param CallRepository    $calls              Call repository.
+	 * @param ChatConversationRepository $chat_conversations Chat conversation repository.
+	 * @param ChatMessageRepository      $chat_messages      Chat message repository.
+	 * @param Privacy           $privacy            Privacy helper.
+	 * @param EnrichmentService $enrichment_service Enrichment service.
+	 * @param SampleDataSeeder  $sample_data        Sample data seeder.
+	 * @param AmazonConnectClient $connect          Amazon Connect client.
+	 * @param SiteContextService $site_context      Site context helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect ) {
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect, SiteContextService $site_context ) {
 		$this->sessions           = $sessions;
 		$this->events             = $events;
 		$this->numbers            = $numbers;
@@ -144,6 +159,7 @@ final class AdminController {
 		$this->enrichment_service = $enrichment_service;
 		$this->sample_data        = $sample_data;
 		$this->connect            = $connect;
+		$this->site_context       = $site_context;
 	}
 
 	/**
@@ -903,7 +919,7 @@ final class AdminController {
 		$since = sanitize_text_field( (string) $request->get_param( 'since' ) );
 		$items = array_map(
 			function ( array $item ): array {
-				$item['chat_url'] = esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=adaptive-customer-engagement-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) ) );
+				$item['chat_url'] = esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=adaptive-customer-engagement-dashboard#chats?ace_chat=' . absint( $item['id'] ) . '&ace_handover_request=1' ) ) );
 				return $item;
 			},
 			$this->chat_conversations->get_handover_alerts( $since )
@@ -1062,8 +1078,9 @@ final class AdminController {
 		}
 
 		if ( empty( $conversation['handover_enabled'] ) ) {
-			$conversation = $this->chat_conversations->set_handover( (int) $conversation['id'], true ) ?: $conversation;
+			return new WP_Error( 'ace_chat_manual_mode_required', __( 'Switch this chat into manual agent mode before sending a team reply.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
 		}
+
 		$conversation = $this->chat_conversations->update_workflow(
 			(int) $conversation['id'],
 			array(
@@ -1140,6 +1157,11 @@ final class AdminController {
 		$latest_user_text    = '';
 		$latest_user_message = array();
 		$conversation_id     = absint( $conversation['id'] ?? 0 );
+		$current_user        = wp_get_current_user();
+		$agent_name          = $current_user instanceof \WP_User && ! empty( $current_user->display_name )
+			? sanitize_text_field( (string) $current_user->display_name )
+			: sanitize_text_field( (string) ( $conversation['owner_name'] ?? __( 'the team', 'adaptive-customer-engagement' ) ) );
+		$is_manual_mode      = ! empty( $conversation['handover_enabled'] );
 
 		for ( $index = count( $messages ) - 1; $index >= 0; --$index ) {
 			if ( 'user' === ( $messages[ $index ]['message_role'] ?? '' ) && ! empty( $messages[ $index ]['message_text'] ) ) {
@@ -1151,7 +1173,7 @@ final class AdminController {
 
 		if ( '' === $latest_user_text ) {
 			return array(
-				__( 'Thanks for your message — I am picking this up now. How can I help further?', 'adaptive-customer-engagement' ),
+				sprintf( __( 'Thanks for your message — %s is picking this up now. How can I help further?', 'adaptive-customer-engagement' ), $agent_name ),
 				__( 'I can help with product details, availability, or the next best option if you tell me what you need.', 'adaptive-customer-engagement' ),
 				__( 'Could you tell me a bit more about what you are looking for so I can point you in the right direction?', 'adaptive-customer-engagement' ),
 				__( 'If it helps, I can check the most relevant product or page details for you and summarise them here.', 'adaptive-customer-engagement' ),
@@ -1163,6 +1185,8 @@ final class AdminController {
 			array(
 				(string) absint( $latest_user_message['id'] ?? 0 ),
 				sanitize_text_field( (string) ( $latest_user_message['created_at'] ?? '' ) ),
+				$is_manual_mode ? 'manual' : 'ai',
+				(string) ( $current_user instanceof \WP_User ? (int) $current_user->ID : 0 ),
 				$latest_user_text,
 			)
 		);
@@ -1217,7 +1241,13 @@ final class AdminController {
 				array(
 					array(
 						'role'    => 'system',
-						'content' => 'You help a human website agent reply in live chat. Return exactly four short reply suggestions in British English. Each suggestion must be plain text, no numbering, no bullets, no markdown, and suitable for sending as a direct human reply. Keep them concise, warm, and grounded in the supplied context. If product context is supplied, use it. If more information is needed, one suggestion may ask a concise clarifying question.',
+						'content' => sprintf(
+							'You help a human website agent reply in live chat. The current operator is %1$s. Return exactly four short reply suggestions in British English. Each suggestion must be plain text, no numbering, no bullets, no markdown, and suitable for sending as a direct human reply. Keep them concise, warm, and grounded in the supplied context. %2$s If product or shipping context is supplied, use it. If more information is needed, one suggestion may ask a concise clarifying question.',
+							$agent_name,
+							$is_manual_mode
+								? 'The agent has explicitly taken over from the bot, so the suggestions should read like a human taking ownership of the conversation rather than an automated assistant.'
+								: 'The agent is reviewing the chat but has not taken over yet, so the suggestions should still work as sensible human takeover options if they decide to step in.'
+						),
 					),
 					array(
 						'role'    => 'user',
@@ -1264,8 +1294,9 @@ final class AdminController {
 
 		$suggestions = array(
 			sprintf(
-				/* translators: %s: latest user message context. */
-				__( 'Thanks for your message. Based on what you have asked, %s', 'adaptive-customer-engagement' ),
+				/* translators: 1: agent display name, 2: answer summary. */
+				__( 'Hi, %1$s here. Based on what you have asked, %2$s', 'adaptive-customer-engagement' ),
+				$agent_name,
 				'' !== $site_summary ? lcfirst( rtrim( $site_summary, '.' ) ) . '.' : __( 'I am checking the most relevant details for you now.', 'adaptive-customer-engagement' )
 			),
 			'' !== $session_summary

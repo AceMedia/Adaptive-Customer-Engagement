@@ -956,6 +956,21 @@
 	color: #64748b;
 }
 
+.ace-admin-chat-console__handover-button.is-highlighted {
+	box-shadow: 0 0 0 3px rgba(214, 54, 56, 0.18), 0 10px 24px rgba(214, 54, 56, 0.2);
+	animation: ace-admin-handover-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ace-admin-handover-pulse {
+	0%, 100% {
+		transform: translateY(0);
+	}
+
+	50% {
+		transform: translateY(-1px);
+	}
+}
+
 .ace-admin-chat-console__sidebar {
 	position: sticky;
 	top: var(--ace-admin-sticky-top);

@@ -102,7 +102,7 @@ final class Plugin {
 			$site_context,
 			new FrontendChatService( new OpenAIClient(), $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository )
 		);
-		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client );
+		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client, $site_context );
 		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'rest_api_init', array( $tracking, 'register_routes' ) );
