@@ -145,7 +145,7 @@ final class SiteContextService {
 	 * @param int    $limit    Number of source documents to use.
 	 * @return array<string, mixed>
 	 */
-	public function answer_question( string $question, int $limit = 3 ): array {
+	public function answer_question( string $question, int $limit = 3, array $context = array() ): array {
 		$question = $this->normalise_text( $question );
 		$site     = $this->get_site_identity();
 
@@ -175,7 +175,7 @@ final class SiteContextService {
 			);
 		}
 
-		$shipping_answer = $this->answer_shipping_question( $question, $limit );
+		$shipping_answer = $this->answer_shipping_question( $question, $limit, $context );
 
 		if ( ! empty( $shipping_answer ) ) {
 			return $shipping_answer;
@@ -1074,12 +1074,18 @@ final class SiteContextService {
 	 * @param int    $limit    Source document limit.
 	 * @return array<string, mixed>
 	 */
-	private function answer_shipping_question( string $question, int $limit ): array {
+	private function answer_shipping_question( string $question, int $limit, array $context = array() ): array {
 		if ( ! $this->is_shipping_question( $question ) || ! class_exists( 'WC_Shipping_Zones' ) ) {
 			return array();
 		}
 
+		$context_text      = $this->build_shipping_context_text( $context );
 		$product_query     = $this->extract_product_query_from_shipping_question( $question );
+
+		if ( $this->is_thin_shipping_product_query( $product_query ) && '' !== $context_text ) {
+			$product_query = $this->extract_product_query_from_shipping_question( $question . ' ' . $context_text );
+		}
+
 		$product_documents = array_values(
 			array_filter(
 				$this->search( $this->expand_query_for_search( $product_query ), max( 1, min( 3, $limit ) ), array( 'product' ), false ),
@@ -1088,13 +1094,14 @@ final class SiteContextService {
 				}
 			)
 		);
+		$product_documents = $this->filter_shipping_product_documents( $question, $product_documents );
 
 		if ( ! $this->should_match_product_for_shipping_question( $question, $product_query, $product_documents ) ) {
 			$product_documents = array();
 		}
 
 		$product_document  = ! empty( $product_documents ) ? $product_documents[0] : array();
-		$shipping_context  = $this->get_shipping_context_for_question( $question, $product_document );
+		$shipping_context  = $this->get_shipping_context_for_question( $question, $product_document, $context );
 
 		if ( empty( $shipping_context ) ) {
 			return array(
@@ -1443,8 +1450,13 @@ final class SiteContextService {
 	 * @param array<string, mixed> $product_document Matched product document.
 	 * @return array<string, mixed>
 	 */
-	private function get_shipping_context_for_question( string $question, array $product_document ): array {
-		$destination = $this->extract_shipping_destination( $question );
+	private function get_shipping_context_for_question( string $question, array $product_document, array $context = array() ): array {
+		$context_text = $this->build_shipping_context_text( $context );
+		$destination  = $this->extract_shipping_destination( $question );
+
+		if ( 'unknown' === sanitize_key( (string) ( $destination['type'] ?? '' ) ) && '' !== $context_text ) {
+			$destination = $this->extract_shipping_destination( $context_text );
+		}
 		$zone_data   = $this->find_shipping_zone_for_destination( $destination );
 
 		if ( empty( $zone_data ) ) {
@@ -1459,13 +1471,23 @@ final class SiteContextService {
 
 		$quote_method = $this->get_quoteable_shipping_method( $zone_data['methods'] ?? array() );
 		$estimate     = array();
+		$package      = array();
 
-		if ( ! empty( $quote_method ) && ! empty( $product_document['commerce'] ) && is_array( $product_document['commerce'] ) ) {
-			$estimate = $this->estimate_shipping_cost_for_product( $quote_method, $product_document['commerce'] );
+		if ( $this->is_current_cart_shipping_question( $question, $context_text ) ) {
+			$package = $this->get_live_cart_shipping_package();
+		}
+
+		if ( empty( $package ) && ! empty( $product_document['commerce'] ) && is_array( $product_document['commerce'] ) ) {
+			$package = $this->build_product_shipping_package( $product_document, $this->extract_shipping_quantity( $question, $context_text ) );
+		}
+
+		if ( ! empty( $quote_method ) && ! empty( $package ) ) {
+			$estimate = $this->estimate_shipping_cost_for_package( $quote_method, $package );
 		}
 
 		$zone_data['destination'] = $destination;
 		$zone_data['estimate']    = $estimate;
+		$zone_data['package']     = $package;
 
 		return $zone_data;
 	}
@@ -1483,9 +1505,11 @@ final class SiteContextService {
 		$destination_name = sanitize_text_field( (string) ( $destination['label'] ?? __( 'that area', 'adaptive-customer-engagement' ) ) );
 		$zone_name        = sanitize_text_field( (string) ( $shipping_context['zone_name'] ?? '' ) );
 		$estimate         = is_array( $shipping_context['estimate'] ?? null ) ? $shipping_context['estimate'] : array();
+		$package          = is_array( $shipping_context['package'] ?? null ) ? $shipping_context['package'] : array();
 		$product_name     = sanitize_text_field( (string) ( $product_document['title'] ?? '' ) );
 		$product_has_data = ! empty( $product_document['commerce'] ) && is_array( $product_document['commerce'] );
 		$needs_shipping   = ! empty( $product_document['commerce']['needs_shipping'] ) || ! $product_has_data;
+		$is_cart_quote    = 'cart' === sanitize_key( (string) ( $package['type'] ?? '' ) );
 		$zone_fragment    = '' !== $zone_name
 			? sprintf(
 				/* translators: %s: shipping zone name. */
@@ -1506,11 +1530,54 @@ final class SiteContextService {
 			return __( 'I could not find a live shipping method for that destination in the current WooCommerce setup. If you send the delivery postcode I can try a more exact check.', 'adaptive-customer-engagement' );
 		}
 
+		if ( 'unknown' === $destination_type ) {
+			if ( $is_cart_quote ) {
+				return __( 'I can quote the current basket from the live WooCommerce shipping setup, but I still need the delivery postcode or town first.', 'adaptive-customer-engagement' );
+			}
+
+			if ( ! empty( $package['summary'] ) ) {
+				return sprintf(
+					/* translators: %s: package summary. */
+					__( 'I can try to quote shipping for %s from the live WooCommerce setup, but I still need the delivery postcode or town first.', 'adaptive-customer-engagement' ),
+					sanitize_text_field( (string) $package['summary'] )
+				);
+			}
+		}
+
+		if ( $is_cart_quote && empty( $package['items'] ) ) {
+			return __( 'I can only estimate shipping from the current basket once there are products in it. Add the items you want first, then send the delivery postcode or town and I can check the live shipping setup.', 'adaptive-customer-engagement' );
+		}
+
 		if ( $product_has_data && ! $needs_shipping ) {
 			return sprintf(
 				/* translators: 1: product title, 2: zone fragment. */
 				__( '%1$s does not appear to need physical shipping in the current WooCommerce data, so a delivery estimate is not needed for %2$s.', 'adaptive-customer-engagement' ),
 				$product_name,
+				$zone_fragment
+			);
+		}
+
+		if ( $is_cart_quote && ! empty( $estimate['cost_label'] ) && ! empty( $estimate['weight_kg'] ) ) {
+			$item_summary = sanitize_text_field( (string) ( $package['summary'] ?? __( 'the current basket', 'adaptive-customer-engagement' ) ) );
+
+			return sprintf(
+				/* translators: 1: destination text, 2: match verb, 3: zone name, 4: item summary, 5: shipping cost, 6: weight in kg. */
+				__( 'Yes — %1$s %2$s %3$s. Based on the current WooCommerce shipping table, the estimated delivery charge for %4$s in the current basket is %5$s at roughly %6$skg shipping weight.', 'adaptive-customer-engagement' ),
+				$location_fragment,
+				$match_verb,
+				$zone_fragment,
+				$item_summary,
+				$estimate['cost_label'],
+				number_format_i18n( (float) $estimate['weight_kg'], 2 )
+			);
+		}
+
+		if ( $is_cart_quote && empty( $estimate ) ) {
+			return sprintf(
+				/* translators: 1: destination text, 2: zone name. */
+				__( 'Yes — %1$s %2$s %3$s. I can see delivery is configured there, but I cannot give a reliable shipping estimate for the current basket from the live cart data yet.', 'adaptive-customer-engagement' ),
+				$location_fragment,
+				$match_verb,
 				$zone_fragment
 			);
 		}
@@ -1522,7 +1589,7 @@ final class SiteContextService {
 				$location_fragment,
 				$match_verb,
 				$zone_fragment,
-				$product_name,
+				! empty( $package['summary'] ) ? sanitize_text_field( (string) $package['summary'] ) : $product_name,
 				$estimate['cost_label'],
 				number_format_i18n( (float) $estimate['weight_kg'], 2 )
 			);
@@ -1773,7 +1840,27 @@ final class SiteContextService {
 	 * @return array<string, mixed>
 	 */
 	private function estimate_shipping_cost_for_product( $method, array $commerce ): array {
-		$weight_kg = ! empty( $commerce['empty_weight_kg'] ) ? (float) $commerce['empty_weight_kg'] : 0.0;
+		return $this->estimate_shipping_cost_for_package(
+			$method,
+			array(
+				'type'      => 'product',
+				'quantity'  => 1,
+				'weight_kg' => ! empty( $commerce['empty_weight_kg'] ) ? (float) $commerce['empty_weight_kg'] : 0.0,
+				'summary'   => '',
+				'items'     => array(),
+			)
+		);
+	}
+
+	/**
+	 * Estimate a shipping cost for a package from a shipping method.
+	 *
+	 * @param object               $method  Shipping method object.
+	 * @param array<string, mixed> $package Shipping package summary.
+	 * @return array<string, mixed>
+	 */
+	private function estimate_shipping_cost_for_package( $method, array $package ): array {
+		$weight_kg = ! empty( $package['weight_kg'] ) ? (float) $package['weight_kg'] : 0.0;
 
 		if ( 'flexible_shipping_single' === ( $method->id ?? '' ) ) {
 			if ( $weight_kg <= 0 ) {
@@ -1831,6 +1918,221 @@ final class SiteContextService {
 		}
 
 		return array();
+	}
+
+	/**
+	 * Prefer product matches that fit the product kind explicitly named in the shipping question.
+	 *
+	 * @param string                            $question          Raw visitor question.
+	 * @param array<int, array<string, mixed>> $product_documents Candidate product documents.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function filter_shipping_product_documents( string $question, array $product_documents ): array {
+		$product_kind = $this->infer_requested_product_kind( $question );
+
+		if ( '' === $product_kind || empty( $product_documents ) ) {
+			return $product_documents;
+		}
+
+		$filtered = array_values(
+			array_filter(
+				$product_documents,
+				static function ( array $document ) use ( $product_kind ): bool {
+					return $product_kind === sanitize_key( (string) ( $document['commerce']['product_kind'] ?? '' ) );
+				}
+			)
+		);
+
+		return ! empty( $filtered ) ? $filtered : $product_documents;
+	}
+
+	/**
+	 * Infer the kind of product explicitly named in a shipping question.
+	 *
+	 * @param string $question User question.
+	 * @return string
+	 */
+	private function infer_requested_product_kind( string $question ): string {
+		$question = $this->normalise_text( $question );
+
+		if ( preg_match( '/\b(lid|lids|spare|spares|part|parts|component|components|castor|lock|drainplug|housing|body|frame)\b/', $question ) ) {
+			return 'accessory';
+		}
+
+		if ( preg_match( '/\b(bin|bins|container|containers|wheelie|wheelie bin|wheelie bins|continental)\b/', $question ) ) {
+			return 'container';
+		}
+
+		if ( preg_match( '/\b(range|ranges|collection|collections|series)\b/', $question ) ) {
+			return 'collection';
+		}
+
+		return '';
+	}
+
+	/**
+	 * Detect whether the visitor is asking about the current cart or basket.
+	 *
+	 * @param string $question User question.
+	 * @return bool
+	 */
+	private function is_current_cart_shipping_question( string $question, string $context_text = '' ): bool {
+		return (bool) preg_match( '/\b(current\s+cart|my\s+cart|the\s+cart|current\s+basket|my\s+basket|the\s+basket|what(?:\'s| is)\s+in\s+my\s+cart|what(?:\'s| is)\s+in\s+my\s+basket)\b/i', $question . ' ' . $context_text );
+	}
+
+	/**
+	 * Extract an explicit quantity from a shipping question.
+	 *
+	 * @param string $question User question.
+	 * @return int
+	 */
+	private function extract_shipping_quantity( string $question, string $context_text = '' ): int {
+		$text = trim( $question . ' ' . $context_text );
+		$patterns = array(
+			'/\b(\d+)\s*[x×]\b/i',
+			'/\b(\d+)\s+(?:[a-z0-9-]+\s+){0,3}(?:bin|bins|container|containers|lid|lids|product|products)\b/i',
+		);
+
+		foreach ( $patterns as $pattern ) {
+			if ( preg_match( $pattern, $text, $matches ) && ! empty( $matches[1] ) ) {
+				return max( 1, absint( $matches[1] ) );
+			}
+		}
+
+		return 1;
+	}
+
+	/**
+	 * Build a shipping package from a matched product and explicit quantity.
+	 *
+	 * @param array<string, mixed> $product_document Product document.
+	 * @param int                  $quantity         Requested quantity.
+	 * @return array<string, mixed>
+	 */
+	private function build_product_shipping_package( array $product_document, int $quantity ): array {
+		$quantity   = max( 1, $quantity );
+		$product    = sanitize_text_field( (string) ( $product_document['title'] ?? '' ) );
+		$unit_weight = ! empty( $product_document['commerce']['empty_weight_kg'] ) ? (float) $product_document['commerce']['empty_weight_kg'] : 0.0;
+
+		return array(
+			'type'      => 'product',
+			'quantity'  => $quantity,
+			'weight_kg' => $unit_weight > 0 ? ( $unit_weight * $quantity ) : 0.0,
+			'summary'   => $quantity > 1 && '' !== $product ? sprintf( '%1$s x %2$s', number_format_i18n( $quantity ), $product ) : $product,
+			'items'     => '' !== $product ? array(
+				array(
+					'name'     => $product,
+					'quantity' => $quantity,
+				),
+			) : array(),
+		);
+	}
+
+	/**
+	 * Read the current WooCommerce cart as a shipping package.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function get_live_cart_shipping_package(): array {
+		if ( ! function_exists( 'WC' ) ) {
+			return array();
+		}
+
+		$woocommerce = WC();
+		$cart        = is_object( $woocommerce ) && isset( $woocommerce->cart ) ? $woocommerce->cart : null;
+
+		if ( ! is_object( $cart ) || ! method_exists( $cart, 'get_cart' ) ) {
+			return array();
+		}
+
+		$items       = array();
+		$total_weight = 0.0;
+		$total_qty   = 0;
+
+		foreach ( (array) $cart->get_cart() as $item ) {
+			$product  = isset( $item['data'] ) && is_object( $item['data'] ) ? $item['data'] : null;
+			$quantity = max( 0, isset( $item['quantity'] ) ? absint( $item['quantity'] ) : 0 );
+
+			if ( ! $product || $quantity <= 0 || ! method_exists( $product, 'get_name' ) ) {
+				continue;
+			}
+
+			$name        = sanitize_text_field( (string) $product->get_name() );
+			$unit_weight = method_exists( $product, 'get_weight' ) ? (float) $product->get_weight() : 0.0;
+
+			$items[] = array(
+				'name'     => $name,
+				'quantity' => $quantity,
+			);
+			$total_qty += $quantity;
+			$total_weight += $unit_weight > 0 ? ( $unit_weight * $quantity ) : 0.0;
+		}
+
+		if ( empty( $items ) ) {
+			return array(
+				'type'      => 'cart',
+				'quantity'  => 0,
+				'weight_kg' => 0.0,
+				'summary'   => '',
+				'items'     => array(),
+			);
+		}
+
+		$summary_parts = array();
+
+		foreach ( array_slice( $items, 0, 3 ) as $item ) {
+			$summary_parts[] = sprintf(
+				'%1$s x %2$s',
+				number_format_i18n( (int) $item['quantity'] ),
+				sanitize_text_field( (string) $item['name'] )
+			);
+		}
+
+		if ( count( $items ) > 3 ) {
+			$summary_parts[] = __( 'other items', 'adaptive-customer-engagement' );
+		}
+
+		return array(
+			'type'      => 'cart',
+			'quantity'  => $total_qty,
+			'weight_kg' => $total_weight,
+			'summary'   => implode( ', ', $summary_parts ),
+			'items'     => $items,
+		);
+	}
+
+	/**
+	 * Build a flat text block of recent chat context relevant to shipping.
+	 *
+	 * @param array<string, mixed> $context Context payload.
+	 * @return string
+	 */
+	private function build_shipping_context_text( array $context ): string {
+		$messages = isset( $context['recent_user_messages'] ) && is_array( $context['recent_user_messages'] ) ? $context['recent_user_messages'] : array();
+		$messages = array_values(
+			array_filter(
+				array_map(
+					static function ( $message ): string {
+						return sanitize_textarea_field( (string) $message );
+					},
+					$messages
+				)
+			)
+		);
+
+		return trim( implode( ' ', array_slice( $messages, -4 ) ) );
+	}
+
+	/**
+	 * Detect when the extracted shipping product query is too weak to trust on its own.
+	 *
+	 * @param string $product_query Extracted product query.
+	 * @return bool
+	 */
+	private function is_thin_shipping_product_query( string $product_query ): bool {
+		$terms = $this->extract_shipping_product_reference_terms( $product_query );
+
+		return count( $terms ) < 2;
 	}
 
 	/**

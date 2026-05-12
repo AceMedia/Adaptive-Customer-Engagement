@@ -401,6 +401,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let typingLastSentAt = 0;
 	let typingSentState = false;
 
+	const generateConversationUuid = () => window.crypto?.randomUUID?.() || `ace-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 	launcher.id = 'ace-ai-chat-launcher';
 	launcher.type = 'button';
 	launcher.textContent = chatConfig.title || 'Chat with us';
@@ -715,6 +717,26 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			state.endedAt = String(conversation.ended_at || '');
 			state.followUpRequested = !!conversation.follow_up_requested;
 			state.started = !!state.conversationUuid || !!state.started;
+
+			if (!contactName.value.trim() && conversation.contact_name) {
+				contactName.value = String(conversation.contact_name || '');
+			}
+
+			if (!contactEmail.value.trim() && conversation.contact_email) {
+				contactEmail.value = String(conversation.contact_email || '');
+			}
+
+			if (!contactPhone.value.trim() && conversation.contact_phone) {
+				contactPhone.value = String(conversation.contact_phone || '');
+			}
+
+			if (!contactCompany.value.trim() && conversation.contact_company) {
+				contactCompany.value = String(conversation.contact_company || '');
+			}
+
+			if (!contactRole.value.trim() && conversation.contact_role) {
+				contactRole.value = String(conversation.contact_role || '');
+			}
 		}
 
 		if (messages) {
@@ -772,6 +794,33 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		});
 		updateChatMeta();
 		renderMessages({ force: true, focusLatest: true });
+	};
+
+	const beginFreshConversation = ({ keepOpen = true, focusInput = false } = {}) => {
+		resetConversationState({ keepOpen });
+		state.started = true;
+		state.conversationUuid = generateConversationUuid();
+		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
+			event_type: 'chat_start',
+			event_name: 'frontend_ai_chat_started',
+			url: window.location.href,
+			path: window.location.pathname,
+			page_title: document.title,
+			referrer: document.referrer,
+			utm: getUtm(),
+			metadata: {
+				conversation_uuid: state.conversationUuid,
+				provider: chatConfig.provider || 'openai',
+				model: chatConfig.model || '',
+			},
+		}, pageContext));
+		persistChatState();
+		startSync();
+		startAvailabilityPolling();
+		if (focusInput) {
+			input.focus();
+			updateInputHeight();
+		}
 	};
 
 	const renderStarterQuestions = () => {
@@ -1639,27 +1688,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		persistChatState();
 		updateChatMeta();
 
-		if (nextOpen && !state.started) {
-			state.started = true;
-			state.conversationUuid = window.crypto?.randomUUID?.() || `ace-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-			sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
-				event_type: 'chat_start',
-				event_name: 'frontend_ai_chat_started',
-				url: window.location.href,
-				path: window.location.pathname,
-				page_title: document.title,
-				referrer: document.referrer,
-				utm: getUtm(),
-				metadata: {
-					conversation_uuid: state.conversationUuid,
-					provider: chatConfig.provider || 'openai',
-					model: chatConfig.model || '',
-				},
-			}, pageContext));
-			input.focus();
-			updateInputHeight();
-			startSync();
-			startAvailabilityPolling();
+		if (nextOpen && (state.conversationStatus === 'ended' || state.endedAt)) {
+			beginFreshConversation({ keepOpen: true, focusInput: true });
+		} else if (nextOpen && !state.started) {
+			beginFreshConversation({ keepOpen: true, focusInput: true });
 		} else if (nextOpen) {
 			updateInputHeight();
 			renderMessages({ force: true, focusLatest: true });

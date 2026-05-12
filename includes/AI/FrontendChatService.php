@@ -151,6 +151,7 @@ final class FrontendChatService {
 		$thread       = is_array( $lead_capture['conversation'] ?? null ) ? $lead_capture['conversation'] : $thread;
 		$session      = is_array( $lead_capture['session'] ?? null ) ? $lead_capture['session'] : $session;
 		$ip_memory    = is_array( $lead_capture['memory'] ?? null ) ? $lead_capture['memory'] : $ip_memory;
+		$thread       = $this->apply_known_contact_defaults( $thread, $ip_memory );
 		ChatPresence::set_typing( (int) $thread['id'], 'customer', false );
 
 		if ( ! empty( $ai_agent['handoff_to_human'] ) && $this->is_human_handover_request( $message ) ) {
@@ -173,6 +174,7 @@ final class FrontendChatService {
 			ChatPresence::set_typing( (int) $thread['id'], 'assistant', false );
 
 			$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+			$thread = $this->apply_known_contact_defaults( $thread, $ip_memory );
 
 			return array(
 				'message'      => '',
@@ -196,6 +198,7 @@ final class FrontendChatService {
 
 		if ( ! empty( $thread['handover_enabled'] ) ) {
 			$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+			$thread = $this->apply_known_contact_defaults( $thread, $ip_memory );
 
 			return array(
 				'message'      => '',
@@ -235,7 +238,7 @@ final class FrontendChatService {
 		}
 
 		if ( ! empty( $ai_agent['use_live_site_context'] ) ) {
-			$answer  = $this->site_context->answer_question( $message, $limit );
+			$answer  = $this->site_context->answer_question( $message, $limit, $this->build_site_context_request( $thread, $payload, $message ) );
 			$sources = is_array( $answer['sources'] ?? null ) ? $answer['sources'] : array();
 
 			if ( ! empty( $answer['answer'] ) ) {
@@ -330,7 +333,7 @@ final class FrontendChatService {
 		}
 
 		$response_message = sanitize_textarea_field( (string) ( $response['message'] ?? '' ) );
-		$show_sources     = $this->extract_source_display_decision( $response_message, ! empty( $sources ) );
+		$show_sources     = $this->extract_source_display_decision( $response_message, ! empty( $sources ), $message, $sources );
 		$response_message = $this->apply_sales_follow_up_prompt( $response_message, $message, $thread, $lead_capture['captured'] ?? array() );
 		$response_message = $this->append_primary_contact_number( $response_message );
 		$normalised_sources = $this->normalise_sources( $show_sources ? $sources : array() );
@@ -348,6 +351,7 @@ final class FrontendChatService {
 		ChatPresence::set_typing( (int) $thread['id'], 'assistant', false );
 
 		$thread = $this->chat_conversations->find( (int) $thread['id'] ) ?: $thread;
+		$thread = $this->apply_known_contact_defaults( $thread, $ip_memory );
 
 		return array(
 			'message'      => $response_message,
@@ -370,6 +374,13 @@ final class FrontendChatService {
 		if ( ! $conversation ) {
 			return new WP_Error( 'ace_ai_chat_not_found', __( 'The chat conversation could not be found.', 'adaptive-customer-engagement' ), array( 'status' => 404 ) );
 		}
+
+		$session       = ! empty( $conversation['session_uuid'] ) ? $this->sessions->find_by_uuid( sanitize_text_field( (string) $conversation['session_uuid'] ) ) : null;
+		$known_context = $this->lead_profiles->apply_known_context( $session );
+		$conversation  = $this->apply_known_contact_defaults(
+			$conversation,
+			is_array( $known_context['memory'] ?? null ) ? $known_context['memory'] : null
+		);
 
 		return array(
 			'conversation' => $this->normalise_conversation( $conversation ),
@@ -847,11 +858,13 @@ final class FrontendChatService {
 	/**
 	 * Read the model's source-display control tag and strip it from the reply.
 	 *
-	 * @param string $reply                 Assistant reply.
-	 * @param bool   $has_candidate_sources Whether there were any candidate sources.
+	 * @param string                          $reply                 Assistant reply.
+	 * @param bool                            $has_candidate_sources Whether there were any candidate sources.
+	 * @param string                          $question              Visitor question.
+	 * @param array<int, array<string, mixed>> $sources             Candidate sources.
 	 * @return bool
 	 */
-	private function extract_source_display_decision( string &$reply, bool $has_candidate_sources ): bool {
+	private function extract_source_display_decision( string &$reply, bool $has_candidate_sources, string $question, array $sources ): bool {
 		if ( ! $has_candidate_sources ) {
 			return false;
 		}
@@ -863,7 +876,76 @@ final class FrontendChatService {
 			$reply    = trim( preg_replace( '/\s*\[ACE_SOURCES:(show|hide)\]\s*/i', "\n", $reply ) ?: $reply );
 		}
 
-		return null === $decision ? true : $decision;
+		return null === $decision ? $this->should_show_sources_by_default( $question, $sources ) : $decision;
+	}
+
+	/**
+	 * Decide whether sources are worth showing when the model does not return a control tag.
+	 *
+	 * @param string                            $question Visitor question.
+	 * @param array<int, array<string, mixed>> $sources  Candidate sources.
+	 * @return bool
+	 */
+	private function should_show_sources_by_default( string $question, array $sources ): bool {
+		$question = strtolower( sanitize_text_field( $question ) );
+
+		if ( '' === $question || empty( $sources ) ) {
+			return false;
+		}
+
+		if ( preg_match( '/\b(pdf|document|documents|manual|manuals|brochure|brochures|datasheet|data sheet|catalogue|catalog|download|downloads|spec|specification|specifications|page|pages|link|links)\b/i', $question ) ) {
+			return true;
+		}
+
+		if ( preg_match( '/\b(ship|shipping|delivery|deliver|postcode|post code|quote|quotes|cost|pricing|price|basket|cart|freight|courier)\b/i', $question ) ) {
+			return false;
+		}
+
+		$source_titles = array();
+
+		foreach ( $sources as $source ) {
+			$title = strtolower( sanitize_text_field( (string) ( $source['title'] ?? '' ) ) );
+
+			if ( '' !== $title ) {
+				$source_titles[] = $title;
+			}
+		}
+
+		if ( empty( $source_titles ) ) {
+			return false;
+		}
+
+		foreach ( $source_titles as $title ) {
+			if ( false !== strpos( $question, $title ) ) {
+				return true;
+			}
+		}
+
+		$question_terms = array_values(
+			array_filter(
+				preg_split( '/\s+/', preg_replace( '/[^a-z0-9]+/i', ' ', $question ) ?: '' ) ?: array(),
+				static function ( string $term ): bool {
+					return strlen( $term ) >= 4 && ! in_array( $term, array( 'with', 'that', 'this', 'from', 'your', 'have', 'what', 'does', 'tell', 'about', 'which' ), true );
+				}
+			)
+		);
+
+		foreach ( $source_titles as $title ) {
+			$title_terms = array_values(
+				array_filter(
+					preg_split( '/\s+/', preg_replace( '/[^a-z0-9]+/i', ' ', $title ) ?: '' ) ?: array(),
+					static function ( string $term ): bool {
+						return strlen( $term ) >= 4;
+					}
+				)
+			);
+
+			if ( count( array_intersect( $question_terms, $title_terms ) ) >= 2 ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -893,12 +975,12 @@ final class FrontendChatService {
 
 		if ( $this->should_request_contact_details( $message, $thread, $captured ) && empty( $thread['contact_prompted_at'] ) ) {
 			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'contact' );
-			return $reply . "\n\n" . __( 'If you would like us to follow this up, send your name plus an email address or phone number and I will save it for the team.', 'adaptive-customer-engagement' );
+			return $reply . "\n\n" . $this->get_contact_request_prompt( $thread, $captured );
 		}
 
 		if ( $this->should_send_contact_reminder( $message, $thread ) ) {
 			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'contact' );
-			return $reply . "\n\n" . __( 'If it helps, you can still send an email address or phone number and I will save it for the team so they can follow up properly.', 'adaptive-customer-engagement' );
+			return $reply . "\n\n" . $this->get_contact_reminder_prompt( $thread );
 		}
 
 		return $reply;
@@ -986,6 +1068,61 @@ final class FrontendChatService {
 	}
 
 	/**
+	 * Build the first low-friction contact request prompt.
+	 *
+	 * @param array<string, mixed> $thread   Conversation row.
+	 * @param array<string, mixed> $captured Freshly captured lead data.
+	 * @return string
+	 */
+	private function get_contact_request_prompt( array $thread, array $captured ): string {
+		if ( $this->has_saved_contact_name( $thread, $captured ) ) {
+			return __( 'If you would like us to follow this up, send an email address or phone number and I will save it for the team.', 'adaptive-customer-engagement' );
+		}
+
+		return __( 'If you would like us to follow this up, send your name plus an email address or phone number and I will save it for the team.', 'adaptive-customer-engagement' );
+	}
+
+	/**
+	 * Build the gentle contact reminder copy.
+	 *
+	 * @param array<string, mixed> $thread Conversation row.
+	 * @return string
+	 */
+	private function get_contact_reminder_prompt( array $thread ): string {
+		if ( $this->has_saved_contact_name( $thread ) ) {
+			return __( 'If it helps, you can still send an email address or phone number and I will save it for the team so they can follow up properly.', 'adaptive-customer-engagement' );
+		}
+
+		return __( 'If it helps, you can still send your name and an email address or phone number and I will save it for the team so they can follow up properly.', 'adaptive-customer-engagement' );
+	}
+
+	/**
+	 * Check whether the visitor name is already known in the current lead context.
+	 *
+	 * @param array<string, mixed>      $thread   Conversation row.
+	 * @param array<string, mixed>|null $captured Optional freshly captured values.
+	 * @return bool
+	 */
+	private function has_saved_contact_name( array $thread, ?array $captured = null ): bool {
+		return ! empty( $thread['contact_name'] ) || ! empty( $captured['contact_name'] );
+	}
+
+	/**
+	 * Overlay low-friction known-contact defaults onto a conversation without forcing a fresh prompt.
+	 *
+	 * @param array<string, mixed>      $conversation Conversation row.
+	 * @param array<string, mixed>|null $memory       Known local memory row.
+	 * @return array<string, mixed>
+	 */
+	private function apply_known_contact_defaults( array $conversation, ?array $memory ): array {
+		if ( empty( $conversation['contact_name'] ) && is_array( $memory ) && ! empty( $memory['contact_name'] ) ) {
+			$conversation['contact_name'] = sanitize_text_field( (string) $memory['contact_name'] );
+		}
+
+		return $conversation;
+	}
+
+	/**
 	 * Sanitize prior conversation history.
 	 *
 	 * @param mixed $history Raw history payload.
@@ -1019,6 +1156,45 @@ final class FrontendChatService {
 		}
 
 		return $sanitised;
+	}
+
+	/**
+	 * Build structured context to help deterministic site-context answers reuse recent chat details.
+	 *
+	 * @param array<string, mixed> $thread  Conversation row.
+	 * @param array<string, mixed> $payload Frontend payload.
+	 * @param string               $message Current visitor message.
+	 * @return array<string, mixed>
+	 */
+	private function build_site_context_request( array $thread, array $payload, string $message ): array {
+		$history            = $this->sanitize_history( $payload['history'] ?? array(), 8 );
+		$recent_user_inputs = array();
+
+		foreach ( $history as $entry ) {
+			if ( 'user' !== ( $entry['role'] ?? '' ) || empty( $entry['content'] ) ) {
+				continue;
+			}
+
+			$recent_user_inputs[] = sanitize_textarea_field( (string) $entry['content'] );
+		}
+
+		if ( ! empty( $thread['id'] ) ) {
+			$stored_messages = $this->chat_messages->get_by_conversation( (int) $thread['id'] );
+
+			foreach ( array_slice( $stored_messages, -8 ) as $stored_message ) {
+				if ( 'user' !== ( $stored_message['message_role'] ?? '' ) || empty( $stored_message['message_text'] ) ) {
+					continue;
+				}
+
+				$recent_user_inputs[] = sanitize_textarea_field( (string) $stored_message['message_text'] );
+			}
+		}
+
+		$recent_user_inputs[] = sanitize_textarea_field( $message );
+
+		return array(
+			'recent_user_messages' => array_values( array_slice( array_filter( array_unique( $recent_user_inputs ) ), -6 ) ),
+		);
 	}
 
 	/**

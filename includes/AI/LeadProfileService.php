@@ -210,6 +210,13 @@ final class LeadProfileService {
 			}
 		}
 
+		if ( empty( $conversation['contact_name'] ) && is_array( $memory ) && ! empty( $memory['contact_name'] ) ) {
+			$lines[] = sprintf(
+				'Returning visitor hint: this visitor previously shared the name %1$s. Treat that as a likely name unless they correct it, and do not ask for it again unless it is genuinely needed.',
+				sanitize_text_field( (string) $memory['contact_name'] )
+			);
+		}
+
 		if ( empty( $conversation['contact_company'] ) && empty( $session['company_id'] ) && is_array( $memory ) && ! empty( $memory['company_name'] ) ) {
 			$lines[] = sprintf(
 				'Returning IP hint: this network was previously associated with %1$s. Treat that as a likely organisation signal, not a guaranteed fact.',
@@ -245,8 +252,9 @@ final class LeadProfileService {
 			);
 		}
 
-		$has_contact_method = '' !== $this->normalise_email( (string) ( $captured['contact_email'] ?? '' ) ) || '' !== $this->normalise_phone_number( (string) ( $captured['contact_phone'] ?? '' ) );
-		$lead_summary       = sanitize_textarea_field( (string) ( $captured['lead_summary'] ?? '' ) );
+		$has_contact_method   = '' !== $this->normalise_email( (string) ( $captured['contact_email'] ?? '' ) ) || '' !== $this->normalise_phone_number( (string) ( $captured['contact_phone'] ?? '' ) );
+		$has_contact_identity = '' !== $this->clean_person_name( (string) ( $captured['contact_name'] ?? '' ) ) || $has_contact_method;
+		$lead_summary         = sanitize_textarea_field( (string) ( $captured['lead_summary'] ?? '' ) );
 
 		if ( '' === $lead_summary ) {
 			$lead_summary = $this->build_contact_summary( $captured );
@@ -264,7 +272,7 @@ final class LeadProfileService {
 				'lead_summary'       => $lead_summary,
 				'follow_up_requested'=> $has_contact_method,
 				'follow_up_at'       => $has_contact_method ? current_time( 'mysql', true ) : '',
-				'contact_captured_at'=> $has_contact_method ? current_time( 'mysql', true ) : '',
+				'contact_captured_at'=> $has_contact_identity ? current_time( 'mysql', true ) : '',
 			)
 		);
 
@@ -277,7 +285,7 @@ final class LeadProfileService {
 			$session = $this->sessions->get_session_detail( (int) $session['id'] ) ?: $session;
 		}
 
-		if ( is_array( $session ) && ! empty( $session['ip_hash'] ) && '' !== $company_name ) {
+		if ( is_array( $session ) && ! empty( $session['ip_hash'] ) && $this->should_store_memory_hint( $captured ) ) {
 			$memory = $this->ip_memory->upsert(
 				sanitize_text_field( (string) $session['ip_hash'] ),
 				array(
@@ -638,5 +646,19 @@ final class LeadProfileService {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Decide whether a captured lead profile is useful enough to remember against the visitor IP.
+	 *
+	 * @param array<string, mixed> $captured Captured lead data.
+	 * @return bool
+	 */
+	private function should_store_memory_hint( array $captured ): bool {
+		return '' !== $this->clean_company_name( (string) ( $captured['contact_company'] ?? '' ) )
+			|| '' !== $this->clean_person_name( (string) ( $captured['contact_name'] ?? '' ) )
+			|| '' !== $this->normalise_email( (string) ( $captured['contact_email'] ?? '' ) )
+			|| '' !== $this->normalise_phone_number( (string) ( $captured['contact_phone'] ?? '' ) )
+			|| '' !== sanitize_text_field( (string) ( $captured['contact_role'] ?? '' ) );
 	}
 }

@@ -46,10 +46,14 @@ final class IpCompanyMemoryRepository {
 	public function upsert( string $ip_hash, array $data ): ?array {
 		global $wpdb;
 
-		$ip_hash      = sanitize_text_field( $ip_hash );
-		$company_name = sanitize_text_field( (string) ( $data['company_name'] ?? '' ) );
+		$ip_hash       = sanitize_text_field( $ip_hash );
+		$company_name  = sanitize_text_field( (string) ( $data['company_name'] ?? '' ) );
+		$contact_name  = sanitize_text_field( (string) ( $data['contact_name'] ?? '' ) );
+		$contact_email = sanitize_email( (string) ( $data['contact_email'] ?? '' ) );
+		$contact_phone = sanitize_text_field( (string) ( $data['contact_phone'] ?? '' ) );
+		$contact_role  = sanitize_text_field( (string) ( $data['contact_role'] ?? '' ) );
 
-		if ( '' === $ip_hash || '' === $company_name ) {
+		if ( '' === $ip_hash || ( '' === $company_name && '' === $contact_name && '' === $contact_email && '' === $contact_phone && '' === $contact_role ) ) {
 			return null;
 		}
 
@@ -60,10 +64,10 @@ final class IpCompanyMemoryRepository {
 			'company_id'     => ! empty( $data['company_id'] ) ? absint( $data['company_id'] ) : null,
 			'company_name'   => $company_name,
 			'company_domain' => sanitize_text_field( (string) ( $data['company_domain'] ?? '' ) ),
-			'contact_name'   => sanitize_text_field( (string) ( $data['contact_name'] ?? '' ) ),
-			'contact_email'  => sanitize_email( (string) ( $data['contact_email'] ?? '' ) ),
-			'contact_phone'  => sanitize_text_field( (string) ( $data['contact_phone'] ?? '' ) ),
-			'contact_role'   => sanitize_text_field( (string) ( $data['contact_role'] ?? '' ) ),
+			'contact_name'   => $contact_name,
+			'contact_email'  => $contact_email,
+			'contact_phone'  => $contact_phone,
+			'contact_role'   => $contact_role,
 			'source'         => sanitize_key( (string) ( $data['source'] ?? 'chat' ) ) ?: 'chat',
 			'confidence'     => sanitize_key( (string) ( $data['confidence'] ?? 'likely' ) ) ?: 'likely',
 			'evidence'       => wp_json_encode( is_array( $data['evidence'] ?? null ) ? $data['evidence'] : array() ),
