@@ -963,6 +963,7 @@ final class AdminController {
 			array(
 				'label' => __( 'Agent', 'adaptive-customer-engagement' ),
 				'name'  => $user instanceof \WP_User ? (string) $user->display_name : '',
+				'status'=> 'typing',
 			)
 		);
 

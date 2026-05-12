@@ -190,6 +190,7 @@ final class FrontendChatService {
 			array(
 				'label' => __( 'Assistant', 'adaptive-customer-engagement' ),
 				'name'  => $this->get_message_author( 'assistant' )['name'],
+				'status'=> 'thinking',
 			)
 		);
 
@@ -395,6 +396,7 @@ final class FrontendChatService {
 			! empty( $payload['is_typing'] ),
 			array(
 				'label' => __( 'Customer', 'adaptive-customer-engagement' ),
+				'status'=> 'typing',
 			)
 		);
 
@@ -738,8 +740,10 @@ final class FrontendChatService {
 
 		if ( ! empty( $captured['contact_email'] ) || ! empty( $captured['contact_phone'] ) ) {
 			$instructions[] = 'The visitor has just shared follow-up details. Acknowledge briefly that the details have been saved for the team.';
-		} elseif ( $this->should_request_contact_details( $message, $thread ) ) {
+		} elseif ( $this->should_request_contact_details( $message, $thread, $captured ) ) {
 			$instructions[] = 'If the sales enquiry is ready for follow-up, finish with one short request for their name plus an email address or phone number so the team can follow up.';
+		} elseif ( $this->should_send_contact_reminder( $message, $thread ) ) {
+			$instructions[] = 'The visitor has already shared some useful context but still has not shared an email address or phone number. If it fits naturally, add one gentle reminder that they can send a contact method for follow-up.';
 		}
 
 		return implode( "\n", $instructions );
@@ -887,9 +891,14 @@ final class FrontendChatService {
 			return $reply . "\n\n" . __( 'Which company or organisation are you buying for?', 'adaptive-customer-engagement' );
 		}
 
-		if ( $this->should_request_contact_details( $message, $thread ) && empty( $thread['contact_prompted_at'] ) ) {
+		if ( $this->should_request_contact_details( $message, $thread, $captured ) && empty( $thread['contact_prompted_at'] ) ) {
 			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'contact' );
 			return $reply . "\n\n" . __( 'If you would like us to follow this up, send your name plus an email address or phone number and I will save it for the team.', 'adaptive-customer-engagement' );
+		}
+
+		if ( $this->should_send_contact_reminder( $message, $thread ) ) {
+			$this->chat_conversations->mark_prompted( (int) ( $thread['id'] ?? 0 ), 'contact' );
+			return $reply . "\n\n" . __( 'If it helps, you can still send an email address or phone number and I will save it for the team so they can follow up properly.', 'adaptive-customer-engagement' );
 		}
 
 		return $reply;
@@ -915,18 +924,65 @@ final class FrontendChatService {
 	 * @param array<string, mixed> $thread  Conversation row.
 	 * @return bool
 	 */
-	private function should_request_contact_details( string $message, array $thread ): bool {
+	private function should_request_contact_details( string $message, array $thread, array $captured ): bool {
 		if ( ! empty( $thread['follow_up_requested'] ) || ! empty( $thread['contact_email'] ) || ! empty( $thread['contact_phone'] ) ) {
 			return false;
 		}
 
-		$has_context = ! empty( $thread['contact_company'] ) || ! empty( $thread['company_id'] ) || (int) ( $thread['user_message_count'] ?? 0 ) >= 2;
+		if ( $this->is_contact_capture_declined( $message ) ) {
+			return false;
+		}
+
+		$has_identity = ! empty( $thread['contact_name'] ) || ! empty( $thread['contact_company'] ) || ! empty( $thread['contact_role'] ) || ! empty( $thread['company_id'] ) || ! empty( $captured['contact_name'] ) || ! empty( $captured['contact_company'] ) || ! empty( $captured['contact_role'] );
+		$has_context  = $has_identity || (int) ( $thread['user_message_count'] ?? 0 ) >= 2;
 		$ready_terms = (bool) preg_match(
 			'/\b(quote|pricing|price|cost|budget|delivery|shipping|lead time|availability|speak to|talk to|contact|email|phone|call me|call back|callback|get back|follow up|brochure|order|buy|purchase|tender)\b/i',
 			$message
 		);
 
-		return $has_context && ( $ready_terms || (int) ( $thread['user_message_count'] ?? 0 ) >= 3 );
+		return $has_context && ( $ready_terms || $has_identity || (int) ( $thread['user_message_count'] ?? 0 ) >= 3 );
+	}
+
+	/**
+	 * Decide whether the assistant should send one gentle reminder for contact details.
+	 *
+	 * @param string               $message Visitor message.
+	 * @param array<string, mixed> $thread  Conversation row.
+	 * @return bool
+	 */
+	private function should_send_contact_reminder( string $message, array $thread ): bool {
+		if ( empty( $thread['contact_prompted_at'] ) || ! empty( $thread['follow_up_requested'] ) || ! empty( $thread['contact_email'] ) || ! empty( $thread['contact_phone'] ) ) {
+			return false;
+		}
+
+		if ( $this->is_contact_capture_declined( $message ) ) {
+			return false;
+		}
+
+		$has_identity = ! empty( $thread['contact_name'] ) || ! empty( $thread['contact_company'] ) || ! empty( $thread['contact_role'] ) || ! empty( $thread['company_id'] );
+
+		if ( ! $has_identity ) {
+			return false;
+		}
+
+		return $this->chat_messages->count_by_role_since(
+			(int) ( $thread['id'] ?? 0 ),
+			'user',
+			sanitize_text_field( (string) $thread['contact_prompted_at'] )
+		) >= 2;
+	}
+
+	/**
+	 * Detect when a visitor has effectively declined to share contact details for now.
+	 *
+	 * @param string $message Visitor message.
+	 * @return bool
+	 */
+	private function is_contact_capture_declined( string $message ): bool {
+		return (bool) preg_match(
+			'/\b(no thanks|not now|rather not|don\'t want to|do not want to|just browsing|just looking|no need|not interested in sharing|don\'t contact me|do not contact me)\b/i',
+			$message
+		);
 	}
 
 	/**

@@ -91,6 +91,31 @@ final class ChatMessageRepository {
 	}
 
 	/**
+	 * Count messages for a conversation role after a timestamp.
+	 *
+	 * @param int    $conversation_id Conversation ID.
+	 * @param string $role            Message role.
+	 * @param string $since           Lower-bound UTC timestamp.
+	 * @return int
+	 */
+	public function count_by_role_since( int $conversation_id, string $role, string $since ): int {
+		global $wpdb;
+
+		if ( $conversation_id <= 0 || '' === $since ) {
+			return 0;
+		}
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . Schema::table_name( 'chat_messages' ) . ' WHERE conversation_id = %d AND message_role = %s AND created_at > %s',
+				$conversation_id,
+				sanitize_key( $role ),
+				sanitize_text_field( $since )
+			)
+		);
+	}
+
+	/**
 	 * Get the most common user questions for frontend starter prompts.
 	 *
 	 * @param int $limit Maximum number of questions to return.

@@ -143,10 +143,16 @@ final class Plugin {
 
 		$asset_file = ACE_PLUGIN_DIR . 'assets/build/frontend.asset.php';
 		$script_src = ACE_PLUGIN_URL . 'assets/build/frontend.js';
+		$style_file = ACE_PLUGIN_DIR . 'assets/build/style-frontend.css';
+		$style_src  = ACE_PLUGIN_URL . 'assets/build/style-frontend.css';
 		$asset      = file_exists( $asset_file ) ? require $asset_file : array(
 			'dependencies' => array(),
 			'version'      => ACE_PLUGIN_VERSION,
 		);
+
+		if ( file_exists( $style_file ) ) {
+			wp_enqueue_style( 'ace-frontend', $style_src, array(), $asset['version'] );
+		}
 
 		wp_enqueue_script( 'ace-frontend', $script_src, $asset['dependencies'], $asset['version'], true );
 		wp_add_inline_script(

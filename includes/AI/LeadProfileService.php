@@ -142,12 +142,12 @@ final class LeadProfileService {
 	 */
 	public function capture_from_contact( array $conversation, ?array $session, array $payload ): array {
 		$captured = array(
-			'contact_name'  => sanitize_text_field( (string) ( $payload['contact_name'] ?? '' ) ),
-			'contact_email' => sanitize_email( (string) ( $payload['contact_email'] ?? '' ) ),
-			'contact_phone' => sanitize_text_field( (string) ( $payload['contact_phone'] ?? '' ) ),
+			'contact_name'    => $this->clean_person_name( (string) ( $payload['contact_name'] ?? '' ) ),
+			'contact_email'   => $this->normalise_email( (string) ( $payload['contact_email'] ?? '' ) ),
+			'contact_phone'   => $this->normalise_phone_number( (string) ( $payload['contact_phone'] ?? '' ) ),
 			'contact_company' => sanitize_text_field( (string) ( $payload['contact_company'] ?? '' ) ),
-			'contact_role'  => sanitize_text_field( (string) ( $payload['contact_role'] ?? '' ) ),
-			'lead_summary'  => sanitize_textarea_field( (string) ( $payload['lead_summary'] ?? '' ) ),
+			'contact_role'    => sanitize_text_field( (string) ( $payload['contact_role'] ?? '' ) ),
+			'lead_summary'    => sanitize_textarea_field( (string) ( $payload['lead_summary'] ?? '' ) ),
 		);
 
 		if ( '' === $captured['lead_summary'] ) {
@@ -229,6 +229,7 @@ final class LeadProfileService {
 	 * @return array{conversation:array<string, mixed>,session:array<string, mixed>|null,memory:array<string, mixed>|null,captured:array<string, mixed>}
 	 */
 	private function persist_capture( array $conversation, ?array $session, array $captured ): array {
+		$captured     = $this->merge_captured_details( $conversation, $captured, $session );
 		$company_name = sanitize_text_field( (string) ( $captured['contact_company'] ?? '' ) );
 		$company      = null;
 		$memory       = null;
@@ -244,7 +245,7 @@ final class LeadProfileService {
 			);
 		}
 
-		$has_contact_method = '' !== sanitize_email( (string) ( $captured['contact_email'] ?? '' ) ) || '' !== sanitize_text_field( (string) ( $captured['contact_phone'] ?? '' ) );
+		$has_contact_method = '' !== $this->normalise_email( (string) ( $captured['contact_email'] ?? '' ) ) || '' !== $this->normalise_phone_number( (string) ( $captured['contact_phone'] ?? '' ) );
 		$lead_summary       = sanitize_textarea_field( (string) ( $captured['lead_summary'] ?? '' ) );
 
 		if ( '' === $lead_summary ) {
@@ -314,30 +315,40 @@ final class LeadProfileService {
 	 */
 	private function extract_from_text( string $message ): array {
 		$message = wp_strip_all_tags( $message );
-		$email   = '';
-		$phone   = '';
-		$name    = '';
-		$company = '';
-		$role    = '';
+		$email   = $this->extract_labelled_value( $message, array( 'email', 'e-mail', 'email address' ) );
+		$phone   = $this->extract_labelled_value( $message, array( 'phone', 'telephone', 'tel', 'mobile', 'number', 'phone number' ) );
+		$name    = $this->extract_labelled_value( $message, array( 'name', 'full name', 'contact name' ) );
+		$company = $this->extract_labelled_value( $message, array( 'company', 'organisation', 'organization', 'business', 'organisation name', 'company name' ) );
+		$role    = $this->extract_labelled_value( $message, array( 'role', 'job title', 'position', 'title' ) );
 
-		if ( preg_match( '/\b([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b/i', $message, $email_match ) ) {
-			$email = sanitize_email( $email_match[1] );
+		if ( '' === $email && preg_match( '/\b(?:email(?: me)?(?: at)?|e-mail(?: me)?(?: at)?|my email(?: address)?(?: is)?|reach me at)\b[\s:,-]*([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b/i', $message, $email_match ) ) {
+			$email = (string) $email_match[1];
 		}
 
-		if ( preg_match( '/(?<!\w)(\+?\d[\d\s().-]{7,}\d)(?!\w)/', $message, $phone_match ) ) {
-			$phone = sanitize_text_field( trim( $phone_match[1] ) );
+		if ( '' === $email && preg_match( '/\b([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})\b/i', $message, $email_match ) ) {
+			$email = (string) $email_match[1];
 		}
 
-		if ( preg_match( '/\b(?:my name is|i am|i\'m|this is)\s+([a-z][a-z\'\-]+(?:\s+[a-z][a-z\'\-]+){0,2})\b/i', $message, $name_match ) ) {
+		if ( '' === $phone && preg_match( '/\b(?:phone|telephone|tel|mobile|call me(?: on)?|ring me(?: on)?|reach me(?: on)?|my number(?: is)?|number is)\b[\s:,-]*(\+?\d[\d\s().-]{7,}\d)\b/i', $message, $phone_match ) ) {
+			$phone = (string) $phone_match[1];
+		}
+
+		if ( '' === $phone && preg_match( '/(?<!\w)(\+?\d[\d\s().-]{7,}\d)(?!\w)/', $message, $phone_match ) ) {
+			$phone = (string) $phone_match[1];
+		}
+
+		if ( '' === $name && preg_match( '/\b(?:my name is|name is|i am|i\'m|this is|it\'s)\s+([a-z][a-z\'\-]+(?:\s+[a-z][a-z\'\-]+){0,2})\b/i', $message, $name_match ) ) {
 			$candidate = trim( preg_replace( '/\s+/', ' ', (string) $name_match[1] ) ?: '' );
 
-			if ( ! preg_match( '/\b(looking|interested|after|trying|buying|needing|from|with|the)\b/i', $candidate ) ) {
-				$name = sanitize_text_field( ucwords( strtolower( $candidate ) ) );
+			if ( ! preg_match( '/\b(looking|interested|after|trying|buying|shopping|purchase|purchasing|ordering|procuring|needing|from|with|the)\b/i', $candidate ) ) {
+				$name = $candidate;
 			}
 		}
 
 		$company_patterns = array(
-			'/\b(?:i am from|i\'m from|we are from|we\'re from|i work for|we work for|i am with|i\'m with|we are with|we\'re with|shopping for|buying for|looking to buy for|purchase for|purchasing for|looking to purchase for|ordering for|procuring for|on behalf of)\s+([A-Za-z0-9&.,\' -]{3,120})/i',
+			'/\b(?:company|organisation|organization|business)(?:\s+name)?\s*(?:is|:)\s+([A-Za-z0-9&.,\' -]{2,120})/i',
+			'/\b(?:shopping for|buying for|looking to buy for|purchase for|purchasing for|looking to purchase for|ordering for|procuring for|on behalf of)\s+([A-Za-z0-9&.,\' -]{3,120}?)(?:[\r\n]|[?.!,]|$)/i',
+			'/\b(?:i am from|i\'m from|we are from|we\'re from|i work for|we work for|i am with|i\'m with|we are with|we\'re with)\s+([A-Za-z0-9&.,\' -]{3,120}?)(?:\s+(?:and|who|looking|interested|about|for)\b|[\r\n]|[?.!,]|$)/i',
 			'/\bfrom\s+([A-Z][A-Za-z0-9&.,\' -]{3,120})(?:\s+(?:and|who|looking|interested|about|for)\b|[?.!,]|$)/',
 		);
 
@@ -351,7 +362,7 @@ final class LeadProfileService {
 			}
 		}
 
-		if ( preg_match( '/\b(?:i am|i\'m|i work as|my role is|i am the|i\'m the)\s+(?:a\s+|an\s+|the\s+)?([A-Za-z][A-Za-z&\/,\- ]{2,80})(?:\s+(?:at|for|with)\b|[?.!,]|$)/i', $message, $role_match ) ) {
+		if ( '' === $role && preg_match( '/\b(?:i am|i\'m|i work as|my role is|i am the|i\'m the)\s+(?:a\s+|an\s+|the\s+)?([A-Za-z][A-Za-z&\/,\- ]{2,80})(?:\s+(?:at|for|with)\b|[?.!,]|$)/i', $message, $role_match ) ) {
 			$candidate = sanitize_text_field( trim( preg_replace( '/\s+/', ' ', (string) $role_match[1] ) ?: '' ) );
 
 			if ( preg_match( '/\b(manager|officer|buyer|procurement|fleet|director|head|coordinator|administrator|supervisor|consultant|engineer|team|services|waste|operations|estates|facilities)\b/i', $candidate ) ) {
@@ -361,13 +372,67 @@ final class LeadProfileService {
 
 		return array_filter(
 			array(
-				'contact_name'    => $name,
-				'contact_email'   => $email,
-				'contact_phone'   => $phone,
-				'contact_company' => $company,
+				'contact_name'    => $this->clean_person_name( $name ),
+				'contact_email'   => $this->normalise_email( $email ),
+				'contact_phone'   => $this->normalise_phone_number( $phone ),
+				'contact_company' => '' !== $company ? $this->clean_company_name( $company ) : '',
 				'contact_role'    => $role,
 			)
 		);
+	}
+
+	/**
+	 * Merge newly captured details with the current stored lead profile.
+	 *
+	 * @param array<string, mixed>      $conversation Conversation row.
+	 * @param array<string, mixed>      $captured     Freshly captured values.
+	 * @param array<string, mixed>|null $session      Session row.
+	 * @return array<string, mixed>
+	 */
+	private function merge_captured_details( array $conversation, array $captured, ?array $session ): array {
+		$merged = array(
+			'contact_name'    => $this->clean_person_name(
+				$this->prefer_non_empty(
+					(string) ( $captured['contact_name'] ?? '' ),
+					(string) ( $conversation['contact_name'] ?? '' )
+				)
+			),
+			'contact_email'   => $this->normalise_email(
+				$this->prefer_non_empty(
+					(string) ( $captured['contact_email'] ?? '' ),
+					(string) ( $conversation['contact_email'] ?? '' )
+				)
+			),
+			'contact_phone'   => $this->normalise_phone_number(
+				$this->prefer_non_empty(
+					(string) ( $captured['contact_phone'] ?? '' ),
+					(string) ( $conversation['contact_phone'] ?? '' )
+				)
+			),
+			'contact_company' => sanitize_text_field(
+				$this->prefer_non_empty(
+					(string) ( $captured['contact_company'] ?? '' ),
+					(string) ( $conversation['contact_company'] ?? '' ),
+					(string) ( $session['company_name'] ?? '' )
+				)
+			),
+			'contact_role'    => sanitize_text_field(
+				$this->prefer_non_empty(
+					(string) ( $captured['contact_role'] ?? '' ),
+					(string) ( $conversation['contact_role'] ?? '' )
+				)
+			),
+			'lead_summary'    => sanitize_textarea_field(
+				$this->prefer_non_empty(
+					(string) ( $captured['lead_summary'] ?? '' ),
+					(string) ( $conversation['lead_summary'] ?? '' )
+				)
+			),
+		);
+
+		$merged['contact_company'] = '' !== $merged['contact_company'] ? $this->clean_company_name( $merged['contact_company'] ) : '';
+
+		return $merged;
 	}
 
 	/**
@@ -441,7 +506,7 @@ final class LeadProfileService {
 	 * @return string
 	 */
 	private function get_domain_from_email( string $email ): string {
-		$email = sanitize_email( $email );
+		$email = $this->normalise_email( $email );
 
 		if ( '' === $email || false === strpos( $email, '@' ) ) {
 			return '';
@@ -476,5 +541,102 @@ final class LeadProfileService {
 		$company = trim( $company, " \t\n\r\0\x0B.,;:-" );
 
 		return sanitize_text_field( $company );
+	}
+
+	/**
+	 * Extract a labelled field from chat text.
+	 *
+	 * @param string        $message Chat message.
+	 * @param array<int, string> $labels Field labels.
+	 * @return string
+	 */
+	private function extract_labelled_value( string $message, array $labels ): string {
+		foreach ( $labels as $label ) {
+			$pattern = '/(?:^|[\r\n])\s*' . preg_quote( $label, '/' ) . '\s*[:\-]\s*(.+)$/mi';
+
+			if ( preg_match( $pattern, $message, $matches ) ) {
+				return sanitize_text_field( trim( (string) $matches[1] ) );
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Normalise an email address for storage.
+	 *
+	 * @param string $email Raw email address.
+	 * @return string
+	 */
+	private function normalise_email( string $email ): string {
+		$email = strtolower( trim( wp_strip_all_tags( $email ) ) );
+		$email = sanitize_email( $email );
+
+		return is_email( $email ) ? $email : '';
+	}
+
+	/**
+	 * Normalise a phone number for storage.
+	 *
+	 * @param string $phone Raw phone number.
+	 * @return string
+	 */
+	private function normalise_phone_number( string $phone ): string {
+		$phone = trim( wp_strip_all_tags( $phone ) );
+
+		if ( '' === $phone ) {
+			return '';
+		}
+
+		$phone = preg_replace( '/\b(?:ext|extension|x)\s*\d+$/i', '', $phone ) ?: $phone;
+		$phone = trim( $phone );
+		$has_plus = '+' === substr( ltrim( $phone ), 0, 1 );
+		$digits   = preg_replace( '/\D+/', '', $phone ) ?: '';
+
+		if ( '' === $digits || strlen( $digits ) < 8 ) {
+			return '';
+		}
+
+		if ( ! $has_plus && 0 === strpos( $digits, '00' ) ) {
+			$has_plus = true;
+			$digits   = substr( $digits, 2 );
+		}
+
+		return sanitize_text_field( $has_plus ? '+' . $digits : $digits );
+	}
+
+	/**
+	 * Clean a person's name for storage.
+	 *
+	 * @param string $name Raw name.
+	 * @return string
+	 */
+	private function clean_person_name( string $name ): string {
+		$name = trim( preg_replace( '/\s+/', ' ', wp_strip_all_tags( $name ) ) ?: '' );
+		$name = trim( $name, " \t\n\r\0\x0B.,;:-" );
+
+		if ( '' === $name ) {
+			return '';
+		}
+
+		return sanitize_text_field( ucwords( strtolower( $name ) ) );
+	}
+
+	/**
+	 * Return the first non-empty string candidate.
+	 *
+	 * @param string ...$values Candidate values.
+	 * @return string
+	 */
+	private function prefer_non_empty( string ...$values ): string {
+		foreach ( $values as $value ) {
+			$value = trim( $value );
+
+			if ( '' !== $value ) {
+				return $value;
+			}
+		}
+
+		return '';
 	}
 }

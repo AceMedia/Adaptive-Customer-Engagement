@@ -100,25 +100,6 @@ final class Menu {
 
 		if ( file_exists( $style_file ) ) {
 			wp_enqueue_style( 'ace-admin', $style_src, array( 'wp-components' ), $asset['version'] );
-			wp_add_inline_style(
-				'ace-admin',
-				'body.ace-admin-screen #wpbody-content > .notice,
-				body.ace-admin-screen #wpbody-content > .updated,
-				body.ace-admin-screen #wpbody-content > .error,
-				body.ace-admin-screen #wpbody-content > .update-nag,
-				body.ace-admin-screen #wpbody-content > .is-dismissible,
-				body.ace-admin-screen #wpbody-content > div[class*="notice"],
-				body.ace-admin-screen #wpbody-content > .fs-notice,
-				body.ace-admin-screen #wpbody-content > .woocommerce-message,
-				body.ace-admin-screen #wpbody-content > .woocommerce-error,
-				body.ace-admin-screen #wpbody-content > .woocommerce-info,
-				body.ace-admin-screen #wpbody-content > .notice-wrapper,
-				body.ace-admin-screen #wpbody-content > .wrap > .notice:not(.components-notice),
-				body.ace-admin-screen #wpbody-content > .wrap > .updated,
-				body.ace-admin-screen #wpbody-content > .wrap > .error,
-				body.ace-admin-screen #wpbody-content > .wrap > .update-nag,
-				body.ace-admin-screen #wpbody-content > .wrap > div[class*="notice"]:not(.components-notice) { display: none !important; }'
-			);
 		}
 
 		wp_enqueue_script( 'ace-admin', $script_src, $asset['dependencies'], $asset['version'], true );

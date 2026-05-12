@@ -1,3 +1,22 @@
+.ace-admin-screen #wpbody-content > .notice,
+.ace-admin-screen #wpbody-content > .updated,
+.ace-admin-screen #wpbody-content > .error,
+.ace-admin-screen #wpbody-content > .update-nag,
+.ace-admin-screen #wpbody-content > .is-dismissible,
+.ace-admin-screen #wpbody-content > div[class*='notice'],
+.ace-admin-screen #wpbody-content > .fs-notice,
+.ace-admin-screen #wpbody-content > .woocommerce-message,
+.ace-admin-screen #wpbody-content > .woocommerce-error,
+.ace-admin-screen #wpbody-content > .woocommerce-info,
+.ace-admin-screen #wpbody-content > .notice-wrapper,
+.ace-admin-screen #wpbody-content > .wrap > .notice:not(.components-notice),
+.ace-admin-screen #wpbody-content > .wrap > .updated,
+.ace-admin-screen #wpbody-content > .wrap > .error,
+.ace-admin-screen #wpbody-content > .wrap > .update-nag,
+.ace-admin-screen #wpbody-content > .wrap > div[class*='notice']:not(.components-notice) {
+	display: none !important;
+}
+
 .ace-admin-wrap {
 	--ace-admin-shell-gap: clamp(16px, 2vw, 24px);
 	--ace-admin-section-gap: 1rem;
@@ -377,6 +396,137 @@
 	gap: 16px;
 }
 
+.ace-admin-record {
+	display: grid;
+	gap: 16px;
+}
+
+.ace-admin-record__back {
+	display: flex;
+	justify-content: flex-start;
+}
+
+.ace-admin-record__layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+	gap: 16px;
+	align-items: start;
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.ace-admin-record__main,
+.ace-admin-record__sidebar {
+	display: grid;
+	gap: 16px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.ace-admin-record__sidebar {
+	position: sticky;
+	top: var(--ace-admin-sticky-top);
+	align-self: start;
+}
+
+.ace-admin-record__sidebar > *,
+.ace-admin-chat-console__sidebar > * {
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.ace-admin-record__sidebar .components-card,
+.ace-admin-record__sidebar .components-card__body,
+.ace-admin-chat-console__sidebar .components-card,
+.ace-admin-chat-console__sidebar .components-card__body {
+	box-sizing: border-box;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.ace-admin-record__sidebar .ace-admin-detail-metrics {
+	grid-template-columns: 1fr;
+}
+
+.ace-admin-detail-summary {
+	border: 1px solid #d6e2ef;
+	background: linear-gradient(135deg, #ffffff 0%, #f4f8fc 100%);
+}
+
+.ace-admin-detail-summary__body {
+	display: grid;
+	gap: 18px;
+}
+
+.ace-admin-detail-summary__top {
+	display: grid;
+	gap: 12px;
+}
+
+.ace-admin-detail-summary__copy {
+	display: grid;
+	gap: 8px;
+}
+
+.ace-admin-detail-summary__eyebrow,
+.ace-admin-detail-summary__meta-label {
+	margin: 0;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #336699;
+}
+
+.ace-admin-detail-summary__title {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+.ace-admin-detail-summary__description {
+	margin: 0;
+	color: #50575e;
+	line-height: 1.65;
+}
+
+.ace-admin-detail-summary__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.ace-admin-detail-summary__meta {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 12px;
+}
+
+.ace-admin-detail-summary__meta-item {
+	padding: 14px 16px;
+	border: 1px solid #dce6f1;
+	border-radius: 14px;
+	background: rgba(255, 255, 255, 0.88);
+}
+
+.ace-admin-detail-summary__meta-label {
+	display: block;
+	margin-bottom: 4px;
+	color: #6b7280;
+}
+
+.ace-admin-detail-summary__meta-value {
+	display: block;
+	color: #1d2327;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
 .ace-admin-detail-hero {
 	border: 1px solid #d6e2ef;
 	background: linear-gradient(135deg, #ffffff 0%, #f4f8fc 100%);
@@ -526,8 +676,9 @@
 
 .ace-admin-chat-console__title {
 	margin: 0;
-	font-size: clamp(26px, 3vw, 34px);
-	line-height: 1.1;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.4;
 }
 
 .ace-admin-chat-console__description {
@@ -567,9 +718,13 @@
 
 .ace-admin-chat-console__layout {
 	display: grid;
-	grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.9fr);
+	grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
 	gap: 16px;
 	align-items: start;
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
 }
 
 .ace-admin-chat-console__thread-card,
@@ -807,6 +962,8 @@
 	display: grid;
 	gap: 16px;
 	align-self: start;
+	min-width: 0;
+	max-width: 100%;
 }
 
 .ace-admin-chat-console__workflow-grid {
@@ -1133,6 +1290,14 @@
 @media (max-width: 1400px) {
 	.ace-admin-dashboard-charts {
 		grid-template-columns: 1fr;
+	}
+
+	.ace-admin-record__layout {
+		grid-template-columns: 1fr;
+	}
+
+	.ace-admin-record__sidebar {
+		position: static;
 	}
 
 	.ace-admin-settings-checklist.is-two-column {

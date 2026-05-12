@@ -42,6 +42,7 @@ final class ChatPresence {
 				'actor'      => $actor,
 				'label'      => sanitize_text_field( (string) ( $data['label'] ?? self::get_default_label( $actor ) ) ),
 				'name'       => sanitize_text_field( (string) ( $data['name'] ?? '' ) ),
+				'status'     => self::sanitise_status( (string) ( $data['status'] ?? '' ) ),
 				'updated_at' => current_time( 'mysql', true ),
 			),
 			self::TTL
@@ -74,6 +75,7 @@ final class ChatPresence {
 				'actor'      => $actor,
 				'label'      => sanitize_text_field( (string) ( $value['label'] ?? self::get_default_label( $actor ) ) ),
 				'name'       => sanitize_text_field( (string) ( $value['name'] ?? '' ) ),
+				'status'     => self::sanitise_status( (string) ( $value['status'] ?? '' ) ),
 				'updated_at' => sanitize_text_field( (string) ( $value['updated_at'] ?? '' ) ),
 			);
 		}
@@ -133,5 +135,17 @@ final class ChatPresence {
 			default:
 				return __( 'Participant', 'adaptive-customer-engagement' );
 		}
+	}
+
+	/**
+	 * Sanitise a presence status value.
+	 *
+	 * @param string $status Raw status value.
+	 * @return string
+	 */
+	private static function sanitise_status( string $status ): string {
+		$status = sanitize_key( $status );
+
+		return in_array( $status, array( 'typing', 'thinking' ), true ) ? $status : '';
 	}
 }

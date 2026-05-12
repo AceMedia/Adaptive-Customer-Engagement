@@ -1,7 +1,7 @@
 import apiFetch from '@wordpress/api-fetch';
 import { Button, Card, CardBody, CheckboxControl, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
 import { createElement, Fragment, useEffect, useMemo, useRef, useState } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { BarChart } from '@mui/x-charts/BarChart';
 import { LineChart } from '@mui/x-charts/LineChart';
 import { PieChart } from '@mui/x-charts/PieChart';
@@ -868,35 +868,43 @@ function DashboardTimelineCard({ title, items, emptyMessage, targetPage = 'sessi
 	);
 }
 
-function DetailHeader({ eyebrow, title, description, meta = [], onClose }) {
+function DetailBackButton({ label, onClick }) {
+	return createElement(
+		'div',
+		{ className: 'ace-admin-record__back' },
+		createElement(Button, { variant: 'secondary', className: 'ace-admin-record__back-button', onClick }, `\u2190 ${label}`)
+	);
+}
+
+function DetailHeader({ eyebrow, title, description, meta = [], actions = null }) {
 	return createElement(
 		Card,
-		{ className: 'ace-admin-detail-hero' },
+		{ className: 'ace-admin-detail-summary' },
 		createElement(
 			CardBody,
-			null,
+			{ className: 'ace-admin-detail-summary__body' },
 			createElement(
 				'div',
-				{ className: 'ace-admin-detail-hero__top' },
+				{ className: 'ace-admin-detail-summary__top' },
 				createElement(
 					'div',
-					null,
-					createElement('p', { className: 'ace-admin-detail-hero__eyebrow' }, eyebrow),
-					createElement('h2', { className: 'ace-admin-detail-hero__title' }, title),
-					description ? createElement('p', { className: 'ace-admin-detail-hero__description' }, description) : null
+					{ className: 'ace-admin-detail-summary__copy' },
+					createElement('p', { className: 'ace-admin-detail-summary__eyebrow' }, eyebrow),
+					createElement('h2', { className: 'ace-admin-detail-summary__title' }, title),
+					description ? createElement('p', { className: 'ace-admin-detail-summary__description' }, description) : null
 				),
-				createElement(Button, { variant: 'secondary', onClick: onClose }, __('Close', 'adaptive-customer-engagement'))
+				actions ? createElement('div', { className: 'ace-admin-detail-summary__actions' }, actions) : null
 			),
 			meta.length
 				? createElement(
 						'div',
-						{ className: 'ace-admin-detail-hero__meta' },
+						{ className: 'ace-admin-detail-summary__meta' },
 						meta.map((item) =>
 							createElement(
 								'div',
-								{ className: 'ace-admin-detail-hero__meta-item', key: item.label },
-								createElement('span', { className: 'ace-admin-detail-hero__meta-label' }, item.label),
-								createElement('strong', { className: 'ace-admin-detail-hero__meta-value' }, item.value || '—')
+								{ className: 'ace-admin-detail-summary__meta-item', key: item.label },
+								createElement('span', { className: 'ace-admin-detail-summary__meta-label' }, item.label),
+								createElement('strong', { className: 'ace-admin-detail-summary__meta-value' }, item.value || '—')
 							)
 						)
 				  )
@@ -1754,7 +1762,7 @@ function ChatsTable({ items, onView, onSessionView, onCompanyView }) {
 	);
 }
 
-function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowSave, onTypingChange, suggestions = [], suggestionsBusy = false, onRefreshSuggestions, busy = false }) {
+function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowSave, onTypingChange, suggestions = [], suggestionsBusy = false, onRefreshSuggestions, busy = false, heartbeatTick = 0 }) {
 	const conversation = detail?.conversation || {};
 	const messages = detail?.messages || [];
 	const sessionCommerce = detail?.session_commerce || {};
@@ -1762,6 +1770,7 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 	const workflowOptions = detail?.workflow_options || {};
 	const ownerOptions = detail?.owner_options || [];
 	const [replyText, setReplyText] = useState('');
+	const nowMs = heartbeatTick || Date.now();
 	const [workflowValues, setWorkflowValues] = useState({
 		owner_user_id: '',
 		commercial_status: 'new',
@@ -1821,19 +1830,51 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 		['Ended', conversation.ended_at || '—'],
 	];
 	const getRoleLabel = (message) => {
-		if (message.author_name) {
-			return message.author_name;
-		}
-
 		if (message.message_role === 'user') {
 			return __('Customer', 'adaptive-customer-engagement');
 		}
 
 		if (message.message_role === 'operator') {
-			return __('Team', 'adaptive-customer-engagement');
+			return message.author_name || __('Team', 'adaptive-customer-engagement');
+		}
+
+		if (message.author_name) {
+			return message.author_name;
 		}
 
 		return __('Assistant', 'adaptive-customer-engagement');
+	};
+	const formatChatTimestamp = (value) => {
+		if (!value) {
+			return '—';
+		}
+
+		const parsed = new Date(value);
+
+		if (Number.isNaN(parsed.getTime())) {
+			return value;
+		}
+
+		const diffSeconds = Math.max(0, Math.round((nowMs - parsed.getTime()) / 1000));
+
+		if (diffSeconds < 60) {
+			return sprintf(_n('%s sec ago', '%s secs ago', diffSeconds, 'adaptive-customer-engagement'), diffSeconds);
+		}
+
+		if (diffSeconds < 3600) {
+			const minutes = Math.floor(diffSeconds / 60);
+			return sprintf(_n('%s min ago', '%s mins ago', minutes, 'adaptive-customer-engagement'), minutes);
+		}
+
+		if (diffSeconds < 43200) {
+			const hours = Math.floor(diffSeconds / 3600);
+			return sprintf(_n('%s hour ago', '%s hours ago', hours, 'adaptive-customer-engagement'), hours);
+		}
+
+		return parsed.toLocaleString([], {
+			dateStyle: 'medium',
+			timeStyle: 'short',
+		});
 	};
 	const getAvatarUrl = (message) => {
 		if (message.author_avatar_url) {
@@ -1846,7 +1887,10 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 
 		return config.siteIconUrl || config.logoUrl || '';
 	};
-	const typingIndicators = Object.values(detail?.typing || {}).filter(Boolean);
+	const typingState = (detail?.typing && typeof detail.typing === 'object') ? detail.typing : {};
+	const typingIndicators = typingState.agent
+		? [typingState.agent].filter(Boolean)
+		: Object.values(typingState).filter(Boolean);
 
 	useEffect(() => {
 		setWorkflowValues({
@@ -1887,56 +1931,104 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 
 	return createElement(
 		'div',
-		{ className: 'ace-admin-chat-console' },
+		{ className: 'ace-admin-record ace-admin-chat-console' },
+		createElement(DetailBackButton, { label: __('Back to chats', 'adaptive-customer-engagement'), onClick: onClose }),
 		createElement(
 			'div',
-			{ className: 'ace-admin-chat-console__layout' },
+			{ className: 'ace-admin-record__layout ace-admin-chat-console__layout' },
 			createElement(
-				Card,
-				{ className: 'ace-admin-chat-console__thread-card' },
+				'div',
+				{ className: 'ace-admin-record__main' },
 				createElement(
-					CardBody,
-					{ className: 'ace-admin-chat-console__thread-body' },
+					Card,
+					{ className: 'ace-admin-chat-console__thread-card' },
 					createElement(
-						'div',
-						{ className: 'ace-admin-chat-console__thread-topbar' },
-						createElement('h3', { className: 'ace-admin-chat-console__section-title' }, __('Transcript', 'adaptive-customer-engagement')),
+						CardBody,
+						{ className: 'ace-admin-chat-console__thread-body' },
 						createElement(
 							'div',
-							{ className: 'ace-admin-chat-console__status' },
-							isEnded
-								? createElement('span', { className: 'ace-admin-chat-console__status-pill is-ended' }, __('Ended', 'adaptive-customer-engagement'))
-								: isManualMode
-									? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Manual agent mode', 'adaptive-customer-engagement'))
-									: hasPendingHandoverRequest
-										? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Agent requested', 'adaptive-customer-engagement'))
-									: createElement('span', { className: 'ace-admin-chat-console__status-pill is-ai' }, __('AI live', 'adaptive-customer-engagement'))
-						)
-					),
-					isEnded
-						? createElement(Notice, { status: 'warning', isDismissible: false }, __('This chat has ended. The transcript remains available, but no further replies can be sent.', 'adaptive-customer-engagement'))
-						: createElement(Notice, { status: isManualMode ? 'success' : (hasPendingHandoverRequest ? 'warning' : 'info'), isDismissible: false }, isManualMode
-							? __('Manual agent mode is active. Team replies sent here go straight back into the customer chat until you hand the conversation back to the AI assistant.', 'adaptive-customer-engagement')
-							: hasPendingHandoverRequest
-								? __('The visitor has asked for a person, but the AI assistant is still live. This view does not take over the chat — use Go manual only when you want an agent to step in.', 'adaptive-customer-engagement')
-								: __('You are viewing this chat live while the AI assistant is still handling it. Switch into manual agent mode when you want the team to take over.', 'adaptive-customer-engagement')),
-					createElement(
-						'div',
-						{ className: 'ace-admin-chat-console__messages', ref: transcriptRef },
-						messages.length
-							? messages.map((message) =>
+							{ className: 'ace-admin-chat-console__thread-topbar' },
+							createElement('h3', { className: 'ace-admin-chat-console__section-title' }, __('Transcript', 'adaptive-customer-engagement')),
+							createElement(
+								'div',
+								{ className: 'ace-admin-chat-console__status' },
+								isEnded
+									? createElement('span', { className: 'ace-admin-chat-console__status-pill is-ended' }, __('Ended', 'adaptive-customer-engagement'))
+									: isManualMode
+										? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Manual agent mode', 'adaptive-customer-engagement'))
+										: hasPendingHandoverRequest
+											? createElement('span', { className: 'ace-admin-chat-console__status-pill is-live' }, __('Agent requested', 'adaptive-customer-engagement'))
+										: createElement('span', { className: 'ace-admin-chat-console__status-pill is-ai' }, __('AI live', 'adaptive-customer-engagement'))
+							)
+						),
+						isEnded
+							? createElement(Notice, { status: 'warning', isDismissible: false }, __('This chat has ended. The transcript remains available, but no further replies can be sent.', 'adaptive-customer-engagement'))
+							: createElement(Notice, { status: isManualMode ? 'success' : (hasPendingHandoverRequest ? 'warning' : 'info'), isDismissible: false }, isManualMode
+								? __('Manual agent mode is active. Team replies sent here go straight back into the customer chat until you hand the conversation back to the AI assistant.', 'adaptive-customer-engagement')
+								: hasPendingHandoverRequest
+									? __('The visitor has asked for a person, but the AI assistant is still live. This view does not take over the chat — use Go manual only when you want an agent to step in.', 'adaptive-customer-engagement')
+									: __('You are viewing this chat live while the AI assistant is still handling it. Switch into manual agent mode when you want the team to take over.', 'adaptive-customer-engagement')),
+						createElement(
+							'div',
+							{ className: 'ace-admin-chat-console__messages', ref: transcriptRef },
+							messages.length
+								? messages.map((message) =>
+									createElement(
+										'article',
+										{
+											key: message.id,
+											className: `ace-admin-chat-message ${message.message_role === 'user' ? 'is-user' : 'is-agent'} ${message.is_error ? 'is-error' : ''}`,
+										},
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-message__avatar' },
+											getAvatarUrl(message)
+												? createElement('img', { src: getAvatarUrl(message), alt: getRoleLabel(message) })
+												: createElement('span', null, getRoleLabel(message).slice(0, 1).toUpperCase())
+										),
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-message__bubble' },
+											createElement(
+												'div',
+												{ className: 'ace-admin-chat-message__meta' },
+												createElement('strong', null, getRoleLabel(message)),
+												createElement('span', null, formatChatTimestamp(message.created_at))
+											),
+											createElement('p', { className: 'ace-admin-chat-message__text' }, message.message_text || '—'),
+											Array.isArray(message.sources) && message.sources.length
+												? createElement(
+													'ol',
+													{ className: 'ace-admin-chat-message__sources' },
+													message.sources.map((source, index) =>
+														createElement(
+															'li',
+															{ key: `${message.id}-${index}` },
+															source?.url
+																? createElement('a', { href: source.url, target: '_blank', rel: 'noreferrer noopener' }, source.title || source.url)
+																: (source?.title || '—')
+														)
+													)
+												)
+												: null
+										)
+									)
+								  )
+								: createElement(Notice, { status: 'info', isDismissible: false }, __('No stored transcript messages are available yet.', 'adaptive-customer-engagement'))
+							,
+							typingIndicators.map((indicator) =>
 								createElement(
 									'article',
 									{
-										key: message.id,
-										className: `ace-admin-chat-message ${message.message_role === 'user' ? 'is-user' : 'is-agent'} ${message.is_error ? 'is-error' : ''}`,
+										key: `typing-${indicator.actor || indicator.label}`,
+										className: 'ace-admin-chat-message ace-admin-chat-message--typing is-agent',
 									},
 									createElement(
 										'div',
 										{ className: 'ace-admin-chat-message__avatar' },
-										getAvatarUrl(message)
-											? createElement('img', { src: getAvatarUrl(message), alt: getRoleLabel(message) })
-											: createElement('span', null, getRoleLabel(message).slice(0, 1).toUpperCase())
+										indicator.actor === 'assistant' && (config.siteIconUrl || config.logoUrl)
+											? createElement('img', { src: config.siteIconUrl || config.logoUrl, alt: indicator.name || indicator.label || __('Assistant', 'adaptive-customer-engagement') })
+											: createElement('span', null, String(indicator.name || indicator.label || indicator.actor || '•').slice(0, 1).toUpperCase())
 									),
 									createElement(
 										'div',
@@ -1944,89 +2036,42 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 										createElement(
 											'div',
 											{ className: 'ace-admin-chat-message__meta' },
-											createElement('strong', null, getRoleLabel(message)),
-											createElement('span', null, message.created_at || '—')
+											createElement('strong', null, indicator.name || indicator.label || __('Participant', 'adaptive-customer-engagement')),
+											createElement('span', null, indicator.actor === 'assistant' ? __('Thinking…', 'adaptive-customer-engagement') : __('Typing…', 'adaptive-customer-engagement'))
 										),
-										createElement('p', { className: 'ace-admin-chat-message__text' }, message.message_text || '—'),
-										Array.isArray(message.sources) && message.sources.length
-											? createElement(
-												'ol',
-												{ className: 'ace-admin-chat-message__sources' },
-												message.sources.map((source, index) =>
-													createElement(
-														'li',
-														{ key: `${message.id}-${index}` },
-														source?.url
-															? createElement('a', { href: source.url, target: '_blank', rel: 'noreferrer noopener' }, source.title || source.url)
-															: (source?.title || '—')
-													)
-												)
-											)
-											: null
-									)
-								)
-							  )
-							: createElement(Notice, { status: 'info', isDismissible: false }, __('No stored transcript messages are available yet.', 'adaptive-customer-engagement'))
-						,
-						typingIndicators.map((indicator) =>
-							createElement(
-								'article',
-								{
-									key: `typing-${indicator.actor || indicator.label}`,
-									className: 'ace-admin-chat-message ace-admin-chat-message--typing is-agent',
-								},
-								createElement(
-									'div',
-									{ className: 'ace-admin-chat-message__avatar' },
-									indicator.actor === 'assistant' && (config.siteIconUrl || config.logoUrl)
-										? createElement('img', { src: config.siteIconUrl || config.logoUrl, alt: indicator.name || indicator.label || __('Assistant', 'adaptive-customer-engagement') })
-										: createElement('span', null, String(indicator.name || indicator.label || indicator.actor || '•').slice(0, 1).toUpperCase())
-								),
-								createElement(
-									'div',
-									{ className: 'ace-admin-chat-message__bubble' },
-									createElement(
-										'div',
-										{ className: 'ace-admin-chat-message__meta' },
-										createElement('strong', null, indicator.name || indicator.label || __('Participant', 'adaptive-customer-engagement')),
-										createElement('span', null, indicator.actor === 'assistant' ? __('Thinking…', 'adaptive-customer-engagement') : __('Typing…', 'adaptive-customer-engagement'))
-									),
-									createElement(
-										'div',
-										{ className: 'ace-admin-chat-message__typing' },
-										createElement('span', null),
-										createElement('span', null),
-										createElement('span', null)
+										createElement(
+											'div',
+											{ className: 'ace-admin-chat-message__typing' },
+											createElement('span', null),
+											createElement('span', null),
+											createElement('span', null)
+										)
 									)
 								)
 							)
-						)
-					),
-					createElement(
-						'div',
-						{ className: 'ace-admin-chat-console__composer' },
+						),
 						createElement(
 							'div',
-							{ className: 'ace-admin-chat-console__composer-actions' },
-							!isEnded && !isManualMode
-								? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Go manual', 'adaptive-customer-engagement'))
-								: null,
-							!isEnded && isManualMode
-								? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
-								: null,
+							{ className: 'ace-admin-chat-console__composer' },
+							createElement(
+								'div',
+								{ className: 'ace-admin-chat-console__composer-actions' },
+								!isEnded && !isManualMode
+									? createElement(Button, { variant: 'primary', onClick: () => onStatusChange && onStatusChange('handover'), isBusy: busy, disabled: busy }, __('Go manual', 'adaptive-customer-engagement'))
+									: null,
+								!isEnded && isManualMode
+									? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('resume_ai'), isBusy: busy, disabled: busy }, __('Return to AI assistant', 'adaptive-customer-engagement'))
+									: null,
+								!isEnded
+									? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('end'), isBusy: busy, disabled: busy }, __('End chat', 'adaptive-customer-engagement'))
+									: null
+							),
 							!isEnded
-								? createElement(Button, { variant: 'secondary', onClick: () => onStatusChange && onStatusChange('end'), isBusy: busy, disabled: busy }, __('End chat', 'adaptive-customer-engagement'))
-								: null
-						),
-						!isEnded
-							? createElement(
-								Fragment,
-								null,
-								isManualMode
-									? createElement(
-										Fragment,
-										null,
-										createElement(
+								? createElement(
+									Fragment,
+									null,
+									isManualMode
+										? createElement(
 											'div',
 											{ className: 'ace-admin-chat-console__suggestions' },
 											createElement(
@@ -2054,85 +2099,61 @@ function ChatDetailPanel({ detail, onClose, onStatusChange, onReply, onWorkflowS
 													)
 												)
 												: createElement('p', { className: 'ace-admin-chat-console__suggestions-empty' }, __('Suggestions will appear here once the assistant has enough context.', 'adaptive-customer-engagement'))
-										),
-										createElement(TextareaControl, {
-											label: __('Reply to customer', 'adaptive-customer-engagement'),
-											help: __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement'),
-											value: replyText,
-											onChange: setReplyText,
-											rows: 3,
-										}),
-										createElement(
-											'div',
-											{ className: 'ace-admin-chat-console__composer-submit' },
-											createElement(Button, {
-												variant: 'primary',
-												onClick: async () => {
-													if (!onReply || !String(replyText || '').trim()) {
-														return;
-													}
-
-													await onReply(replyText);
-													setReplyText('');
-												},
-												isBusy: busy,
-												disabled: busy || !String(replyText || '').trim(),
-											}, __('Send reply', 'adaptive-customer-engagement'))
 										)
+										: createElement(
+											Notice,
+											{ status: 'info', isDismissible: false },
+											__('Viewing this chat does not take over from the AI. You can press Go manual first, or simply send a team reply and the chat will switch into manual agent mode at that point.', 'adaptive-customer-engagement')
+										),
+									createElement(TextareaControl, {
+										label: __('Reply to customer', 'adaptive-customer-engagement'),
+										help: isManualMode
+											? __('Send a team reply straight back into the live chat conversation.', 'adaptive-customer-engagement')
+											: __('Type a team reply here if you want to step in. Sending it will switch this chat into manual agent mode.', 'adaptive-customer-engagement'),
+										value: replyText,
+										onChange: setReplyText,
+										rows: 3,
+									}),
+									createElement(
+										'div',
+										{ className: 'ace-admin-chat-console__composer-submit' },
+										createElement(Button, {
+											variant: 'primary',
+											onClick: async () => {
+												if (!onReply || !String(replyText || '').trim()) {
+													return;
+												}
+
+												await onReply(replyText);
+												setReplyText('');
+											},
+											isBusy: busy,
+											disabled: busy || !String(replyText || '').trim(),
+										}, isManualMode ? __('Send reply', 'adaptive-customer-engagement') : __('Send and take over', 'adaptive-customer-engagement'))
 									)
-									: createElement(
-										Notice,
-										{ status: 'info', isDismissible: false },
-										__('This chat is currently in view-only mode. Use Go manual when you want an agent to take over and reply from here.', 'adaptive-customer-engagement')
-									)
-							)
-							: null
+								)
+								: null
+						)
 					)
 				)
 			),
 			createElement(
 				'aside',
-				{ className: 'ace-admin-chat-console__sidebar' },
-				createElement(
-					Card,
-					{ className: 'ace-admin-chat-console__header-card' },
-					createElement(
-						CardBody,
-						{ className: 'ace-admin-chat-console__header' },
-						createElement(
-							'div',
-							{ className: 'ace-admin-chat-console__header-copy' },
-							createElement('p', { className: 'ace-admin-chat-console__eyebrow' }, __('Chat console', 'adaptive-customer-engagement')),
-							createElement('h2', { className: 'ace-admin-chat-console__title' }, conversation.conversation_uuid || __('Chat conversation', 'adaptive-customer-engagement')),
-							createElement('p', { className: 'ace-admin-chat-console__description' }, __('Work the live transcript, use suggested replies, and keep the commercial follow-up state updated without leaving the queue.', 'adaptive-customer-engagement'))
-						),
-						createElement(
-							'div',
-							{ className: 'ace-admin-chat-console__header-actions' },
-							createElement(Button, { variant: 'secondary', onClick: onRefreshSuggestions, disabled: busy || suggestionsBusy }, suggestionsBusy ? __('Refreshing suggestions…', 'adaptive-customer-engagement') : __('Refresh suggestions', 'adaptive-customer-engagement')),
-							createElement(Button, { variant: 'secondary', onClick: onClose }, __('Back to chats', 'adaptive-customer-engagement'))
-						),
-						createElement(
-							'div',
-							{ className: 'ace-admin-chat-console__meta' },
-							[
-								{ label: __('Status', 'adaptive-customer-engagement'), value: conversation.status || __('Open', 'adaptive-customer-engagement') },
-								{ label: __('Workflow', 'adaptive-customer-engagement'), value: conversation.commercial_status || __('New', 'adaptive-customer-engagement') },
-								{ label: __('Priority', 'adaptive-customer-engagement'), value: conversation.priority || __('Normal', 'adaptive-customer-engagement') },
-								{ label: __('Owner', 'adaptive-customer-engagement'), value: conversation.owner_name || '—' },
-								{ label: __('Company', 'adaptive-customer-engagement'), value: conversation.company_name || '—' },
-								{ label: __('Last message', 'adaptive-customer-engagement'), value: conversation.last_message_at || '—' },
-							].map((item) =>
-								createElement(
-									'div',
-									{ className: 'ace-admin-chat-console__meta-item', key: item.label },
-									createElement('span', { className: 'ace-admin-chat-console__meta-label' }, item.label),
-									createElement('strong', { className: 'ace-admin-chat-console__meta-value' }, item.value)
-								)
-							)
-						)
-					)
-				),
+				{ className: 'ace-admin-record__sidebar ace-admin-chat-console__sidebar' },
+				createElement(DetailHeader, {
+					eyebrow: __('Chat console', 'adaptive-customer-engagement'),
+					title: conversation.conversation_uuid || __('Chat conversation', 'adaptive-customer-engagement'),
+					description: __('Work the live transcript, use suggested replies, and keep the commercial follow-up state updated without leaving the queue.', 'adaptive-customer-engagement'),
+					meta: [
+						{ label: __('Status', 'adaptive-customer-engagement'), value: conversation.status || __('Open', 'adaptive-customer-engagement') },
+						{ label: __('Workflow', 'adaptive-customer-engagement'), value: conversation.commercial_status || __('New', 'adaptive-customer-engagement') },
+						{ label: __('Priority', 'adaptive-customer-engagement'), value: conversation.priority || __('Normal', 'adaptive-customer-engagement') },
+						{ label: __('Owner', 'adaptive-customer-engagement'), value: conversation.owner_name || '—' },
+						{ label: __('Company', 'adaptive-customer-engagement'), value: conversation.company_name || '—' },
+						{ label: __('Last message', 'adaptive-customer-engagement'), value: formatChatTimestamp(conversation.last_message_at) },
+					],
+					actions: createElement(Button, { variant: 'secondary', onClick: onRefreshSuggestions, disabled: busy || suggestionsBusy }, suggestionsBusy ? __('Refreshing suggestions…', 'adaptive-customer-engagement') : __('Refresh suggestions', 'adaptive-customer-engagement')),
+				}),
 				createElement(DetailMetricGrid, { items: detailMetrics }),
 				createElement(
 					Card,
@@ -2261,6 +2282,7 @@ function ChatsView({ active, route }) {
 	const [data, setData] = useState(null);
 	const [detail, setDetail] = useState(null);
 	const [detailBusy, setDetailBusy] = useState(false);
+	const [heartbeatTick, setHeartbeatTick] = useState(Date.now());
 	const [replySuggestions, setReplySuggestions] = useState([]);
 	const [suggestionsBusy, setSuggestionsBusy] = useState(false);
 	const [suggestionsMessageKey, setSuggestionsMessageKey] = useState('');
@@ -2386,6 +2408,8 @@ function ChatsView({ active, route }) {
 		}
 
 		const interval = window.setInterval(() => {
+			setHeartbeatTick(Date.now());
+
 			if (detailBusy) {
 				return;
 			}
@@ -2443,6 +2467,7 @@ function ChatsView({ active, route }) {
 		return createElement(ChatDetailPanel, {
 			detail,
 			busy: detailBusy,
+			heartbeatTick,
 			suggestions: replySuggestions,
 			suggestionsBusy,
 			onRefreshSuggestions: () => loadSuggestions(detail),
@@ -2742,146 +2767,158 @@ function SessionDetailPanel({ detail, onClose }) {
 
 	return createElement(
 		'div',
-		{ className: 'ace-admin-detail' },
-		createElement(DetailHeader, {
-			eyebrow: __('Session detail', 'adaptive-customer-engagement'),
-			title: session.session_uuid || __('Session', 'adaptive-customer-engagement'),
-			description: session.score_summary || __('Review the activity sequence, score signals, and buying-intent context for this visit.', 'adaptive-customer-engagement'),
-			meta: [
-				{ label: __('Score', 'adaptive-customer-engagement'), value: `${session.score || 0} (${session.score_label || 'noise'})` },
-				{ label: __('Company', 'adaptive-customer-engagement'), value: session.company_name || '—' },
-				{ label: __('Source', 'adaptive-customer-engagement'), value: session.utm_source || __('Direct / none', 'adaptive-customer-engagement') },
-				{ label: __('Last seen', 'adaptive-customer-engagement'), value: session.last_seen || '—' },
-			],
-			onClose,
-		}),
-		createElement(DetailMetricGrid, { items: detailMetrics }),
+		{ className: 'ace-admin-record' },
+		createElement(DetailBackButton, { label: __('Back to sessions', 'adaptive-customer-engagement'), onClick: onClose }),
 		createElement(
 			'div',
-			{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
-			createElement(DashboardPieChartCard, {
-				title: __('Event mix', 'adaptive-customer-engagement'),
-				items: eventMix,
-				valueLabel: __('events', 'adaptive-customer-engagement'),
-				emptyMessage: __('No events have been recorded for this session yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardBarChartCard, {
-				title: __('Touched paths', 'adaptive-customer-engagement'),
-				items: pathMix,
-				targetPage: 'sessions',
-				emptyMessage: __('No paths have been recorded for this session yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardBarChartCard, {
-				title: __('Score breakdown', 'adaptive-customer-engagement'),
-				items: scoreBreakdownChart,
-				emptyMessage: __('No score breakdown is available for this session yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardPieChartCard, {
-				title: __('Matched call status mix', 'adaptive-customer-engagement'),
-				items: callStatusMix,
-				valueLabel: __('calls', 'adaptive-customer-engagement'),
-				emptyMessage: __('No matched calls are available for this session yet.', 'adaptive-customer-engagement'),
-			})
-		),
-		createElement(
-			Card,
-			null,
+			{ className: 'ace-admin-record__layout' },
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Session facts', 'adaptive-customer-engagement')),
+				'div',
+				{ className: 'ace-admin-record__main' },
 				createElement(
-					'table',
-					{ className: 'widefat striped', style: { marginBottom: 0 } },
+					'div',
+					{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
+					createElement(DashboardPieChartCard, {
+						title: __('Event mix', 'adaptive-customer-engagement'),
+						items: eventMix,
+						valueLabel: __('events', 'adaptive-customer-engagement'),
+						emptyMessage: __('No events have been recorded for this session yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardBarChartCard, {
+						title: __('Touched paths', 'adaptive-customer-engagement'),
+						items: pathMix,
+						targetPage: 'sessions',
+						emptyMessage: __('No paths have been recorded for this session yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardBarChartCard, {
+						title: __('Score breakdown', 'adaptive-customer-engagement'),
+						items: scoreBreakdownChart,
+						emptyMessage: __('No score breakdown is available for this session yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardPieChartCard, {
+						title: __('Matched call status mix', 'adaptive-customer-engagement'),
+						items: callStatusMix,
+						valueLabel: __('calls', 'adaptive-customer-engagement'),
+						emptyMessage: __('No matched calls are available for this session yet.', 'adaptive-customer-engagement'),
+					})
+				),
+				createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
+				createElement(
+					Card,
+					null,
 					createElement(
-						'tbody',
+						CardBody,
 						null,
-						[
-							['Landing page', session.landing_path || '—'],
-							['Referrer', session.referrer || '—'],
-							['Source', session.utm_source || '—'],
-							['Campaign', session.utm_campaign || '—'],
-							['Company', session.company_name || '—'],
-							['Company domain', session.company_domain || '—'],
-							['First seen', session.first_seen || '—'],
-							['Last seen', session.last_seen || '—'],
-							['Company confidence', session.company_confidence || 'unknown'],
-						].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+						createElement('h3', { style: { marginTop: 0 } }, __('Matched calls', 'adaptive-customer-engagement')),
+						createElement(CallsTable, {
+							items: calls,
+							onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
+							onNumberView: (id) => navigateToAdminPage('numbers', { ace_number: id }),
+							onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+							onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+						})
 					)
-				)
-			)
-		),
-		createElement(DetailBreakdownList, {
-			title: __('Score factors', 'adaptive-customer-engagement'),
-			items: session.score_breakdown || [],
-		}),
-		createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Matched calls', 'adaptive-customer-engagement')),
-				createElement(CallsTable, {
-					items: calls,
-					onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
-					onNumberView: (id) => navigateToAdminPage('numbers', { ace_number: id }),
-					onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
-					onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
-				})
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Frontend assistant chats', 'adaptive-customer-engagement')),
-				createElement(ChatsTable, {
-					items: chats,
-					onView: (id) => navigateToAdminPage('chats', { ace_chat: id }),
-					onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
-					onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
-				})
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Timeline', 'adaptive-customer-engagement')),
+				),
 				createElement(
-					'table',
-					{ className: 'widefat striped' },
+					Card,
+					null,
 					createElement(
-						'thead',
+						CardBody,
 						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Frontend assistant chats', 'adaptive-customer-engagement')),
+						createElement(ChatsTable, {
+							items: chats,
+							onView: (id) => navigateToAdminPage('chats', { ace_chat: id }),
+							onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+							onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+						})
+					)
+				),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Timeline', 'adaptive-customer-engagement')),
 						createElement(
-							'tr',
-							null,
-							['When', 'Type', 'Name', 'Path', 'Metadata'].map((label) => createElement('th', { key: label }, __(label, 'adaptive-customer-engagement')))
-						)
-					),
-					createElement(
-						'tbody',
-						null,
-						events.map((item) =>
+							'table',
+							{ className: 'widefat striped' },
 							createElement(
-								'tr',
-								{ key: item.id },
-								createElement('td', null, item.occurred_at),
-								createElement('td', null, item.event_type),
-								createElement('td', null, item.event_name || '—'),
-								createElement('td', null, item.path || '—'),
-								createElement('td', null, Object.entries(item.metadata || {}).map(([key, value]) => `${key}: ${value}`).join(', ') || '—')
+								'thead',
+								null,
+								createElement(
+									'tr',
+									null,
+									['When', 'Type', 'Name', 'Path', 'Metadata'].map((label) => createElement('th', { key: label }, __(label, 'adaptive-customer-engagement')))
+								)
+							),
+							createElement(
+								'tbody',
+								null,
+								events.map((item) =>
+									createElement(
+										'tr',
+										{ key: item.id },
+										createElement('td', null, item.occurred_at),
+										createElement('td', null, item.event_type),
+										createElement('td', null, item.event_name || '—'),
+										createElement('td', null, item.path || '—'),
+										createElement('td', null, Object.entries(item.metadata || {}).map(([key, value]) => `${key}: ${value}`).join(', ') || '—')
+									)
+								)
 							)
 						)
 					)
 				)
+			),
+			createElement(
+				'aside',
+				{ className: 'ace-admin-record__sidebar' },
+				createElement(DetailHeader, {
+					eyebrow: __('Session detail', 'adaptive-customer-engagement'),
+					title: session.session_uuid || __('Session', 'adaptive-customer-engagement'),
+					description: session.score_summary || __('Review the activity sequence, score signals, and buying-intent context for this visit.', 'adaptive-customer-engagement'),
+					meta: [
+						{ label: __('Score', 'adaptive-customer-engagement'), value: `${session.score || 0} (${session.score_label || 'noise'})` },
+						{ label: __('Company', 'adaptive-customer-engagement'), value: session.company_name || '—' },
+						{ label: __('Source', 'adaptive-customer-engagement'), value: session.utm_source || __('Direct / none', 'adaptive-customer-engagement') },
+						{ label: __('Last seen', 'adaptive-customer-engagement'), value: session.last_seen || '—' },
+					],
+				}),
+				createElement(DetailMetricGrid, { items: detailMetrics }),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Session facts', 'adaptive-customer-engagement')),
+						createElement(
+							'table',
+							{ className: 'widefat striped', style: { marginBottom: 0 } },
+							createElement(
+								'tbody',
+								null,
+								[
+									['Landing page', session.landing_path || '—'],
+									['Referrer', session.referrer || '—'],
+									['Source', session.utm_source || '—'],
+									['Campaign', session.utm_campaign || '—'],
+									['Company', session.company_name || '—'],
+									['Company domain', session.company_domain || '—'],
+									['First seen', session.first_seen || '—'],
+									['Last seen', session.last_seen || '—'],
+									['Company confidence', session.company_confidence || 'unknown'],
+								].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+							)
+						)
+					)
+				),
+				createElement(DetailBreakdownList, {
+					title: __('Score factors', 'adaptive-customer-engagement'),
+					items: session.score_breakdown || [],
+				})
 			)
 		)
 	);
@@ -2979,129 +3016,141 @@ function CompanyDetailPanel({ detail, onClose }) {
 
 	return createElement(
 		'div',
-		{ className: 'ace-admin-detail' },
-		createElement(DetailHeader, {
-			eyebrow: __('Company detail', 'adaptive-customer-engagement'),
-			title: detail.name || __('Company', 'adaptive-customer-engagement'),
-			description: detail.priority_summary || __('Review the recent sessions, score signals, and commercial context for this company record.', 'adaptive-customer-engagement'),
-			meta: [
-				{ label: __('Domain', 'adaptive-customer-engagement'), value: detail.domain || '—' },
-				{ label: __('Type', 'adaptive-customer-engagement'), value: detail.type || '—' },
-				{ label: __('Provider', 'adaptive-customer-engagement'), value: detail.source_provider || '—' },
-				{ label: __('Last seen', 'adaptive-customer-engagement'), value: detail.last_seen || '—' },
-			],
-			onClose,
-		}),
-		createElement(DetailMetricGrid, { items: detailMetrics }),
+		{ className: 'ace-admin-record' },
+		createElement(DetailBackButton, { label: __('Back to companies', 'adaptive-customer-engagement'), onClick: onClose }),
 		createElement(
 			'div',
-			{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
-			createElement(DashboardBarChartCard, {
-				title: __('Traffic sources', 'adaptive-customer-engagement'),
-				items: sourceMix,
-				targetPage: 'sessions',
-				emptyMessage: __('No source data is available for this company yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardPieChartCard, {
-				title: __('Session score mix', 'adaptive-customer-engagement'),
-				items: scoreMix,
-				emptyMessage: __('No scored sessions are available for this company yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardTimelineCard, {
-				title: __('Recent session activity', 'adaptive-customer-engagement'),
-				items: activityTimeline,
-				emptyMessage: __('No recent activity is available for this company yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardBarChartCard, {
-				title: __('Priority breakdown', 'adaptive-customer-engagement'),
-				items: priorityBreakdownChart,
-				emptyMessage: __('No priority breakdown is available for this company yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardPieChartCard, {
-				title: __('Recent call status mix', 'adaptive-customer-engagement'),
-				items: callStatusMix,
-				valueLabel: __('calls', 'adaptive-customer-engagement'),
-				emptyMessage: __('No recent matched calls are available for this company yet.', 'adaptive-customer-engagement'),
-			})
-		),
-		createElement(
-			Card,
-			null,
+			{ className: 'ace-admin-record__layout' },
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Company facts', 'adaptive-customer-engagement')),
+				'div',
+				{ className: 'ace-admin-record__main' },
 				createElement(
-					'table',
-					{ className: 'widefat striped', style: { marginBottom: 0 } },
+					'div',
+					{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
+					createElement(DashboardBarChartCard, {
+						title: __('Traffic sources', 'adaptive-customer-engagement'),
+						items: sourceMix,
+						targetPage: 'sessions',
+						emptyMessage: __('No source data is available for this company yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardPieChartCard, {
+						title: __('Session score mix', 'adaptive-customer-engagement'),
+						items: scoreMix,
+						emptyMessage: __('No scored sessions are available for this company yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardTimelineCard, {
+						title: __('Recent session activity', 'adaptive-customer-engagement'),
+						items: activityTimeline,
+						emptyMessage: __('No recent activity is available for this company yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardBarChartCard, {
+						title: __('Priority breakdown', 'adaptive-customer-engagement'),
+						items: priorityBreakdownChart,
+						emptyMessage: __('No priority breakdown is available for this company yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardPieChartCard, {
+						title: __('Recent call status mix', 'adaptive-customer-engagement'),
+						items: callStatusMix,
+						valueLabel: __('calls', 'adaptive-customer-engagement'),
+						emptyMessage: __('No recent matched calls are available for this company yet.', 'adaptive-customer-engagement'),
+					})
+				),
+				createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
+				createElement(
+					Card,
+					null,
 					createElement(
-						'tbody',
+						CardBody,
 						null,
-						[
-							['Company', detail.name || '—'],
-							['Domain', detail.domain || '—'],
-							['Type', detail.type || '—'],
-							['Confidence', detail.confidence || 'unknown'],
-							['Provider', detail.source_provider || '—'],
-							['Priority', `${detail.priority_score || 0} (${detail.priority_label || 'noise'})`],
-							['Why it scored', detail.priority_summary || '—'],
-							['Country', detail.country_code || '—'],
-							['Sessions', detail.total_sessions || 0],
-							['Events', detail.total_events || 0],
-							['Calls', detail.total_calls || 0],
-							['First seen', detail.first_seen || '—'],
-							['Last seen', detail.last_seen || '—'],
-						].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+						createElement('h3', { style: { marginTop: 0 } }, __('Recent matched calls', 'adaptive-customer-engagement')),
+						createElement(CallsTable, {
+							items: recentCalls,
+							onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
+							onNumberView: (id) => navigateToAdminPage('numbers', { ace_number: id }),
+							onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+							onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+						})
+					)
+				),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Frontend assistant chats', 'adaptive-customer-engagement')),
+						createElement(ChatsTable, {
+							items: recentChats,
+							onView: (id) => navigateToAdminPage('chats', { ace_chat: id }),
+							onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+							onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+						})
+					)
+				),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Recent sessions', 'adaptive-customer-engagement')),
+						createElement(SessionsTable, {
+							items: sessions,
+							onView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+						})
 					)
 				)
-			)
-		),
-		createElement(DetailBreakdownList, {
-			title: __('Priority factors', 'adaptive-customer-engagement'),
-			items: detail.priority_breakdown || [],
-		}),
-		createElement(InterestSummaryPanel, { title: __('WooCommerce interest', 'adaptive-customer-engagement'), commerce: detail?.commerce }),
-		createElement(
-			Card,
-			null,
+			),
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Recent matched calls', 'adaptive-customer-engagement')),
-				createElement(CallsTable, {
-					items: recentCalls,
-					onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
-					onNumberView: (id) => navigateToAdminPage('numbers', { ace_number: id }),
-					onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
-					onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
-				})
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Frontend assistant chats', 'adaptive-customer-engagement')),
-				createElement(ChatsTable, {
-					items: recentChats,
-					onView: (id) => navigateToAdminPage('chats', { ace_chat: id }),
-					onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
-					onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
-				})
-			)
-		),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Recent sessions', 'adaptive-customer-engagement')),
-				createElement(SessionsTable, {
-					items: sessions,
-					onView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+				'aside',
+				{ className: 'ace-admin-record__sidebar' },
+				createElement(DetailHeader, {
+					eyebrow: __('Company detail', 'adaptive-customer-engagement'),
+					title: detail.name || __('Company', 'adaptive-customer-engagement'),
+					description: detail.priority_summary || __('Review the recent sessions, score signals, and commercial context for this company record.', 'adaptive-customer-engagement'),
+					meta: [
+						{ label: __('Domain', 'adaptive-customer-engagement'), value: detail.domain || '—' },
+						{ label: __('Type', 'adaptive-customer-engagement'), value: detail.type || '—' },
+						{ label: __('Provider', 'adaptive-customer-engagement'), value: detail.source_provider || '—' },
+						{ label: __('Last seen', 'adaptive-customer-engagement'), value: detail.last_seen || '—' },
+					],
+				}),
+				createElement(DetailMetricGrid, { items: detailMetrics }),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Company facts', 'adaptive-customer-engagement')),
+						createElement(
+							'table',
+							{ className: 'widefat striped', style: { marginBottom: 0 } },
+							createElement(
+								'tbody',
+								null,
+								[
+									['Company', detail.name || '—'],
+									['Domain', detail.domain || '—'],
+									['Type', detail.type || '—'],
+									['Confidence', detail.confidence || 'unknown'],
+									['Provider', detail.source_provider || '—'],
+									['Priority', `${detail.priority_score || 0} (${detail.priority_label || 'noise'})`],
+									['Why it scored', detail.priority_summary || '—'],
+									['Country', detail.country_code || '—'],
+									['Sessions', detail.total_sessions || 0],
+									['Events', detail.total_events || 0],
+									['Calls', detail.total_calls || 0],
+									['First seen', detail.first_seen || '—'],
+									['Last seen', detail.last_seen || '—'],
+								].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+							)
+						)
+					)
+				),
+				createElement(DetailBreakdownList, {
+					title: __('Priority factors', 'adaptive-customer-engagement'),
+					items: detail.priority_breakdown || [],
 				})
 			)
 		)
@@ -3238,114 +3287,126 @@ function CallDetailPanel({ detail, onClose }) {
 
 	return createElement(
 		'div',
-		{ className: 'ace-admin-detail' },
-		createElement(DetailHeader, {
-			eyebrow: __('Call detail', 'adaptive-customer-engagement'),
-			title: call.started_at || __('Stored call', 'adaptive-customer-engagement'),
-			description: call.company_name
-				? `${__('Review the routing, matching, and surrounding number activity for the call associated with', 'adaptive-customer-engagement')} ${call.company_name}.`
-				: __('Review the routing, matching, and surrounding number activity for this stored call.', 'adaptive-customer-engagement'),
-			meta: [
-				{ label: __('Tracking number', 'adaptive-customer-engagement'), value: call.number_label || call.tracking_display_number || '—' },
-				{ label: __('Company', 'adaptive-customer-engagement'), value: call.company_name || '—' },
-				{ label: __('Session', 'adaptive-customer-engagement'), value: call.session_uuid || '—' },
-				{ label: __('Started', 'adaptive-customer-engagement'), value: call.started_at || '—' },
-			],
-			onClose,
-		}),
-		createElement(DetailMetricGrid, { items: detailMetrics }),
-		createElement(
-			Card,
-			null,
-			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Linked records', 'adaptive-customer-engagement')),
-				createElement(
-					'div',
-					{ style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-					call.number_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('numbers', { ace_number: call.number_id }) }, __('View tracking number', 'adaptive-customer-engagement')) : null,
-					call.matched_session_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('sessions', { ace_session: call.matched_session_id }) }, __('View matched session', 'adaptive-customer-engagement')) : null,
-					call.matched_company_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('companies', { ace_company: call.matched_company_id }) }, __('View matched company', 'adaptive-customer-engagement')) : null
-				)
-			)
-		),
+		{ className: 'ace-admin-record' },
+		createElement(DetailBackButton, { label: __('Back to calls', 'adaptive-customer-engagement'), onClick: onClose }),
 		createElement(
 			'div',
-			{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
-			createElement(DashboardPieChartCard, {
-				title: __('Number call status mix', 'adaptive-customer-engagement'),
-				items: statusMix,
-				valueLabel: __('calls', 'adaptive-customer-engagement'),
-				emptyMessage: __('No number activity is available for this call yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardBarChartCard, {
-				title: __('Companies reached on this number', 'adaptive-customer-engagement'),
-				items: companyMix,
-				emptyMessage: __('No company matches are available for this number yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardTimelineCard, {
-				title: __('Recent call activity on this number', 'adaptive-customer-engagement'),
-				items: activityTimeline,
-				emptyMessage: __('No number activity is available for this call yet.', 'adaptive-customer-engagement'),
-			}),
-			createElement(DashboardPieChartCard, {
-				title: __('Matched session event mix', 'adaptive-customer-engagement'),
-				items: matchedSessionMix,
-				valueLabel: __('events', 'adaptive-customer-engagement'),
-				emptyMessage: __('No matched session activity is available for this call yet.', 'adaptive-customer-engagement'),
-			})
-		),
-		createElement(
-			Card,
-			null,
+			{ className: 'ace-admin-record__layout' },
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Call facts', 'adaptive-customer-engagement')),
+				'div',
+				{ className: 'ace-admin-record__main' },
 				createElement(
-					'table',
-					{ className: 'widefat striped', style: { marginBottom: 0 } },
+					Card,
+					null,
 					createElement(
-						'tbody',
+						CardBody,
 						null,
-						[
-							['Call UUID', call.call_uuid || '—'],
-							['Amazon contact ID', call.amazon_contact_id || '—'],
-							['Source', call.is_connect_import ? __('Amazon Connect import', 'adaptive-customer-engagement') : __('Local record', 'adaptive-customer-engagement')],
-							['Import object', call.connect_import_s3_key || '—'],
-							['Import channel', call.connect_import_channel || '—'],
-							['Called number', call.called_number || '—'],
-							['Tracking display number', call.tracking_display_number || '—'],
-							['Tracking E.164', call.tracking_e164_number || '—'],
-							['Status', call.status || '—'],
-							['Duration', formatDuration(call.duration_seconds)],
-							['Queue', call.queue_name || '—'],
-							['Agent', call.agent_name || '—'],
-							['Match confidence', call.match_confidence || 'unknown'],
-							['Source type', call.number_source_type || '—'],
-							['Page rule', call.page_match_value || '—'],
-							['Campaign rule', call.campaign_match || '—'],
-							['Started', call.started_at || '—'],
-							['Ended', call.ended_at || '—'],
-						].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+						createElement('h3', { style: { marginTop: 0 } }, __('Linked records', 'adaptive-customer-engagement')),
+						createElement(
+							'div',
+							{ style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+							call.number_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('numbers', { ace_number: call.number_id }) }, __('View tracking number', 'adaptive-customer-engagement')) : null,
+							call.matched_session_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('sessions', { ace_session: call.matched_session_id }) }, __('View matched session', 'adaptive-customer-engagement')) : null,
+							call.matched_company_id ? createElement(Button, { variant: 'secondary', onClick: () => navigateToAdminPage('companies', { ace_company: call.matched_company_id }) }, __('View matched company', 'adaptive-customer-engagement')) : null
+						)
+					)
+				),
+				createElement(
+					'div',
+					{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
+					createElement(DashboardPieChartCard, {
+						title: __('Number call status mix', 'adaptive-customer-engagement'),
+						items: statusMix,
+						valueLabel: __('calls', 'adaptive-customer-engagement'),
+						emptyMessage: __('No number activity is available for this call yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardBarChartCard, {
+						title: __('Companies reached on this number', 'adaptive-customer-engagement'),
+						items: companyMix,
+						emptyMessage: __('No company matches are available for this number yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardTimelineCard, {
+						title: __('Recent call activity on this number', 'adaptive-customer-engagement'),
+						items: activityTimeline,
+						emptyMessage: __('No number activity is available for this call yet.', 'adaptive-customer-engagement'),
+					}),
+					createElement(DashboardPieChartCard, {
+						title: __('Matched session event mix', 'adaptive-customer-engagement'),
+						items: matchedSessionMix,
+						valueLabel: __('events', 'adaptive-customer-engagement'),
+						emptyMessage: __('No matched session activity is available for this call yet.', 'adaptive-customer-engagement'),
+					})
+				),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Recent calls on this number', 'adaptive-customer-engagement')),
+						createElement(CallsTable, {
+							items: numberCalls,
+							onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
+							onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+							onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+						})
 					)
 				)
-			)
-		),
-		createElement(
-			Card,
-			null,
+			),
 			createElement(
-				CardBody,
-				null,
-				createElement('h3', { style: { marginTop: 0 } }, __('Recent calls on this number', 'adaptive-customer-engagement')),
-				createElement(CallsTable, {
-					items: numberCalls,
-					onView: (id) => navigateToAdminPage('calls', { ace_call: id }),
-					onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
-					onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
-				})
+				'aside',
+				{ className: 'ace-admin-record__sidebar' },
+				createElement(DetailHeader, {
+					eyebrow: __('Call detail', 'adaptive-customer-engagement'),
+					title: call.started_at || __('Stored call', 'adaptive-customer-engagement'),
+					description: call.company_name
+						? `${__('Review the routing, matching, and surrounding number activity for the call associated with', 'adaptive-customer-engagement')} ${call.company_name}.`
+						: __('Review the routing, matching, and surrounding number activity for this stored call.', 'adaptive-customer-engagement'),
+					meta: [
+						{ label: __('Tracking number', 'adaptive-customer-engagement'), value: call.number_label || call.tracking_display_number || '—' },
+						{ label: __('Company', 'adaptive-customer-engagement'), value: call.company_name || '—' },
+						{ label: __('Session', 'adaptive-customer-engagement'), value: call.session_uuid || '—' },
+						{ label: __('Started', 'adaptive-customer-engagement'), value: call.started_at || '—' },
+					],
+				}),
+				createElement(DetailMetricGrid, { items: detailMetrics }),
+				createElement(
+					Card,
+					null,
+					createElement(
+						CardBody,
+						null,
+						createElement('h3', { style: { marginTop: 0 } }, __('Call facts', 'adaptive-customer-engagement')),
+						createElement(
+							'table',
+							{ className: 'widefat striped', style: { marginBottom: 0 } },
+							createElement(
+								'tbody',
+								null,
+								[
+									['Call UUID', call.call_uuid || '—'],
+									['Amazon contact ID', call.amazon_contact_id || '—'],
+									['Source', call.is_connect_import ? __('Amazon Connect import', 'adaptive-customer-engagement') : __('Local record', 'adaptive-customer-engagement')],
+									['Import object', call.connect_import_s3_key || '—'],
+									['Import channel', call.connect_import_channel || '—'],
+									['Called number', call.called_number || '—'],
+									['Tracking display number', call.tracking_display_number || '—'],
+									['Tracking E.164', call.tracking_e164_number || '—'],
+									['Status', call.status || '—'],
+									['Duration', formatDuration(call.duration_seconds)],
+									['Queue', call.queue_name || '—'],
+									['Agent', call.agent_name || '—'],
+									['Match confidence', call.match_confidence || 'unknown'],
+									['Source type', call.number_source_type || '—'],
+									['Page rule', call.page_match_value || '—'],
+									['Campaign rule', call.campaign_match || '—'],
+									['Started', call.started_at || '—'],
+									['Ended', call.ended_at || '—'],
+								].map(([label, value]) => createElement('tr', { key: label }, createElement('th', null, __(label, 'adaptive-customer-engagement')), createElement('td', null, value)))
+							)
+						)
+					)
+				)
 			)
 		)
 	);
@@ -5964,7 +6025,12 @@ function App() {
 	}, []);
 
 	const screenOrder = ['dashboard', 'sessions', 'companies', 'commerce', 'calls', 'chats', 'numbers', 'settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent', 'import-export'];
-	const hideHero = page === 'chats' && !!route?.params?.get('ace_chat');
+	const hideHero = (
+		(page === 'chats' && !!route?.params?.get('ace_chat'))
+		|| (page === 'sessions' && !!route?.params?.get('ace_session'))
+		|| (page === 'calls' && !!route?.params?.get('ace_call'))
+		|| (page === 'companies' && !!route?.params?.get('ace_company'))
+	);
 	const screenMap = {
 		dashboard: createElement(DashboardView, { active: page === 'dashboard' }),
 		sessions: createElement(SessionsView, { active: page === 'sessions', route }),
