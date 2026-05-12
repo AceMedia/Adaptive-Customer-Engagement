@@ -12,6 +12,9 @@ use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 defined( 'ABSPATH' ) || exit;
 
 final class Menu {
+	private const TOP_LEVEL_SLUG = 'adaptive-customer-engagement-dashboard';
+	private const PAGE_SLUG_PREFIX = 'adaptive-customer-engagement-';
+
 	/**
 	 * Registered page hooks.
 	 *
@@ -50,7 +53,7 @@ final class Menu {
 			'settings'       => __( 'Settings', 'adaptive-customer-engagement' ),
 		);
 
-		$top_slug                = 'ace-dashboard';
+		$top_slug                = self::TOP_LEVEL_SLUG;
 		$this->hooks['dashboard'] = add_menu_page(
 			__( 'Adaptive Engagement', 'adaptive-customer-engagement' ),
 			__( 'Adaptive Engagement', 'adaptive-customer-engagement' ),
@@ -64,7 +67,7 @@ final class Menu {
 		);
 
 		foreach ( $pages as $page => $label ) {
-			$slug                 = 'dashboard' === $page ? $top_slug : 'ace-' . $page;
+			$slug                 = 'dashboard' === $page ? $top_slug : self::PAGE_SLUG_PREFIX . $page;
 			$this->hooks[ $page ] = add_submenu_page(
 				$top_slug,
 				$label,
@@ -113,7 +116,7 @@ final class Menu {
 					'exportNonce'  => wp_create_nonce( 'ace_export_report' ),
 					'adminUrl'     => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php' ) ) ),
 					'adminPostUrl' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin-post.php' ) ) ),
-					'page'         => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
+					'page'         => sanitize_key( (string) str_replace( self::PAGE_SLUG_PREFIX, '', $_GET['page'] ?? self::TOP_LEVEL_SLUG ) ),
 					'logoUrl'      => esc_url_raw( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
 					'siteIconUrl'  => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
 				)
@@ -190,7 +193,7 @@ final class Menu {
 	 */
 	private function render_page( string $page ): void {
 		if ( 'dashboard' !== $page ) {
-			wp_safe_redirect( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) ) );
+			wp_safe_redirect( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=' . self::TOP_LEVEL_SLUG . '#' . rawurlencode( $page ) ) ) );
 			exit;
 		}
 

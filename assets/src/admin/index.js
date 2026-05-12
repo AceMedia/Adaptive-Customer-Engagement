@@ -9,6 +9,8 @@ import { render } from '@wordpress/element';
 import './style.scss';
 
 const config = window.ACEAdminConfig || {};
+const ADMIN_PAGE_PREFIX = 'adaptive-customer-engagement-';
+const ADMIN_DASHBOARD_SLUG = `${ADMIN_PAGE_PREFIX}dashboard`;
 const SESSION_FILTER_DEFAULTS = {
 	search: '',
 	confidence: '',
@@ -261,7 +263,7 @@ function getAdminPageUrl(page, params = {}) {
 	const url = new URL(base, window.location.origin);
 	const hashParams = new URLSearchParams();
 
-	url.searchParams.set('page', 'ace-dashboard');
+	url.searchParams.set('page', ADMIN_DASHBOARD_SLUG);
 
 	Object.entries(params).forEach(([key, value]) => {
 		if (value !== undefined && value !== null && value !== '') {
@@ -285,7 +287,7 @@ function navigateToAdminPage(page, params = {}, options = {}) {
 function getAceSectionFromUrl(urlValue) {
 	try {
 		const url = new URL(urlValue, window.location.origin);
-		const page = (url.searchParams.get('page') || '').replace(/^ace-/, '');
+		const page = (url.searchParams.get('page') || '').replace(new RegExp(`^${ADMIN_PAGE_PREFIX}`), '');
 		const hashSection = (url.hash || '').replace(/^#/, '').split('?')[0];
 
 		if (hashSection && PAGE_META[hashSection]) {
@@ -303,8 +305,8 @@ function getAceSectionFromUrl(urlValue) {
 }
 
 function syncWpAdminSidebar(page) {
-	const pluginLinks = document.querySelectorAll('#adminmenu a[href*="page=ace-"]');
-	const topLevel = document.querySelector('#adminmenu .toplevel_page_ace-dashboard');
+	const pluginLinks = document.querySelectorAll(`#adminmenu a[href*="page=${ADMIN_PAGE_PREFIX}"]`);
+	const topLevel = document.querySelector(`#adminmenu .toplevel_page_${ADMIN_DASHBOARD_SLUG}`);
 	const topLevelLink = topLevel ? topLevel.querySelector('a.menu-top') : null;
 
 	pluginLinks.forEach((link) => {
@@ -5992,7 +5994,7 @@ function App() {
 		}
 
 		const handleClick = (event) => {
-			const link = event.target.closest('a[href*="page=ace-"]');
+			const link = event.target.closest(`a[href*="page=${ADMIN_PAGE_PREFIX}"]`);
 
 			if (!link) {
 				return;
