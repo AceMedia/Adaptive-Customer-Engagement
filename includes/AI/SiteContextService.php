@@ -1075,11 +1075,16 @@ final class SiteContextService {
 	 * @return array<string, mixed>
 	 */
 	private function answer_shipping_question( string $question, int $limit, array $context = array() ): array {
-		if ( ! $this->is_shipping_question( $question ) || ! class_exists( 'WC_Shipping_Zones' ) ) {
+		if ( ! class_exists( 'WC_Shipping_Zones' ) ) {
 			return array();
 		}
 
-		$context_text      = $this->build_shipping_context_text( $context );
+		$context_text = $this->build_shipping_context_text( $context );
+
+		if ( ! $this->should_answer_shipping_question( $question, $context_text ) ) {
+			return array();
+		}
+
 		$product_query     = $this->extract_product_query_from_shipping_question( $question );
 
 		if ( $this->is_thin_shipping_product_query( $product_query ) && '' !== $context_text ) {
@@ -1439,6 +1444,52 @@ final class SiteContextService {
 	private function is_shipping_question( string $question ): bool {
 		return (bool) preg_match(
 			'/\b(ship|shipping|delivery|deliver|delivers|delivered|postage|courier|freight|postcode|post code|shipping cost|delivery cost|estimate shipping|delivery charge)\b/i',
+			$question
+		);
+	}
+
+	/**
+	 * Decide whether the current message should stay in the deterministic shipping path.
+	 *
+	 * @param string $question     Latest visitor message.
+	 * @param string $context_text Recent user-message context.
+	 * @return bool
+	 */
+	private function should_answer_shipping_question( string $question, string $context_text = '' ): bool {
+		if ( $this->is_shipping_question( $question ) ) {
+			return true;
+		}
+
+		if ( '' === $context_text || ! $this->is_shipping_question( $context_text ) ) {
+			return false;
+		}
+
+		return $this->is_shipping_follow_up_message( $question );
+	}
+
+	/**
+	 * Detect destination/product/quantity follow-ups that belong to a preceding shipping question.
+	 *
+	 * @param string $question Latest visitor message.
+	 * @return bool
+	 */
+	private function is_shipping_follow_up_message( string $question ): bool {
+		$destination = $this->extract_shipping_destination( $question );
+
+		if ( 'unknown' !== sanitize_key( (string) ( $destination['type'] ?? '' ) ) ) {
+			return true;
+		}
+
+		if ( $this->extract_shipping_quantity( $question ) > 0 ) {
+			return true;
+		}
+
+		if ( $this->is_current_cart_shipping_question( $question ) ) {
+			return true;
+		}
+
+		return (bool) preg_match(
+			'/\b(bin|bins|container|containers|wheelie|continental|lid|lids|product|products|quote|quotes|cost|price|pricing)\b/i',
 			$question
 		);
 	}
