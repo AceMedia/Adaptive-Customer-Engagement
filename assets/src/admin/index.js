@@ -1,4 +1,3 @@
-import apiFetch from '@wordpress/api-fetch';
 import { Button, Card, CardBody, CheckboxControl, Notice, SelectControl, Spinner, TextControl, TextareaControl, ToggleControl } from '@wordpress/components';
 import { createElement, Fragment, useEffect, useMemo, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
@@ -165,14 +164,82 @@ const PAGE_META = {
 	},
 };
 
-function request(route, options = {}) {
-	return apiFetch({
-		url: `${config.root}${config.namespace}${route}`,
-		headers: {
-			'X-WP-Nonce': config.nonce,
-		},
-		...options,
+function tryParseJson(text) {
+	try {
+		return JSON.parse(text);
+	} catch (error) {
+		return null;
+	}
+}
+
+function extractJsonPayload(rawText) {
+	const text = String(rawText || '').trim();
+
+	if (!text) {
+		return null;
+	}
+
+	const starts = [0, text.indexOf('{'), text.indexOf('[')]
+		.filter((index, position, values) => index >= 0 && values.indexOf(index) === position)
+		.sort((left, right) => left - right);
+
+	for (const start of starts) {
+		const candidate = text.slice(start).trim();
+		const direct = tryParseJson(candidate);
+
+		if (direct !== null) {
+			return direct;
+		}
+
+		const closingChar = candidate.startsWith('[') ? ']' : '}';
+		const end = candidate.lastIndexOf(closingChar);
+
+		if (end > 0) {
+			const bounded = tryParseJson(candidate.slice(0, end + 1));
+
+			if (bounded !== null) {
+				return bounded;
+			}
+		}
+	}
+
+	return null;
+}
+
+async function request(route, options = {}) {
+	const { data, headers = {}, method = 'GET', body, ...rest } = options;
+	const requestHeaders = {
+		'X-WP-Nonce': config.nonce,
+		...headers,
+	};
+
+	if (data !== undefined && !requestHeaders['Content-Type']) {
+		requestHeaders['Content-Type'] = 'application/json';
+	}
+
+	const response = await window.fetch(`${config.root}${config.namespace}${route}`, {
+		method,
+		credentials: 'same-origin',
+		headers: requestHeaders,
+		body: body !== undefined ? body : (data !== undefined ? JSON.stringify(data) : undefined),
+		...rest,
 	});
+	const payload = extractJsonPayload(await response.text());
+
+	if (!response.ok) {
+		const error = new Error(getApiErrorMessage(payload || {}, __('The request could not be completed.', 'adaptive-customer-engagement')));
+		error.status = response.status;
+		error.data = payload;
+		throw error;
+	}
+
+	if (payload === null) {
+		const error = new Error(__('The server returned an unreadable response.', 'adaptive-customer-engagement'));
+		error.status = response.status;
+		throw error;
+	}
+
+	return payload;
 }
 
 function withQuery(route, params = {}) {

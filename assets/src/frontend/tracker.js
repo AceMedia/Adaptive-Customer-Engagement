@@ -40,6 +40,74 @@ function getUtm() {
 	};
 }
 
+function tryParseJson(text) {
+	try {
+		return JSON.parse(text);
+	} catch (error) {
+		return null;
+	}
+}
+
+function extractJsonPayload(rawText) {
+	const text = String(rawText || '').trim();
+
+	if (!text) {
+		return null;
+	}
+
+	const starts = [0, text.indexOf('{'), text.indexOf('[')]
+		.filter((index, position, values) => index >= 0 && values.indexOf(index) === position)
+		.sort((left, right) => left - right);
+
+	for (const start of starts) {
+		const candidate = text.slice(start).trim();
+		const direct = tryParseJson(candidate);
+
+		if (direct !== null) {
+			return direct;
+		}
+
+		const closingChar = candidate.startsWith('[') ? ']' : '}';
+		const end = candidate.lastIndexOf(closingChar);
+
+		if (end > 0) {
+			const bounded = tryParseJson(candidate.slice(0, end + 1));
+
+			if (bounded !== null) {
+				return bounded;
+			}
+		}
+	}
+
+	return null;
+}
+
+function buildApiError(payload, fallbackMessage, status = 0) {
+	const error = new Error(String(payload?.message || fallbackMessage || 'The request could not be completed.'));
+	error.status = status;
+	error.data = payload;
+	return error;
+}
+
+async function readJsonResponse(response, fallbackMessage) {
+	const payload = extractJsonPayload(await response.text());
+
+	if (!response.ok) {
+		throw buildApiError(payload, fallbackMessage, response.status);
+	}
+
+	if (payload === null) {
+		throw buildApiError(null, fallbackMessage || 'The server returned an unreadable response.', response.status);
+	}
+
+	return payload;
+}
+
+async function fetchJson(url, options = {}, fallbackMessage = '') {
+	const response = await fetch(url, options);
+	return readJsonResponse(response, fallbackMessage);
+}
+
 async function sendTrackingEvent(payload) {
 	const endpoint = `${config.root}${config.namespace}/track`;
 	const body = JSON.stringify(payload);
@@ -251,10 +319,9 @@ async function resolvePhoneNumber() {
 	});
 
 	try {
-		const response = await fetch(`${config.root}${config.namespace}/number/resolve?${params.toString()}`, {
+		const number = await fetchJson(`${config.root}${config.namespace}/number/resolve?${params.toString()}`, {
 			credentials: 'same-origin',
-		});
-		const number = await response.json();
+		}, 'The phone number could not be loaded just now.');
 
 		if (!number?.e164_number) {
 			return;
@@ -868,17 +935,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			headers['X-WP-Nonce'] = chatConfig.restNonce;
 		}
 
-		const response = await fetch(chatConfig.availabilityEndpoint || `${config.root}${config.namespace}/ai/chat/availability`, {
+		const data = await fetchJson(chatConfig.availabilityEndpoint || `${config.root}${config.namespace}/ai/chat/availability`, {
 			method: 'GET',
 			credentials: 'same-origin',
 			headers,
-		});
-
-		if (!response.ok) {
-			return;
-		}
-
-		const data = await response.json();
+		}, 'Live chat availability could not be loaded just now.');
 		state.availabilityOnline = !!data?.online;
 		state.availabilityWatcherCount = Number(data?.watcher_count || 0);
 		updateChatMeta();
@@ -1527,18 +1588,22 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			session_uuid: sessionUuid || '',
 			visitor_uuid: visitorUuid || '',
 		});
-		const response = await fetch(`${chatConfig.syncEndpoint || `${config.root}${config.namespace}/ai/chat/conversation`}?${params.toString()}`, {
-			method: 'GET',
-			credentials: 'same-origin',
-			headers,
-		});
-
-		if (!response.ok) {
-			return;
+		try {
+			const snapshot = await fetchJson(`${chatConfig.syncEndpoint || `${config.root}${config.namespace}/ai/chat/conversation`}?${params.toString()}`, {
+				method: 'GET',
+				credentials: 'same-origin',
+				headers,
+			}, 'The chat conversation could not be loaded.');
+			applyConversationSnapshot(snapshot);
+			renderMessages({ focusLatest: true });
+		} catch (error) {
+			if (Number(error?.status || 0) === 404) {
+				queueTypingState(false, { force: true });
+				stopSync();
+				resetConversationState({ keepOpen: state.open });
+				persistChatState();
+			}
 		}
-
-		applyConversationSnapshot(await response.json());
-		renderMessages({ focusLatest: true });
 	};
 
 	const stopSync = () => {
@@ -1568,7 +1633,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			headers['X-WP-Nonce'] = chatConfig.restNonce;
 		}
 
-		const response = await fetch(chatConfig.typingEndpoint || `${config.root}${config.namespace}/ai/chat/typing`, {
+		const data = await fetchJson(chatConfig.typingEndpoint || `${config.root}${config.namespace}/ai/chat/typing`, {
 			method: 'POST',
 			credentials: 'same-origin',
 			headers,
@@ -1578,13 +1643,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				visitor_uuid: visitorUuid || '',
 				is_typing: !!isTyping,
 			}),
-		});
-
-		if (!response.ok) {
-			return;
-		}
-
-		const data = await response.json();
+		}, 'The typing state could not be updated just now.');
 		state.typing = (data?.typing && typeof data.typing === 'object') ? data.typing : (state.typing || {});
 		typingSentState = !!isTyping;
 		typingLastSentAt = Date.now();
@@ -1754,7 +1813,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				headers['X-WP-Nonce'] = chatConfig.restNonce;
 			}
 
-			const response = await fetch(chatConfig.endpoint || `${config.root}${config.namespace}/ai/chat/respond`, {
+			const data = await fetchJson(chatConfig.endpoint || `${config.root}${config.namespace}/ai/chat/respond`, {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers,
@@ -1767,12 +1826,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					page_url: window.location.href,
 					page_title: document.title || '',
 				}),
-			});
-			const data = await response.json();
-
-			if (!response.ok) {
-				throw new Error(data?.message || 'The site assistant could not reply just now.');
-			}
+			}, 'The site assistant could not reply just now.');
 
 			if (data?.conversation || Array.isArray(data?.messages)) {
 				applyConversationSnapshot(data);
@@ -1820,7 +1874,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				headers['X-WP-Nonce'] = chatConfig.restNonce;
 			}
 
-			const response = await fetch(chatConfig.contactEndpoint || `${config.root}${config.namespace}/ai/chat/contact`, {
+			const data = await fetchJson(chatConfig.contactEndpoint || `${config.root}${config.namespace}/ai/chat/contact`, {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers,
@@ -1836,12 +1890,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					contact_company: company,
 					contact_role: role,
 				}),
-			});
-			const data = await response.json();
-
-			if (!response.ok) {
-				throw new Error(data?.message || 'Your follow-up request could not be saved just now.');
-			}
+			}, 'Your follow-up request could not be saved just now.');
 
 			if (!state.started) {
 				state.started = true;
