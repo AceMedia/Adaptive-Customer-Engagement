@@ -124,7 +124,7 @@ final class Plugin {
 	 * @return void
 	 */
 	public function load_textdomain(): void {
-		load_plugin_textdomain( 'adaptive-customer-engagement', false, dirname( plugin_basename( ACE_PLUGIN_FILE ) ) . '/languages' );
+		load_plugin_textdomain( 'adaptive-customer-engagement', false, dirname( plugin_basename( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_FILE ) ) . '/languages' );
 	}
 
 	/**
@@ -141,13 +141,13 @@ final class Plugin {
 			return;
 		}
 
-		$asset_file = ACE_PLUGIN_DIR . 'assets/build/frontend.asset.php';
-		$script_src = ACE_PLUGIN_URL . 'assets/build/frontend.js';
-		$style_file = ACE_PLUGIN_DIR . 'assets/build/style-frontend.css';
-		$style_src  = ACE_PLUGIN_URL . 'assets/build/style-frontend.css';
+		$asset_file = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR . 'assets/build/frontend.asset.php';
+		$script_src = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/build/frontend.js';
+		$style_file = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR . 'assets/build/style-frontend.css';
+		$style_src  = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/build/style-frontend.css';
 		$asset      = file_exists( $asset_file ) ? require $asset_file : array(
 			'dependencies' => array(),
-			'version'      => ACE_PLUGIN_VERSION,
+			'version'      => ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION,
 		);
 
 		if ( file_exists( $style_file ) ) {
@@ -159,7 +159,7 @@ final class Plugin {
 			'ace-frontend',
 			'window.ACEFrontendConfig = ' . wp_json_encode(
 				array(
-					'root'      => esc_url_raw( ace_make_local_url( rest_url() ) ),
+					'root'      => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url() ) ),
 					'namespace' => 'adaptive-customer-engagement/v1',
 					'enabled'   => (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
@@ -201,12 +201,12 @@ final class Plugin {
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
-			'endpoint'          => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ) ),
-			'syncEndpoint'      => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ) ),
-			'typingEndpoint'    => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ) ),
-			'endEndpoint'       => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ) ),
-			'availabilityEndpoint' => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/availability' ) ) ),
-			'contactEndpoint'   => esc_url_raw( ace_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/contact' ) ) ),
+			'endpoint'          => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ) ),
+			'syncEndpoint'      => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ) ),
+			'typingEndpoint'    => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ) ),
+			'endEndpoint'       => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/end' ) ) ),
+			'availabilityEndpoint' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/availability' ) ) ),
+			'contactEndpoint'   => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/contact' ) ) ),
 			'restNonce'         => is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '',
 			'title'             => $bot_name,
 			'botName'           => $bot_name,

@@ -903,7 +903,7 @@ final class AdminController {
 		$since = sanitize_text_field( (string) $request->get_param( 'since' ) );
 		$items = array_map(
 			function ( array $item ): array {
-				$item['chat_url'] = esc_url_raw( ace_make_local_url( admin_url( 'admin.php?page=ace-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) ) );
+				$item['chat_url'] = esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=ace-dashboard#chats?ace_chat=' . absint( $item['id'] ) ) ) );
 				return $item;
 			},
 			$this->chat_conversations->get_handover_alerts( $since )
@@ -1522,7 +1522,7 @@ final class AdminController {
 			array(
 				'format'             => 'adaptive-customer-engagement-settings',
 				'plugin'             => 'adaptive-customer-engagement',
-				'version'            => defined( 'ACE_PLUGIN_VERSION' ) ? sanitize_text_field( (string) ACE_PLUGIN_VERSION ) : '',
+				'version'            => defined( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION' ) ? sanitize_text_field( (string) ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION ) : '',
 				'exported_at'        => gmdate( 'c' ),
 				'settings'           => $settings,
 				'hash_salt'          => (string) get_option( Settings::HASH_SALT_OPTION, '' ),

@@ -89,13 +89,13 @@ final class Menu {
 			return;
 		}
 
-		$asset_file = ACE_PLUGIN_DIR . 'assets/build/admin.asset.php';
-		$script_src = ACE_PLUGIN_URL . 'assets/build/admin.js';
-		$style_src  = ACE_PLUGIN_URL . 'assets/build/style-admin.css';
-		$style_file = ACE_PLUGIN_DIR . 'assets/build/style-admin.css';
+		$asset_file = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR . 'assets/build/admin.asset.php';
+		$script_src = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/build/admin.js';
+		$style_src  = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/build/style-admin.css';
+		$style_file = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR . 'assets/build/style-admin.css';
 		$asset      = file_exists( $asset_file ) ? require $asset_file : array(
 			'dependencies' => array( 'wp-element', 'wp-components', 'wp-api-fetch', 'wp-i18n' ),
-			'version'      => ACE_PLUGIN_VERSION,
+			'version'      => ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION,
 		);
 
 		if ( file_exists( $style_file ) ) {
@@ -107,14 +107,14 @@ final class Menu {
 			'ace-admin',
 			'window.ACEAdminConfig = ' . wp_json_encode(
 				array(
-					'root'         => esc_url_raw( ace_make_local_url( rest_url() ) ),
+					'root'         => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url() ) ),
 					'namespace'    => 'adaptive-customer-engagement/v1',
 					'nonce'        => wp_create_nonce( 'wp_rest' ),
 					'exportNonce'  => wp_create_nonce( 'ace_export_report' ),
-					'adminUrl'     => esc_url_raw( ace_make_local_url( admin_url( 'admin.php' ) ) ),
-					'adminPostUrl' => esc_url_raw( ace_make_local_url( admin_url( 'admin-post.php' ) ) ),
+					'adminUrl'     => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php' ) ) ),
+					'adminPostUrl' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin-post.php' ) ) ),
 					'page'         => sanitize_key( (string) str_replace( 'ace-', '', $_GET['page'] ?? 'ace-dashboard' ) ),
-					'logoUrl'      => esc_url_raw( ACE_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
+					'logoUrl'      => esc_url_raw( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
 					'siteIconUrl'  => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
 				)
 			),
@@ -190,7 +190,7 @@ final class Menu {
 	 */
 	private function render_page( string $page ): void {
 		if ( 'dashboard' !== $page ) {
-			wp_safe_redirect( ace_make_local_url( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) ) );
+			wp_safe_redirect( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=ace-dashboard#' . rawurlencode( $page ) ) ) );
 			exit;
 		}
 

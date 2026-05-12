@@ -3022,7 +3022,7 @@ final class Client {
 	 * @return string|WP_Error
 	 */
 	private function build_site_context_lambda_zip_base64( array $site_context_snapshot = array() ) {
-		$template_path = ACE_PLUGIN_DIR . 'assets/lambda/lex_site_context_runtime.py';
+		$template_path = ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR . 'assets/lambda/lex_site_context_runtime.py';
 
 		if ( ! file_exists( $template_path ) ) {
 			return new WP_Error( 'ace_connect_lambda_template_missing', __( 'The bundled Lex runtime Lambda template could not be found.', 'adaptive-customer-engagement' ) );
