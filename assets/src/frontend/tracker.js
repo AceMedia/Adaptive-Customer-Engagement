@@ -460,6 +460,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		availabilityWatcherCount: 0,
 		followUpRequested: false,
 		typing: {},
+		syncBackoffUntil: 0,
 	};
 	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
 	let syncTimer = null;
@@ -700,6 +701,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			state.endedAt = String(saved.endedAt || '');
 			state.followUpRequested = !!saved.followUpRequested;
 			state.messages = Array.isArray(saved.messages) ? saved.messages.map(serialiseMessage) : [];
+			state.syncBackoffUntil = 0;
 
 			if (!state.started && (state.messages.length || state.conversationUuid)) {
 				state.started = true;
@@ -828,6 +830,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		state.typing = (typing && typeof typing === 'object') ? typing : {};
+		state.syncBackoffUntil = 0;
 
 		persistChatState();
 		updateChatMeta();
@@ -851,6 +854,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		state.followUpRequested = false;
 		state.messages = [];
 		state.typing = {};
+		state.syncBackoffUntil = 0;
 		send.textContent = 'Send';
 		panel.hidden = !keepOpen;
 		launcher.setAttribute('aria-expanded', keepOpen ? 'true' : 'false');
@@ -1573,7 +1577,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	restoreChatState();
 
 	const syncConversation = async () => {
-		if (!state.conversationUuid || state.pending) {
+		if (!state.conversationUuid || state.pending || Date.now() < Number(state.syncBackoffUntil || 0)) {
 			return;
 		}
 
@@ -1602,6 +1606,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				stopSync();
 				resetConversationState({ keepOpen: state.open });
 				persistChatState();
+				return;
+			}
+
+			if (Number(error?.status || 0) === 429) {
+				const retryAfter = Math.max(15, Number(error?.data?.data?.retry_after || 30));
+				state.syncBackoffUntil = Date.now() + (retryAfter * 1000);
 			}
 		}
 	};

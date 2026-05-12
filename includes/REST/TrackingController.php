@@ -340,10 +340,22 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-sync';
+		$bucket = $this->build_ai_chat_bucket(
+			'ai-chat-sync',
+			sanitize_text_field( (string) $request->get_param( 'conversation_uuid' ) ),
+			sanitize_text_field( (string) $request->get_param( 'session_uuid' ) ),
+			sanitize_text_field( (string) $request->get_param( 'visitor_uuid' ) )
+		);
 
-		if ( ! $this->rate_limiter->allow( $bucket, 90, MINUTE_IN_SECONDS ) ) {
-			return new WP_Error( 'ace_rate_limited', __( 'Too many chat refresh requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		if ( ! $this->rate_limiter->allow( $bucket, 360, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error(
+				'ace_rate_limited',
+				__( 'Too many chat refresh requests have been made just now.', 'adaptive-customer-engagement' ),
+				array(
+					'status'      => 429,
+					'retry_after' => 30,
+				)
+			);
 		}
 
 		$payload = array(
@@ -378,13 +390,18 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-chat-typing';
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$bucket  = $this->build_ai_chat_bucket(
+			'ai-chat-typing',
+			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? '' ) ),
+			sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
+			sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) )
+		);
 
-		if ( ! $this->rate_limiter->allow( $bucket, 90, MINUTE_IN_SECONDS ) ) {
+		if ( ! $this->rate_limiter->allow( $bucket, 240, MINUTE_IN_SECONDS ) ) {
 			return new WP_Error( 'ace_rate_limited', __( 'Too many typing updates have been sent just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
 		}
 
-		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 		$response = $this->frontend_chat->update_typing( $payload );
 
 		if ( is_wp_error( $response ) ) {
@@ -671,5 +688,29 @@ final class TrackingController {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Build a rate-limit bucket for frontend chat routes.
+	 *
+	 * @param string $suffix            Bucket suffix.
+	 * @param string $conversation_uuid Conversation UUID.
+	 * @param string $session_uuid      Session UUID.
+	 * @param string $visitor_uuid      Visitor UUID.
+	 * @return string
+	 */
+	private function build_ai_chat_bucket( string $suffix, string $conversation_uuid = '', string $session_uuid = '', string $visitor_uuid = '' ): string {
+		$parts   = array_filter(
+			array(
+				$this->privacy->hash_ip( $this->privacy->get_client_ip() ),
+				$suffix,
+				$conversation_uuid,
+				$session_uuid,
+				$visitor_uuid,
+			)
+		);
+		$parts[] = 'shared';
+
+		return implode( '|', $parts );
 	}
 }
