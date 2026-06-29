@@ -5910,7 +5910,7 @@ function SettingsView({ section = 'settings', active }) {
 							createElement(TextControl, { label: __('Chatbot name', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_bot_name || settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_bot_name: next, frontend_chat_title: next }) }),
 							createElement(TextControl, { label: __('Input placeholder', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_placeholder || '', onChange: (next) => setAiAgent({ frontend_chat_placeholder: next }) }),
 							createElement(TextControl, { label: __('Max context documents', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 8, value: settings.ai_agent.max_context_documents ?? 4, onChange: (next) => setAiAgent({ max_context_documents: Number(next || 1) }) }),
-							createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 12, value: settings.ai_agent.max_history_messages ?? 8, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
+							createElement(TextControl, { label: __('Max history messages', 'adaptive-customer-engagement'), type: 'number', min: 1, max: 40, help: __('How many recent messages the assistant remembers for context.', 'adaptive-customer-engagement'), value: settings.ai_agent.max_history_messages ?? 20, onChange: (next) => setAiAgent({ max_history_messages: Number(next || 1) }) }),
 						)
 						: createElement(Notice, { status: 'info', isDismissible: false }, __('Turn on the frontend AI chat when you are ready to show the plugin-managed assistant on the website.', 'adaptive-customer-engagement')),
 					settings.ai_agent.frontend_chat_enabled && availableSiteContextPostTypes.length
@@ -5958,6 +5958,12 @@ function SettingsView({ section = 'settings', active }) {
 						help: __('Use this to tell the assistant how to treat the retrieved site context, such as product tone, support boundaries, or answer format.', 'adaptive-customer-engagement'),
 						value: settings.ai_agent.context_instructions || '',
 						onChange: (next) => setAiAgent({ context_instructions: next }),
+					}),
+					createElement(TextareaControl, {
+						label: __('Public coupon codes', 'adaptive-customer-engagement'),
+						help: __('Comma- or space-separated WooCommerce coupon codes the assistant may share when visitors ask about discounts or offers. Only codes listed here are ever revealed — never the full coupon list. Leave blank for none.', 'adaptive-customer-engagement'),
+						value: settings.ai_agent.public_coupon_codes || '',
+						onChange: (next) => setAiAgent({ public_coupon_codes: next }),
 					}),
 					createElement(SettingsToggleList, null,
 						createElement(ToggleControl, { label: __('Share session summaries', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.share_session_context, onChange: (next) => setAiAgent({ share_session_context: next }) }),

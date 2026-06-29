@@ -295,7 +295,7 @@ final class Plugin {
 			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),
 			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
 			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),
-			'maxHistoryMessages'=> max( 1, min( 12, absint( $ai_agent['max_history_messages'] ?? 8 ) ) ),
+			'maxHistoryMessages'=> max( 1, min( 40, absint( $ai_agent['max_history_messages'] ?? 20 ) ) ),
 			'pollIntervalMs'    => 5000,
 			'availabilityPollIntervalMs' => 15000,
 			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),

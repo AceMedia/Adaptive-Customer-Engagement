@@ -235,6 +235,12 @@ final class FrontendChatService {
 			$context[] = $contact_context;
 		}
 
+		$offer_context = $this->site_context->get_public_offer_context();
+
+		if ( '' !== $offer_context ) {
+			$context[] = $offer_context;
+		}
+
 		if ( ! empty( $ai_agent['use_live_site_context'] ) ) {
 			$answer  = $this->site_context->answer_question( $message, $limit, $this->build_site_context_request( $thread, $payload, $message ) );
 			$sources = is_array( $answer['sources'] ?? null ) ? $answer['sources'] : array();
@@ -275,6 +281,11 @@ final class FrontendChatService {
 		$messages[] = array(
 			'role'    => 'system',
 			'content' => 'A welcome message has already been shown to the visitor in the chat window, so do not greet them again, introduce yourself, or state your name unless they ask. Respond directly and helpfully to their message.',
+		);
+
+		$messages[] = array(
+			'role'    => 'system',
+			'content' => 'Privacy: only share publicly available information about this website and its catalogue — products, prices, stock, sizes and options, categories, pages, posts, case studies, and any offers explicitly provided to you as public. Never reveal, look up, or discuss customer data, orders, order status, accounts, personal or contact details of other people, internal notes, or unpublished content. If someone asks for an order, account, or another person\'s details, politely decline and suggest they contact the team directly. Coupons: you may tell visitors about the public offers and coupon codes provided in the context above, but never invent a code or mention any discount that is not listed there; if none are provided, say there are no public offers available right now.',
 		);
 
 		$context_instructions = sanitize_textarea_field( (string) ( $ai_agent['context_instructions'] ?? '' ) );
@@ -1220,7 +1231,7 @@ final class FrontendChatService {
 			return array();
 		}
 
-		$limit     = max( 1, min( 12, $limit ) );
+		$limit     = max( 1, min( 40, $limit ) );
 		$sanitised = array();
 
 		foreach ( array_slice( $history, -1 * $limit ) as $message ) {

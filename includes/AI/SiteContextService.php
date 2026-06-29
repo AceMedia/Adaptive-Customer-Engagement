@@ -1061,6 +1061,84 @@ final class SiteContextService {
 	}
 
 	/**
+	 * Build a context block describing the publicly advertised coupons/offers.
+	 *
+	 * Only coupon codes the admin has explicitly listed as public are ever
+	 * surfaced — never the full coupon list — and expired coupons are skipped.
+	 *
+	 * @return string
+	 */
+	public function get_public_offer_context(): string {
+		if ( ! function_exists( 'wc_get_coupon_id_by_code' ) || ! class_exists( '\WC_Coupon' ) ) {
+			return '';
+		}
+
+		$ai_agent = is_array( Settings::get()['ai_agent'] ?? null ) ? Settings::get()['ai_agent'] : array();
+		$raw      = (string) ( $ai_agent['public_coupon_codes'] ?? '' );
+		$codes    = array_filter( array_map( 'trim', preg_split( '/[\s,]+/', $raw ) ?: array() ) );
+
+		if ( empty( $codes ) ) {
+			return '';
+		}
+
+		$lines = array();
+
+		foreach ( array_slice( array_values( array_unique( $codes ) ), 0, 20 ) as $code ) {
+			$coupon_id = wc_get_coupon_id_by_code( $code );
+
+			if ( ! $coupon_id ) {
+				continue;
+			}
+
+			$coupon  = new \WC_Coupon( $coupon_id );
+			$expires = $coupon->get_date_expires();
+
+			if ( $expires && $expires->getTimestamp() < time() ) {
+				continue;
+			}
+
+			$type   = $coupon->get_discount_type();
+			$amount = (float) $coupon->get_amount();
+
+			if ( 'percent' === $type ) {
+				$discount = rtrim( rtrim( number_format( $amount, 2 ), '0' ), '.' ) . '% off';
+			} else {
+				$discount = $this->clean_price_text( (string) wc_price( $amount ) ) . ' off';
+			}
+
+			$bits = array( strtoupper( (string) $coupon->get_code() ) . ' — ' . $discount );
+
+			if ( $coupon->get_free_shipping() ) {
+				$bits[] = 'free shipping';
+			}
+
+			$minimum = (float) $coupon->get_minimum_amount();
+
+			if ( $minimum > 0 ) {
+				$bits[] = 'minimum spend ' . $this->clean_price_text( (string) wc_price( $minimum ) );
+			}
+
+			if ( $expires ) {
+				$bits[] = 'expires ' . $expires->date_i18n( (string) get_option( 'date_format', 'j F Y' ) );
+			}
+
+			$description = trim( wp_strip_all_tags( (string) $coupon->get_description() ) );
+
+			if ( '' !== $description ) {
+				$bits[] = sanitize_text_field( $description );
+			}
+
+			$lines[] = '- ' . implode( '; ', $bits );
+		}
+
+		if ( empty( $lines ) ) {
+			return '';
+		}
+
+		return "Public offers and coupon codes currently available (safe to share with anyone):\n" . implode( "\n", $lines );
+	}
+
+	/**
 	 * Normalise a WooCommerce price string: decode entities, strip tags and the
 	 * screen-reader "Price range … through …" suffix, collapse whitespace.
 	 *
