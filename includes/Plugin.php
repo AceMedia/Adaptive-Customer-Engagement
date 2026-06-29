@@ -12,6 +12,7 @@ use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\LeadProfileService;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AI\TextToSpeechService;
+use ACE\AdaptiveCustomerEngagement\AI\SpeechToTextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
@@ -115,6 +116,7 @@ final class Plugin {
 		add_action( 'admin_post_ace_export_commerce', array( $admin, 'export_commerce' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
+		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 
 		$menu->register();
 	}
@@ -126,6 +128,52 @@ final class Plugin {
 	 */
 	public function load_textdomain(): void {
 		load_plugin_textdomain( 'adaptive-customer-engagement', false, dirname( plugin_basename( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_FILE ) ) . '/languages' );
+	}
+
+	/**
+	 * Allow the plugin's public REST endpoints to run even when a logged-in
+	 * visitor presents a stale REST cookie nonce.
+	 *
+	 * WordPress fails the whole request with `rest_cookie_invalid_nonce` when an
+	 * auth cookie is present but the nonce is invalid — even for routes whose
+	 * permission callback is public. A page served from full-page cache can carry
+	 * an expired nonce, which breaks the frontend chat for logged-in users while
+	 * anonymous visitors are unaffected. These endpoints are intentionally public
+	 * and perform no privileged action, so the stale-nonce failure is cleared for
+	 * them only.
+	 *
+	 * @param mixed $result Current authentication result.
+	 * @return mixed
+	 */
+	public function allow_public_endpoints_without_nonce( $result ) {
+		if ( ! is_wp_error( $result ) || 'rest_cookie_invalid_nonce' !== $result->get_error_code() ) {
+			return $result;
+		}
+
+		$path = '';
+
+		if ( isset( $_SERVER['REQUEST_URI'] ) ) {
+			$path .= (string) wp_unslash( $_SERVER['REQUEST_URI'] );
+		}
+
+		if ( isset( $_GET['rest_route'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only routing check.
+			$path .= ' ' . (string) wp_unslash( $_GET['rest_route'] );
+		}
+
+		$public_segments = array(
+			'adaptive-customer-engagement/v1/ai/chat/',
+			'adaptive-customer-engagement/v1/ai/voice/',
+			'adaptive-customer-engagement/v1/track',
+			'adaptive-customer-engagement/v1/number/',
+		);
+
+		foreach ( $public_segments as $segment ) {
+			if ( false !== strpos( $path, $segment ) ) {
+				return true;
+			}
+		}
+
+		return $result;
 	}
 
 	/**
@@ -234,6 +282,8 @@ final class Plugin {
 			'voiceProvider'     => sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) ),
 			'voiceTtsEnabled'   => ! empty( $ai_agent['frontend_voice_replies'] ) && ( new TextToSpeechService() )->is_configured( $ai_agent ),
 			'voiceTtsEndpoint'  => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/tts' ) ) ),
+			'voiceSttEnabled'   => ! empty( $ai_agent['frontend_voice_input'] ) && ( new SpeechToTextService() )->is_configured( $ai_agent ),
+			'voiceTranscribeEndpoint' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/transcribe' ) ) ),
 		);
 	}
 }

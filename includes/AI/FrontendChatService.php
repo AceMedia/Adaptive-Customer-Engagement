@@ -272,6 +272,11 @@ final class FrontendChatService {
 			);
 		}
 
+		$messages[] = array(
+			'role'    => 'system',
+			'content' => 'A welcome message has already been shown to the visitor in the chat window, so do not greet them again, introduce yourself, or state your name unless they ask. Respond directly and helpfully to their message.',
+		);
+
 		$context_instructions = sanitize_textarea_field( (string) ( $ai_agent['context_instructions'] ?? '' ) );
 
 		if ( '' !== $context_instructions ) {

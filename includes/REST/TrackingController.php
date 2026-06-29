@@ -10,6 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\REST;
 use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AI\TextToSpeechService;
+use ACE\AdaptiveCustomerEngagement\AI\SpeechToTextService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
@@ -161,6 +162,16 @@ final class TrackingController {
 				'methods'             => 'POST',
 				'permission_callback' => '__return_true',
 				'callback'            => array( $this, 'ai_voice_tts' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/voice/transcribe',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_voice_transcribe' ),
 			)
 		);
 
@@ -375,6 +386,52 @@ final class TrackingController {
 
 		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 		$result  = $service->synthesize( (string) ( $payload['text'] ?? '' ), $ai_agent );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Transcribe a recorded audio clip to text with the configured provider.
+	 *
+	 * Lets the chat microphone work in browsers without the Web Speech API.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_voice_transcribe( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) || empty( $ai_agent['frontend_voice_input'] ) ) {
+			return new WP_Error( 'ace_stt_disabled', __( 'Voice input is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_stt_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$service = new SpeechToTextService();
+
+		if ( ! $service->is_configured( $ai_agent ) ) {
+			return new WP_Error( 'ace_stt_unconfigured', __( 'No transcription provider is configured.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-voice-stt';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 60, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many voice requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		if ( ! $this->rate_limiter->allow( 'ace-ai-voice-global', (int) apply_filters( 'ace_ai_voice_global_rate_limit', 600 ), MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Voice is busy right now. Please try again shortly.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$result  = $service->transcribe( (string) ( $payload['audio'] ?? '' ), (string) ( $payload['mime'] ?? '' ), $ai_agent );
 
 		if ( is_wp_error( $result ) ) {
 			return $result;

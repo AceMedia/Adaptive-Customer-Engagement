@@ -427,7 +427,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 	const voiceOutputSupported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
 	const voiceInputConfigured = !!chatConfig.voiceInput;
-	const voiceInputEnabled = voiceInputConfigured && !!SpeechRecognitionImpl;
+	const mediaRecorderSupported = typeof window.MediaRecorder !== 'undefined' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+	const voiceSttPremium = !!chatConfig.voiceSttEnabled && !!chatConfig.voiceTranscribeEndpoint && mediaRecorderSupported;
+	const voiceInputEnabled = voiceInputConfigured && (voiceSttPremium || !!SpeechRecognitionImpl);
 	const premiumTtsEnabled = !!chatConfig.voiceTtsEnabled && !!chatConfig.voiceProvider && chatConfig.voiceProvider !== 'browser' && !!chatConfig.voiceTtsEndpoint;
 	const voiceRepliesEnabled = !!chatConfig.voiceReplies && (voiceOutputSupported || premiumTtsEnabled);
 	const voiceHandsFree = !!chatConfig.voiceHandsFree;
@@ -436,6 +438,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let lastSpokenKey = '';
 	let voiceRenderPrimed = false;
 	let currentAudio = null;
+	let mediaRecorder = null;
+	let mediaChunks = [];
+	let mediaStream = null;
 
 	const launcher = document.createElement('button');
 	const panel = document.createElement('section');
@@ -479,6 +484,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		typing: {},
 		syncBackoffUntil: 0,
 		voiceListening: false,
+		voiceTranscribing: false,
 		voiceSpeaking: false,
 		voiceSpeakerOn: voiceRepliesEnabled && !!chatConfig.voiceAutospeak,
 	};
@@ -1588,8 +1594,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	const updateVoiceUi = () => {
 		if (voiceInputEnabled) {
-			micButton.classList.toggle('is-listening', state.voiceListening);
-			micButton.disabled = state.pending || state.conversationStatus === 'ended';
+			micButton.classList.toggle('is-listening', state.voiceListening || state.voiceTranscribing);
+			micButton.disabled = state.pending || state.voiceTranscribing || state.conversationStatus === 'ended';
 			micButton.setAttribute('aria-pressed', state.voiceListening ? 'true' : 'false');
 		}
 
@@ -1603,7 +1609,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	const stopSpeaking = () => {
 		try {
-			if (voiceOutputSupported) {
+			// Only cancel when something is actually speaking/queued. Calling
+			// cancel() on an idle synth produces an audible click in some browsers.
+			if (voiceOutputSupported && ( window.speechSynthesis.speaking || window.speechSynthesis.pending )) {
 				window.speechSynthesis.cancel();
 			}
 		} catch (error) {
@@ -1713,13 +1721,107 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 	};
 
-	const startListening = () => {
-		if (!voiceInputEnabled || state.voiceListening || state.pending || state.conversationStatus === 'ended') {
+	const applyTranscript = (transcript) => {
+		transcript = String(transcript || '').trim();
+
+		if (!transcript) {
 			return;
 		}
 
+		input.value = transcript;
+		updateInputHeight();
+
+		if (voiceHandsFree) {
+			form.requestSubmit();
+		} else {
+			input.focus();
+		}
+	};
+
+	const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onloadend = () => {
+			const result = String(reader.result || '');
+			resolve(result.slice(result.indexOf(',') + 1));
+		};
+		reader.onerror = reject;
+		reader.readAsDataURL(blob);
+	});
+
+	const stopMediaStream = () => {
+		if (mediaStream) {
+			try {
+				mediaStream.getTracks().forEach((track) => track.stop());
+			} catch (error) {
+				// Ignore.
+			}
+
+			mediaStream = null;
+		}
+	};
+
+	// Premium path: record audio (works in any browser, incl. Firefox) and transcribe server-side.
+	const startRecording = async () => {
 		try {
-			stopSpeaking();
+			mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			mediaChunks = [];
+			mediaRecorder = new window.MediaRecorder(mediaStream);
+			mediaRecorder.ondataavailable = (event) => {
+				if (event.data && event.data.size) {
+					mediaChunks.push(event.data);
+				}
+			};
+			mediaRecorder.onstop = async () => {
+				stopMediaStream();
+				state.voiceListening = false;
+
+				if (!mediaChunks.length) {
+					updateVoiceUi();
+					return;
+				}
+
+				const mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+				const blob = new Blob(mediaChunks, { type: mime });
+				mediaChunks = [];
+				state.voiceTranscribing = true;
+				updateVoiceUi();
+
+				try {
+					const audio = await blobToBase64(blob);
+					const headers = { 'Content-Type': 'application/json' };
+
+					if (chatConfig.restNonce) {
+						headers['X-WP-Nonce'] = chatConfig.restNonce;
+					}
+
+					const data = await fetchJson(chatConfig.voiceTranscribeEndpoint, {
+						method: 'POST',
+						credentials: 'same-origin',
+						headers,
+						body: JSON.stringify({ audio, mime }),
+					}, 'The recording could not be transcribed just now.');
+
+					applyTranscript(data && data.text);
+				} catch (error) {
+					// Leave the input untouched if transcription fails.
+				} finally {
+					state.voiceTranscribing = false;
+					updateVoiceUi();
+				}
+			};
+			mediaRecorder.start();
+			state.voiceListening = true;
+			updateVoiceUi();
+		} catch (error) {
+			stopMediaStream();
+			state.voiceListening = false;
+			updateVoiceUi();
+		}
+	};
+
+	// Browser path: native Web Speech recognition (Chrome/Edge/Safari).
+	const startBrowserRecognition = () => {
+		try {
 			speechRecognition = new SpeechRecognitionImpl();
 			speechRecognition.lang = voiceLang;
 			speechRecognition.interimResults = false;
@@ -1737,23 +1839,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				updateVoiceUi();
 			};
 			speechRecognition.onresult = (event) => {
-				const transcript = Array.from(event.results || [])
-					.map((result) => (result[0] && result[0].transcript) || '')
-					.join(' ')
-					.trim();
-
-				if (!transcript) {
-					return;
-				}
-
-				input.value = transcript;
-				updateInputHeight();
-
-				if (voiceHandsFree) {
-					form.requestSubmit();
-				} else {
-					input.focus();
-				}
+				applyTranscript(
+					Array.from(event.results || [])
+						.map((result) => (result[0] && result[0].transcript) || '')
+						.join(' ')
+				);
 			};
 			speechRecognition.start();
 		} catch (error) {
@@ -1762,7 +1852,33 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 	};
 
+	const startListening = () => {
+		if (!voiceInputEnabled || state.voiceListening || state.voiceTranscribing || state.pending || state.conversationStatus === 'ended') {
+			return;
+		}
+
+		stopSpeaking();
+
+		if (voiceSttPremium) {
+			startRecording();
+		} else if (SpeechRecognitionImpl) {
+			startBrowserRecognition();
+		}
+	};
+
 	const stopListening = () => {
+		if (voiceSttPremium) {
+			try {
+				if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+					mediaRecorder.stop();
+				}
+			} catch (error) {
+				// Ignore.
+			}
+
+			return;
+		}
+
 		try {
 			if (speechRecognition) {
 				speechRecognition.stop();
