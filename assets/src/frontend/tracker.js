@@ -471,6 +471,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let mediaStream = null;
 	let vadContext = null;
 	let vadRaf = null;
+	let vadStream = null;
 
 	const launcher = document.createElement('button');
 	const panel = document.createElement('section');
@@ -1794,12 +1795,55 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 	};
 
+	// Pick a recording format the browser actually supports. Firefox produces
+	// audio/ogg; Chrome audio/webm — being explicit keeps the blob well-formed.
+	const pickRecorderMimeType = () => {
+		const candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
+
+		if (window.MediaRecorder && typeof window.MediaRecorder.isTypeSupported === 'function') {
+			return candidates.find((type) => {
+				try {
+					return window.MediaRecorder.isTypeSupported(type);
+				} catch (error) {
+					return false;
+				}
+			}) || '';
+		}
+
+		return '';
+	};
+
+	let voiceNoticeTimer = null;
+
+	// Surface a transient hint in the composer so voice failures are never silent.
+	const flashVoiceNotice = (message) => {
+		if (!input) {
+			return;
+		}
+
+		const original = input.dataset.acePlaceholder || input.getAttribute('placeholder') || '';
+		input.dataset.acePlaceholder = original;
+		input.setAttribute('placeholder', message);
+
+		if (voiceNoticeTimer) {
+			window.clearTimeout(voiceNoticeTimer);
+		}
+
+		voiceNoticeTimer = window.setTimeout(() => {
+			input.setAttribute('placeholder', input.dataset.acePlaceholder || '');
+			voiceNoticeTimer = null;
+		}, 3500);
+	};
+
 	// Premium path: record audio (works in any browser, incl. Firefox) and transcribe server-side.
 	const startRecording = async () => {
 		try {
 			mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			mediaChunks = [];
-			mediaRecorder = new window.MediaRecorder(mediaStream);
+			const recorderMimeType = pickRecorderMimeType();
+			mediaRecorder = recorderMimeType
+				? new window.MediaRecorder(mediaStream, { mimeType: recorderMimeType })
+				: new window.MediaRecorder(mediaStream);
 			mediaRecorder.ondataavailable = (event) => {
 				if (event.data && event.data.size) {
 					mediaChunks.push(event.data);
@@ -1811,6 +1855,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				state.voiceListening = false;
 
 				if (!mediaChunks.length) {
+					flashVoiceNotice('Sorry, I didn’t catch that — please try again.');
 					updateVoiceUi();
 					return;
 				}
@@ -1836,15 +1881,23 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 						body: JSON.stringify({ audio, mime }),
 					}, 'The recording could not be transcribed just now.');
 
-					applyTranscript(data && data.text);
+					const transcript = String((data && data.text) || '').trim();
+
+					if (transcript) {
+						applyTranscript(transcript);
+					} else {
+						flashVoiceNotice('Sorry, I didn’t catch that — please try again.');
+					}
 				} catch (error) {
-					// Leave the input untouched if transcription fails.
+					flashVoiceNotice('Sorry, I couldn’t hear that — please try again.');
 				} finally {
 					state.voiceTranscribing = false;
 					updateVoiceUi();
 				}
 			};
-			mediaRecorder.start();
+			// Timeslice so dataavailable fires during recording — Firefox can
+			// otherwise deliver nothing when stop() races the final chunk.
+			mediaRecorder.start(250);
 			state.voiceListening = true;
 			updateVoiceUi();
 			startVad();
@@ -1872,7 +1925,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				vadContext.resume();
 			}
 
-			const source = vadContext.createMediaStreamSource(mediaStream);
+			// Analyse a cloned track so the recorder keeps sole ownership of the
+			// original stream — Firefox can drop recorder data when a stream is
+			// consumed by both MediaRecorder and Web Audio at once.
+			const audioTrack = mediaStream.getAudioTracks ? mediaStream.getAudioTracks()[0] : null;
+
+			if (audioTrack && typeof audioTrack.clone === 'function') {
+				vadStream = new MediaStream([audioTrack.clone()]);
+			} else {
+				vadStream = mediaStream;
+			}
+
+			const source = vadContext.createMediaStreamSource(vadStream);
 			const analyser = vadContext.createAnalyser();
 			analyser.fftSize = 512;
 			source.connect(analyser);
@@ -1935,6 +1999,16 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 			vadContext = null;
 		}
+
+		if (vadStream && vadStream !== mediaStream) {
+			try {
+				vadStream.getTracks().forEach((track) => track.stop());
+			} catch (error) {
+				// Ignore.
+			}
+		}
+
+		vadStream = null;
 	};
 
 	// Browser path: native Web Speech recognition (Chrome/Edge/Safari).
