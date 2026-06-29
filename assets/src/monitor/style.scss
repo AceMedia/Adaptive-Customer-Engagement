@@ -449,3 +449,51 @@ $ace-amber: #f5b942;
 		height: calc(100vh - 70px);
 	}
 }
+
+/* ---- Mini chat: body wrapper, collapse (multi-chat), admin link ---- */
+.ace-mini-chat__body {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.ace-mini-chat__messages {
+	min-height: 0;
+}
+
+.ace-mini-chat__title[data-toggle] {
+	cursor: pointer;
+}
+
+/* Collapsed = just the header bar, so several chats sit along the bottom. */
+.ace-mini-chat.is-collapsed {
+	height: auto;
+}
+
+.ace-mini-chat.is-collapsed .ace-mini-chat__body {
+	display: none;
+}
+
+.ace-mini-chat.is-collapsed .ace-mini-chat__head {
+	border-radius: 16px 16px 0 0;
+}
+
+.ace-mini-chat__manage {
+	display: block;
+	flex: 0 0 auto;
+	padding: 8px 12px;
+	text-align: center;
+	font-size: 11.5px;
+	font-weight: 700;
+	color: var(--wp--preset--color--accent-3, #225570);
+	text-decoration: none;
+	border-top: 1px solid color-mix(in srgb, #{$ace-slate} 12%, transparent);
+	background: #fff;
+}
+
+.ace-mini-chat__manage:hover {
+	background: color-mix(in srgb, #{$ace-slate} 5%, #fff);
+	color: var(--wp--preset--color--accent-3, #225570);
+}

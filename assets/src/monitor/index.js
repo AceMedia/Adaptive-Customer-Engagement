@@ -63,6 +63,29 @@ import './style.scss';
 	const chatPollInterval = Math.max(2000, Number(config.chatPollInterval) || 4000);
 	const miniChats = {};
 	let miniHost = null;
+	const OPEN_CHATS_KEY = 'ace_mini_open_chats_v1';
+
+	// Remember which chats are open so they follow the operator across pages.
+	const saveOpenChats = () => {
+		try {
+			const list = Object.keys(miniChats).map((id) => ({
+				id: miniChats[id].id,
+				title: miniChats[id].title,
+				admin_url: miniChats[id].adminUrl,
+			}));
+			window.localStorage.setItem(OPEN_CHATS_KEY, JSON.stringify(list));
+		} catch (error) {
+			// Ignore storage failures.
+		}
+	};
+
+	const loadOpenChats = () => {
+		try {
+			return JSON.parse(window.localStorage.getItem(OPEN_CHATS_KEY) || '[]') || [];
+		} catch (error) {
+			return [];
+		}
+	};
 
 	const ensureMiniHost = () => {
 		if (miniHost && document.body.contains(miniHost)) {
@@ -153,8 +176,9 @@ import './style.scss';
 
 	function refreshMiniThread(state) {
 		return apiFetch(chatUrl(state.id)).then((data) => {
-			if (!miniChats[state.id]) return;
+			if (!miniChats[state.id]) return data;
 			if (data && data.messages) renderMiniMessages(state, data.messages);
+			return data;
 		});
 	}
 
@@ -194,13 +218,41 @@ import './style.scss';
 		}
 		if (state.el && state.el.parentNode) state.el.parentNode.removeChild(state.el);
 		delete miniChats[id];
+		saveOpenChats();
 	}
 
-	function openMiniChat(conversation) {
+	// Load the thread, then start polling. When restoring across a page load we
+	// drop the window quietly if the chat is no longer a live human takeover.
+	function bootMiniThread(state, restore) {
+		const box = state.el.querySelector('.ace-mini-chat__messages');
+		box.innerHTML = '';
+
+		refreshMiniThread(state).then((data) => {
+			if (!miniChats[state.id]) return;
+			const conv = data && data.conversation;
+
+			if (restore && conv && (Number(conv.handover_enabled) !== 1 || conv.status === 'ended' || conv.ended_at)) {
+				closeMiniChat(state.id, false);
+				return;
+			}
+
+			if (!restore) {
+				state.el.querySelector('.ace-mini-chat__input').focus();
+			}
+
+			if (miniChats[state.id]) state.pollTimer = window.setTimeout(() => pollMini(state), chatPollInterval);
+		}).catch(() => {
+			if (miniChats[state.id]) state.pollTimer = window.setTimeout(() => pollMini(state), chatPollInterval);
+		});
+	}
+
+	function openMiniChat(conversation, opts) {
 		const id = conversation && conversation.id;
 		if (!id) return;
+		const restore = !!(opts && opts.restore);
 
 		if (miniChats[id]) {
+			miniChats[id].el.classList.remove('is-collapsed');
 			miniChats[id].el.querySelector('.ace-mini-chat__input').focus();
 			return;
 		}
@@ -213,27 +265,35 @@ import './style.scss';
 
 		el.innerHTML =
 			'<div class="ace-mini-chat__head">' +
-				'<span class="ace-mini-chat__title">' + title + '</span>' +
+				'<span class="ace-mini-chat__title" data-toggle title="' + title + '">' + title + '</span>' +
 				'<div class="ace-mini-chat__head-actions">' +
 					'<a class="ace-mini-chat__btn" href="' + adminUrl + '" target="_blank" rel="noopener" title="' + escapeHtml(i18n.openConsole || 'Open full console') + '" aria-label="' + escapeHtml(i18n.openConsole || 'Open full console') + '">&#x2197;</a>' +
+					'<button type="button" class="ace-mini-chat__btn" data-collapse title="' + escapeHtml(i18n.collapse || 'Minimise') + '" aria-label="' + escapeHtml(i18n.collapse || 'Minimise') + '">&#x2013;</button>' +
 					'<button type="button" class="ace-mini-chat__btn" data-handback title="' + escapeHtml(i18n.handBack || 'Hand back to assistant') + '" aria-label="' + escapeHtml(i18n.handBack || 'Hand back to assistant') + '">&#x1F916;</button>' +
 					'<button type="button" class="ace-mini-chat__btn" data-close title="' + escapeHtml(i18n.close || 'Close') + '" aria-label="' + escapeHtml(i18n.close || 'Close') + '">&times;</button>' +
 				'</div>' +
 			'</div>' +
-			'<div class="ace-mini-chat__messages"><div class="ace-mini-chat__status">' + escapeHtml(i18n.takingOver || 'Taking over…') + '</div></div>' +
-			'<div class="ace-mini-chat__error" style="display:none"></div>' +
-			'<div class="ace-mini-chat__suggestions" style="display:none"></div>' +
-			'<form class="ace-mini-chat__form">' +
-				'<textarea class="ace-mini-chat__input" rows="1" placeholder="' + escapeHtml(i18n.replyPlaceholder || 'Type your reply…') + '"></textarea>' +
-				'<button type="submit" class="ace-mini-chat__send">' + escapeHtml(i18n.send || 'Send') + '</button>' +
-			'</form>';
+			'<div class="ace-mini-chat__body">' +
+				'<div class="ace-mini-chat__messages"><div class="ace-mini-chat__status">' + escapeHtml(restore ? (i18n.send || 'Loading…') : (i18n.takingOver || 'Taking over…')) + '</div></div>' +
+				'<div class="ace-mini-chat__error" style="display:none"></div>' +
+				'<div class="ace-mini-chat__suggestions" style="display:none"></div>' +
+				'<form class="ace-mini-chat__form">' +
+					'<textarea class="ace-mini-chat__input" rows="1" placeholder="' + escapeHtml(i18n.replyPlaceholder || 'Type your reply…') + '"></textarea>' +
+					'<button type="submit" class="ace-mini-chat__send">' + escapeHtml(i18n.send || 'Send') + '</button>' +
+				'</form>' +
+				'<a class="ace-mini-chat__manage" href="' + adminUrl + '" target="_blank" rel="noopener">' + escapeHtml(i18n.openConsole || 'Open in admin console') + ' &#x2197;</a>' +
+			'</div>';
 
 		host.appendChild(el);
-		const state = { id: id, el: el, seen: {}, sending: false, pollTimer: null };
+		const state = { id: id, el: el, title: conversation.title || i18n.visitor || 'Website visitor', adminUrl: conversation.admin_url || '#', seen: {}, sending: false, pollTimer: null };
 		miniChats[id] = state;
+		saveOpenChats();
 
 		el.querySelector('[data-close]').addEventListener('click', () => closeMiniChat(id, false));
 		el.querySelector('[data-handback]').addEventListener('click', () => closeMiniChat(id, true));
+		const toggleCollapse = () => el.classList.toggle('is-collapsed');
+		el.querySelector('[data-collapse]').addEventListener('click', toggleCollapse);
+		el.querySelector('[data-toggle]').addEventListener('click', toggleCollapse);
 		const form = el.querySelector('.ace-mini-chat__form');
 		const ta = el.querySelector('.ace-mini-chat__input');
 		form.addEventListener('submit', (e) => { e.preventDefault(); sendMiniReply(state); });
@@ -241,20 +301,25 @@ import './style.scss';
 			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMiniReply(state); }
 		});
 
+		if (restore) {
+			// Already taken over on a previous page — just reattach, don't re-handover.
+			bootMiniThread(state, true);
+			return;
+		}
+
 		// Take over (switch to manual), then load the thread + suggestions and poll.
 		apiFetch(chatUrl(id, '/status'), { method: 'POST', body: JSON.stringify({ action: 'handover' }) })
 			.then((data) => {
 				if (data && data.suggestions) renderMiniSuggestions(state, data.suggestions);
 			})
 			.catch(() => flashMiniError(state, i18n.connectFailed || 'Could not open this chat just now.'))
-			.finally(() => {
-				const box = el.querySelector('.ace-mini-chat__messages');
-				box.innerHTML = '';
-				refreshMiniThread(state).catch(() => {}).finally(() => {
-					ta.focus();
-					if (miniChats[id]) state.pollTimer = window.setTimeout(() => pollMini(state), chatPollInterval);
-				});
-			});
+			.finally(() => bootMiniThread(state, false));
+	}
+
+	function restoreOpenChats() {
+		loadOpenChats().forEach((c) => {
+			if (c && c.id) openMiniChat(c, { restore: true });
+		});
 	}
 
 	const updateAdminBar = (data) => {
@@ -395,6 +460,7 @@ import './style.scss';
 
 	const start = () => {
 		ensureContainer();
+		restoreOpenChats();
 		poll();
 	};
 

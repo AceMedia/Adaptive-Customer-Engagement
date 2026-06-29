@@ -120,6 +120,7 @@ final class LiveMonitor {
 					'suggestions' => __( 'Suggested replies', 'adaptive-customer-engagement' ),
 					'openConsole' => __( 'Open full console', 'adaptive-customer-engagement' ),
 					'handBack'    => __( 'Hand back to assistant', 'adaptive-customer-engagement' ),
+					'collapse'    => __( 'Minimise', 'adaptive-customer-engagement' ),
 					'close'       => __( 'Close', 'adaptive-customer-engagement' ),
 					'sendFailed'  => __( 'Could not send — try again.', 'adaptive-customer-engagement' ),
 					'connectFailed' => __( 'Could not open this chat just now.', 'adaptive-customer-engagement' ),
