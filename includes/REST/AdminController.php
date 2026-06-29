@@ -4592,10 +4592,10 @@ final class AdminController {
 		// Amazon Connect's external-transfer action is TransferParticipantToThirdParty.
 		// Caller ID / DTMF are not parameters of this action, so they are not sent.
 		$transfer_parameters = array(
-			'ThirdPartyPhoneNumber'              => $target_phone_number,
-			'ThirdPartyConnectionTimeoutSeconds' => $timeout_seconds,
+			'ThirdPartyPhoneNumber'                => $target_phone_number,
+			'ThirdPartyConnectionTimeLimitSeconds' => $timeout_seconds,
 			// End the flow once the caller is connected to the destination.
-			'ContinueFlowExecution'              => 'False',
+			'ContinueFlowExecution'                => 'False',
 		);
 		unset( $caller_id_number, $dtmf_sequence, $resume_after_disconnect );
 
