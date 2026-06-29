@@ -43,7 +43,7 @@ final class SpeechToTextService {
 	 * @return bool
 	 */
 	public function is_configured( array $ai_agent ): bool {
-		switch ( sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) ) ) {
+		switch ( ChatClientFactory::effective_voice_provider( $ai_agent ) ) {
 			case 'openai':
 				return '' !== trim( (string) ( $ai_agent['voice_openai_api_key'] ?? '' ) )
 					|| '' !== trim( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
@@ -83,7 +83,7 @@ final class SpeechToTextService {
 			$base_mime = 'audio/webm';
 		}
 
-		$provider = sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) );
+		$provider = ChatClientFactory::effective_voice_provider( $ai_agent );
 
 		if ( 'openai' === $provider ) {
 			return $this->transcribe_openai( $binary, $base_mime, $extension, $ai_agent );

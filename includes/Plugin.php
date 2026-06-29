@@ -117,6 +117,7 @@ final class Plugin {
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
+		$this->maybe_migrate_voice_provider();
 
 		$menu->register();
 	}
@@ -128,6 +129,30 @@ final class Plugin {
 	 */
 	public function load_textdomain(): void {
 		load_plugin_textdomain( 'adaptive-customer-engagement', false, dirname( plugin_basename( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_FILE ) ) . '/languages' );
+	}
+
+	/**
+	 * One-time migration: the voice provider previously defaulted to 'browser',
+	 * which was never a deliberate choice (the voice feature is new). Flip that
+	 * legacy default to 'auto' so voice leans on the configured OpenAI key without
+	 * a second setup step. Runs once per site; an explicit 'browser' chosen later
+	 * is preserved because the flag is already set.
+	 *
+	 * @return void
+	 */
+	private function maybe_migrate_voice_provider(): void {
+		if ( '1' === (string) get_option( 'ace_voice_provider_auto', '' ) ) {
+			return;
+		}
+
+		$settings = get_option( Settings::OPTION_NAME );
+
+		if ( is_array( $settings ) && isset( $settings['ai_agent']['frontend_voice_provider'] ) && 'browser' === $settings['ai_agent']['frontend_voice_provider'] ) {
+			$settings['ai_agent']['frontend_voice_provider'] = 'auto';
+			update_option( Settings::OPTION_NAME, $settings );
+		}
+
+		update_option( 'ace_voice_provider_auto', '1', false );
 	}
 
 	/**
@@ -279,7 +304,7 @@ final class Plugin {
 			'voiceAutospeak'    => ! empty( $ai_agent['frontend_voice_autospeak'] ),
 			'voiceHandsFree'    => ! empty( $ai_agent['frontend_voice_hands_free'] ),
 			'voiceLang'         => sanitize_text_field( (string) ( $ai_agent['frontend_voice_lang'] ?? 'en-GB' ) ),
-			'voiceProvider'     => sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) ),
+			'voiceProvider'     => ChatClientFactory::effective_voice_provider( $ai_agent ),
 			'voiceTtsEnabled'   => ! empty( $ai_agent['frontend_voice_replies'] ) && ( new TextToSpeechService() )->is_configured( $ai_agent ),
 			'voiceTtsEndpoint'  => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/tts' ) ) ),
 			'voiceSttEnabled'   => ! empty( $ai_agent['frontend_voice_input'] ) && ( new SpeechToTextService() )->is_configured( $ai_agent ),

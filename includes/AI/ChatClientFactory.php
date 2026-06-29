@@ -30,6 +30,32 @@ final class ChatClientFactory {
 	}
 
 	/**
+	 * Resolve which engine should produce voice (TTS/STT).
+	 *
+	 * Defaults to "auto": lean on OpenAI when an OpenAI key is already configured
+	 * for the chatbot (no separate voice key needed), otherwise the browser. The
+	 * admin can still force 'browser' or pick 'elevenlabs' explicitly.
+	 *
+	 * @param array<string, mixed> $ai_agent The `ai_agent` settings array.
+	 * @return string One of 'openai', 'elevenlabs', or 'browser'.
+	 */
+	public static function effective_voice_provider( array $ai_agent ): string {
+		$provider = sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'auto' ) );
+
+		if ( in_array( $provider, array( 'browser', 'openai', 'elevenlabs' ), true ) ) {
+			return $provider;
+		}
+
+		$openai_key = trim( (string) ( $ai_agent['voice_openai_api_key'] ?? '' ) );
+
+		if ( '' === $openai_key ) {
+			$openai_key = trim( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
+		}
+
+		return '' !== $openai_key ? 'openai' : 'browser';
+	}
+
+	/**
 	 * Resolve the active provider, client, API key, and model from AI settings.
 	 *
 	 * @param array<string, mixed> $ai_agent The `ai_agent` settings array.

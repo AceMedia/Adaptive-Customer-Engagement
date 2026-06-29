@@ -28,7 +28,7 @@ final class TextToSpeechService {
 	 * @return bool
 	 */
 	public function is_configured( array $ai_agent ): bool {
-		switch ( sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) ) ) {
+		switch ( ChatClientFactory::effective_voice_provider( $ai_agent ) ) {
 			case 'openai':
 				return '' !== trim( (string) ( $ai_agent['voice_openai_api_key'] ?? '' ) )
 					|| '' !== trim( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
@@ -55,7 +55,7 @@ final class TextToSpeechService {
 		}
 
 		$text     = function_exists( 'mb_substr' ) ? mb_substr( $text, 0, self::MAX_CHARS ) : substr( $text, 0, self::MAX_CHARS );
-		$provider = sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) );
+		$provider = ChatClientFactory::effective_voice_provider( $ai_agent );
 
 		if ( 'openai' === $provider ) {
 			return $this->synthesize_openai( $text, $ai_agent );

@@ -4931,6 +4931,14 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
 	const aiProvider = aiProviderName(settings?.ai_agent || {});
+	const effectiveVoiceProvider = (() => {
+		const vp = settings?.ai_agent?.frontend_voice_provider || 'auto';
+		if (vp === 'browser' || vp === 'openai' || vp === 'elevenlabs') {
+			return vp;
+		}
+		const key = String(settings?.ai_agent?.voice_openai_api_key || '').trim() || String(settings?.ai_agent?.openai_api_key || '').trim();
+		return key ? 'openai' : 'browser';
+	})();
 	const aiKeyField = aiProviderKeyField(settings?.ai_agent || {});
 	const aiModelField = aiProviderModelField(settings?.ai_agent || {});
 	const aiProviderTitle = aiProviderLabel(settings?.ai_agent || {});
@@ -5868,10 +5876,11 @@ function SettingsView({ section = 'settings', active }) {
 						settings.ai_agent.frontend_voice_replies
 							? createElement(SettingsFieldGrid, { compact: true },
 								createElement(SelectControl, {
-									label: __('Spoken-reply voice engine', 'adaptive-customer-engagement'),
-									value: settings.ai_agent.frontend_voice_provider || 'browser',
-									help: __('Browser is free and works everywhere; premium engines sound more natural (key kept server-side, browser used as fallback).', 'adaptive-customer-engagement'),
+									label: __('Voice engine', 'adaptive-customer-engagement'),
+									value: settings.ai_agent.frontend_voice_provider || 'auto',
+									help: __('Automatic uses your chat provider’s OpenAI key when one is set — no extra setup, and the mic works in any browser. Choose Browser to force free device voices, or ElevenLabs for that provider.', 'adaptive-customer-engagement'),
 									options: [
+										{ label: __('Automatic (match chat provider)', 'adaptive-customer-engagement'), value: 'auto' },
 										{ label: __('Browser (free, device voices)', 'adaptive-customer-engagement'), value: 'browser' },
 										{ label: __('OpenAI (premium)', 'adaptive-customer-engagement'), value: 'openai' },
 										{ label: __('ElevenLabs (premium)', 'adaptive-customer-engagement'), value: 'elevenlabs' },
@@ -5880,14 +5889,14 @@ function SettingsView({ section = 'settings', active }) {
 								}),
 							)
 							: null,
-						(settings.ai_agent.frontend_voice_replies && settings.ai_agent.frontend_voice_provider === 'openai')
+						(settings.ai_agent.frontend_voice_replies && effectiveVoiceProvider === 'openai')
 							? createElement(SettingsFieldGrid, { compact: true },
 								createElement(TextControl, { label: __('OpenAI voice API key (optional)', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.voice_openai_api_key || '', help: __('Leave blank to reuse the OpenAI chat key.', 'adaptive-customer-engagement'), onChange: (next) => setAiAgent({ voice_openai_api_key: next }) }),
 								createElement(SelectControl, { label: __('OpenAI voice', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_openai_voice || 'alloy', options: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse'].map((v) => ({ label: v, value: v })), onChange: (next) => setAiAgent({ voice_openai_voice: next }) }),
 								createElement(TextControl, { label: __('OpenAI TTS model', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_openai_model || 'gpt-4o-mini-tts', onChange: (next) => setAiAgent({ voice_openai_model: next }) }),
 							)
 							: null,
-						(settings.ai_agent.frontend_voice_replies && settings.ai_agent.frontend_voice_provider === 'elevenlabs')
+						(settings.ai_agent.frontend_voice_replies && effectiveVoiceProvider === 'elevenlabs')
 							? createElement(SettingsFieldGrid, { compact: true },
 								createElement(TextControl, { label: __('ElevenLabs API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.voice_elevenlabs_api_key || '', onChange: (next) => setAiAgent({ voice_elevenlabs_api_key: next }) }),
 								createElement(TextControl, { label: __('ElevenLabs voice ID', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_elevenlabs_voice_id || '', help: __('Find voice IDs in your ElevenLabs Voice Library.', 'adaptive-customer-engagement'), onChange: (next) => setAiAgent({ voice_elevenlabs_voice_id: next }) }),
