@@ -57,12 +57,36 @@
 .ace-admin-sidebar {
 	position: sticky;
 	top: var(--ace-admin-sticky-top);
+	/* Keep the whole menu reachable: never taller than the viewport (minus the
+	   admin bar / sticky offset), and scroll within if it overflows. */
+	max-height: calc(100vh - var(--ace-admin-sticky-top) - 24px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(255, 255, 255, 0.4) transparent;
 	padding: 20px;
 	background: linear-gradient(180deg, #1d3557 0%, #294d73 58%, #336699 100%);
 	color: #fff;
 	box-sizing: border-box;
 	width: 100%;
 	max-width: 100%;
+}
+
+.ace-admin-sidebar::-webkit-scrollbar {
+	width: 8px;
+}
+
+.ace-admin-sidebar::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.4);
+	border-radius: 999px;
+}
+
+@media (max-width: 782px) {
+	.ace-admin-sidebar {
+		/* Mobile admin bar is 46px tall. */
+		max-height: none;
+		position: static;
+	}
 }
 
 .ace-admin-brand {
