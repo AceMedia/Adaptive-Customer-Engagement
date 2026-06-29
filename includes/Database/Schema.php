@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.7';
+	public const SCHEMA_VERSION        = '0.1.8';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -28,8 +28,8 @@ final class Schema {
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'sessions' ) . " (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			session_uuid CHAR(36) NOT NULL,
-			visitor_uuid CHAR(36) NULL,
+			session_uuid VARCHAR(64) NOT NULL,
+			visitor_uuid VARCHAR(64) NULL,
 			first_seen DATETIME NOT NULL,
 			last_seen DATETIME NOT NULL,
 			first_url TEXT NULL,
@@ -203,10 +203,10 @@ final class Schema {
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_conversations' ) . " (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			conversation_uuid CHAR(36) NOT NULL,
+			conversation_uuid VARCHAR(64) NOT NULL,
 			session_id BIGINT UNSIGNED NULL,
-			session_uuid CHAR(36) NULL,
-			visitor_uuid CHAR(36) NULL,
+			session_uuid VARCHAR(64) NULL,
+			visitor_uuid VARCHAR(64) NULL,
 			company_id BIGINT UNSIGNED NULL,
 			page_url TEXT NULL,
 			page_title TEXT NULL,

@@ -18,11 +18,39 @@ function getCookie(name) {
 		?.slice(prefix.length) || '';
 }
 
+function generateUuid() {
+	if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+		return window.crypto.randomUUID();
+	}
+
+	const bytes = new Uint8Array(16);
+
+	if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+		window.crypto.getRandomValues(bytes);
+	} else {
+		for (let i = 0; i < 16; i += 1) {
+			bytes[i] = Math.floor(Math.random() * 256);
+		}
+	}
+
+	bytes[6] = (bytes[6] & 0x0f) | 0x40;
+	bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+	const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
+
+	return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+}
+
+function isValidId(value) {
+	// Stored ids must fit the 36-char id columns; regenerate anything older/longer.
+	return typeof value === 'string' && value.length > 0 && value.length <= 36;
+}
+
 function ensureUuid(name, duration, useDays = false) {
 	let value = getCookie(name);
 
-	if (!value) {
-		value = window.crypto?.randomUUID?.() || `ace-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	if (!isValidId(value)) {
+		value = generateUuid();
 	}
 
 	setCookie(name, value, duration, useDays);
@@ -441,6 +469,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let mediaRecorder = null;
 	let mediaChunks = [];
 	let mediaStream = null;
+	let vadContext = null;
+	let vadRaf = null;
 
 	const launcher = document.createElement('button');
 	const panel = document.createElement('section');
@@ -486,7 +516,14 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		voiceListening: false,
 		voiceTranscribing: false,
 		voiceSpeaking: false,
-		voiceSpeakerOn: voiceRepliesEnabled && !!chatConfig.voiceAutospeak,
+		// Spoken replies are opt-in per visitor — off by default even when the admin enabled the capability.
+		voiceSpeakerOn: voiceRepliesEnabled && (() => {
+			try {
+				return window.localStorage.getItem(`ace_ai_voice_speaker:${visitorUuid || 'guest'}`) === '1';
+			} catch (error) {
+				return false;
+			}
+		})(),
 	};
 	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
 	let syncTimer = null;
@@ -495,7 +532,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let typingLastSentAt = 0;
 	let typingSentState = false;
 
-	const generateConversationUuid = () => window.crypto?.randomUUID?.() || `ace-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	const generateConversationUuid = () => generateUuid();
 
 	launcher.id = 'ace-ai-chat-launcher';
 	launcher.type = 'button';
@@ -1730,12 +1767,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		input.value = transcript;
 		updateInputHeight();
-
-		if (voiceHandsFree) {
-			form.requestSubmit();
-		} else {
-			input.focus();
-		}
+		// Conversational: a spoken message is sent automatically when the visitor pauses.
+		form.requestSubmit();
 	};
 
 	const blobToBase64 = (blob) => new Promise((resolve, reject) => {
@@ -1772,6 +1805,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				}
 			};
 			mediaRecorder.onstop = async () => {
+				stopVad();
 				stopMediaStream();
 				state.voiceListening = false;
 
@@ -1812,10 +1846,93 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			mediaRecorder.start();
 			state.voiceListening = true;
 			updateVoiceUi();
+			startVad();
 		} catch (error) {
+			stopVad();
 			stopMediaStream();
 			state.voiceListening = false;
 			updateVoiceUi();
+		}
+	};
+
+	// Voice-activity detection: auto-stop recording shortly after the visitor
+	// stops talking, so a brief pause sends the message (conversational flow).
+	const startVad = () => {
+		try {
+			const AudioCtx = window.AudioContext || window.webkitAudioContext;
+
+			if (!AudioCtx || !mediaStream) {
+				return;
+			}
+
+			vadContext = new AudioCtx();
+
+			if (vadContext.state === 'suspended' && typeof vadContext.resume === 'function') {
+				vadContext.resume();
+			}
+
+			const source = vadContext.createMediaStreamSource(mediaStream);
+			const analyser = vadContext.createAnalyser();
+			analyser.fftSize = 512;
+			source.connect(analyser);
+
+			const samples = new Uint8Array(analyser.frequencyBinCount);
+			const started = Date.now();
+			let spoke = false;
+			let lastVoice = Date.now();
+			const SILENCE_MS = 1400;
+			const MAX_MS = 20000;
+			const NO_SPEECH_MS = 6000;
+
+			const tick = () => {
+				if (!vadContext || !state.voiceListening) {
+					return;
+				}
+
+				analyser.getByteTimeDomainData(samples);
+				let sum = 0;
+
+				for (let i = 0; i < samples.length; i += 1) {
+					const v = (samples[i] - 128) / 128;
+					sum += v * v;
+				}
+
+				const rms = Math.sqrt(sum / samples.length);
+				const now = Date.now();
+
+				if (rms > 0.045) {
+					spoke = true;
+					lastVoice = now;
+				}
+
+				if ((spoke && now - lastVoice > SILENCE_MS) || now - started > MAX_MS || (!spoke && now - started > NO_SPEECH_MS)) {
+					stopListening();
+					return;
+				}
+
+				vadRaf = window.requestAnimationFrame(tick);
+			};
+
+			vadRaf = window.requestAnimationFrame(tick);
+		} catch (error) {
+			// VAD unavailable — the visitor can still tap the mic again to stop.
+		}
+	};
+
+	const stopVad = () => {
+		if (vadRaf) {
+			window.cancelAnimationFrame(vadRaf);
+			vadRaf = null;
+		}
+
+		if (vadContext) {
+			try {
+				vadContext.close();
+			} catch (error) {
+				// Ignore.
+			}
+
+			vadContext = null;
 		}
 	};
 
@@ -2383,6 +2500,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	if (voiceRepliesEnabled) {
 		voiceToggle.addEventListener('click', () => {
 			state.voiceSpeakerOn = !state.voiceSpeakerOn;
+
+			try {
+				window.localStorage.setItem(`ace_ai_voice_speaker:${visitorUuid || 'guest'}`, state.voiceSpeakerOn ? '1' : '0');
+			} catch (error) {
+				// Ignore storage failures.
+			}
 
 			if (!state.voiceSpeakerOn) {
 				stopSpeaking();
