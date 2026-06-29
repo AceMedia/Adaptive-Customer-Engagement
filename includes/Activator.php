@@ -16,9 +16,29 @@ final class Activator {
 	/**
 	 * Activate the plugin.
 	 *
+	 * @param bool $network_wide Whether the plugin is being network-activated.
 	 * @return void
 	 */
-	public static function activate(): void {
+	public static function activate( $network_wide = false ): void {
+		if ( is_multisite() && $network_wide ) {
+			foreach ( get_sites( array( 'fields' => 'ids', 'number' => 0 ) ) as $site_id ) {
+				switch_to_blog( (int) $site_id );
+				self::activate_site();
+				restore_current_blog();
+			}
+
+			return;
+		}
+
+		self::activate_site();
+	}
+
+	/**
+	 * Provision the plugin for the current site (tables, caps, cron, settings).
+	 *
+	 * @return void
+	 */
+	public static function activate_site(): void {
 		Schema::install();
 		Capabilities::add();
 
