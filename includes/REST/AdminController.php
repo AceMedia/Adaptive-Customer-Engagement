@@ -609,6 +609,77 @@ final class AdminController {
 				),
 			)
 		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/monitor',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'live_monitor' ),
+			)
+		);
+	}
+
+	/**
+	 * Live monitor snapshot: active chats + a take-over deep link for each.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public function live_monitor( WP_REST_Request $request ) {
+		$window = (int) apply_filters( 'ace_adaptive_customer_engagement_monitor_window_minutes', 15 );
+		$rows   = $this->chat_conversations->get_active_conversations( $window );
+		$base   = admin_url( 'admin.php?page=adaptive-customer-engagement-dashboard' );
+
+		$active        = 0;
+		$waiting       = 0;
+		$manual        = 0;
+		$conversations = array();
+
+		foreach ( $rows as $row ) {
+			$id                 = (int) $row['id'];
+			$handover_requested = ! empty( $row['handover_requested'] );
+			$handover_enabled   = ! empty( $row['handover_enabled'] );
+			++$active;
+
+			if ( $handover_enabled ) {
+				++$manual;
+			} elseif ( $handover_requested ) {
+				++$waiting;
+			}
+
+			$title = trim( (string) ( $row['page_title'] ?? '' ) );
+
+			$conversations[] = array(
+				'id'                     => $id,
+				'uuid'                   => (string) ( $row['conversation_uuid'] ?? '' ),
+				'title'                  => '' !== $title ? $title : __( 'Website visitor', 'adaptive-customer-engagement' ),
+				'page_url'               => (string) ( $row['page_url'] ?? '' ),
+				'status'                 => (string) ( $row['status'] ?? '' ),
+				'handover_requested'     => $handover_requested,
+				'handover_enabled'       => $handover_enabled,
+				'last_message_at'        => (string) ( $row['last_message_at'] ?? '' ),
+				'latest_user_message'    => (string) ( $row['latest_user_message'] ?? '' ),
+				'latest_user_message_at' => (string) ( $row['latest_user_message_at'] ?? '' ),
+				'admin_url'              => $base . '#chats?ace_chat=' . $id . ( $handover_requested ? '&ace_handover_request=1' : '' ),
+			);
+		}
+
+		$status = $waiting > 0 ? 'attention' : ( $active > 0 ? 'active' : 'idle' );
+
+		return new WP_REST_Response(
+			array(
+				'counts'        => array(
+					'active'  => $active,
+					'waiting' => $waiting,
+					'manual'  => $manual,
+				),
+				'status'        => $status,
+				'generated_at'  => gmdate( 'c' ),
+				'conversations' => $conversations,
+			)
+		);
 	}
 
 	/**

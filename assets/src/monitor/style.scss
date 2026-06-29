@@ -1,0 +1,221 @@
+/*
+ * Live chat monitor — admin-bar traffic light + iOS-style notifications.
+ * Colours follow the active theme palette where available, with brand fallbacks.
+ */
+
+$ace-green: var(--wp--preset--color--accent-2, #69b853);
+$ace-slate: var(--wp--preset--color--accent-1, #364048);
+$ace-red: #e0566f;
+$ace-amber: #f5b942;
+
+/* ---- Admin bar traffic light ---- */
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+}
+
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__dot {
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: #9aa3ab;
+	flex: 0 0 auto;
+}
+
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__dot[data-state='active'] {
+	background: #{$ace-green};
+	box-shadow: 0 0 0 3px color-mix(in srgb, #{$ace-green} 32%, transparent);
+	animation: ace-live-pulse 1.9s ease-in-out infinite;
+}
+
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__dot[data-state='attention'] {
+	background: #{$ace-red};
+	box-shadow: 0 0 0 3px rgba(224, 86, 111, 0.32);
+	animation: ace-live-pulse 1.05s ease-in-out infinite;
+}
+
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.18);
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 18px;
+}
+
+#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__count[data-empty='false'] {
+	background: #{$ace-green};
+	color: #fff;
+}
+
+@keyframes ace-live-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+
+	50% {
+		opacity: 0.45;
+	}
+}
+
+/* ---- iOS-style notifications ---- */
+.ace-live-notifications {
+	position: fixed;
+	top: 42px;
+	right: 16px;
+	z-index: 2147483646;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 344px;
+	max-width: calc(100vw - 32px);
+	pointer-events: none;
+}
+
+.ace-live-card {
+	pointer-events: auto;
+	box-sizing: border-box;
+	padding: 12px 14px;
+	border-radius: 18px;
+	background: rgba(255, 255, 255, 0.82);
+	-webkit-backdrop-filter: blur(20px) saturate(180%);
+	backdrop-filter: blur(20px) saturate(180%);
+	border: 1px solid rgba(255, 255, 255, 0.55);
+	box-shadow: 0 14px 44px rgba(17, 17, 17, 0.22);
+	color: #111;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Montserrat', Roboto, Helvetica, Arial, sans-serif;
+	transform: translateX(118%);
+	opacity: 0;
+	transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+}
+
+.ace-live-card.is-in {
+	transform: translateX(0);
+	opacity: 1;
+}
+
+.ace-live-card.is-attention {
+	border-color: rgba(224, 86, 111, 0.5);
+	box-shadow: 0 14px 44px rgba(224, 86, 111, 0.28);
+}
+
+.ace-live-card__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.ace-live-card__icon {
+	font-size: 15px;
+	line-height: 1;
+}
+
+.ace-live-card__title {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: 13px;
+	font-weight: 700;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ace-live-card__time {
+	font-size: 11px;
+	color: rgba(17, 17, 17, 0.5);
+	flex: 0 0 auto;
+}
+
+.ace-live-card__close {
+	flex: 0 0 auto;
+	border: 0;
+	background: transparent;
+	color: rgba(17, 17, 17, 0.45);
+	font-size: 18px;
+	line-height: 1;
+	padding: 0 2px;
+	cursor: pointer;
+}
+
+.ace-live-card__close:hover {
+	color: rgba(17, 17, 17, 0.8);
+}
+
+.ace-live-card__sub {
+	margin-top: 4px;
+	font-size: 11.5px;
+	font-weight: 600;
+	color: #{$ace-slate};
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.ace-live-card.is-attention .ace-live-card__sub {
+	color: #{$ace-red};
+}
+
+.ace-live-card__body {
+	margin-top: 4px;
+	font-size: 13.5px;
+	line-height: 1.45;
+	color: rgba(17, 17, 17, 0.86);
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.ace-live-card__actions {
+	margin-top: 10px;
+}
+
+.ace-live-card__take {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 7px 16px;
+	border-radius: 999px;
+	background: #{$ace-green};
+	color: #fff;
+	font-size: 12.5px;
+	font-weight: 700;
+	text-decoration: none;
+	transition: background 0.15s ease;
+}
+
+.ace-live-card.is-attention .ace-live-card__take {
+	background: #{$ace-red};
+}
+
+.ace-live-card__take:hover {
+	background: color-mix(in srgb, #{$ace-green} 86%, #000);
+	color: #fff;
+}
+
+.ace-live-card.is-attention .ace-live-card__take:hover {
+	background: color-mix(in srgb, #{$ace-red} 86%, #000);
+}
+
+@media (max-width: 782px) {
+	.ace-live-notifications {
+		top: 52px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ace-live-card {
+		transition: opacity 0.2s ease;
+		transform: none;
+	}
+
+	#wpadminbar #wp-admin-bar-ace-live-chats .ace-live-bar__dot {
+		animation: none !important;
+	}
+}

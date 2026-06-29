@@ -755,6 +755,41 @@ final class ChatConversationRepository {
 	}
 
 	/**
+	 * Conversations active within the last few minutes, for the live monitor.
+	 *
+	 * @param int $active_minutes Activity window in minutes.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function get_active_conversations( int $active_minutes = 15 ): array {
+		global $wpdb;
+
+		$conversations = Schema::table_name( 'chat_conversations' );
+		$messages      = Schema::table_name( 'chat_messages' );
+		$since         = gmdate( 'Y-m-d H:i:s', time() - ( max( 1, $active_minutes ) * MINUTE_IN_SECONDS ) );
+
+		$query = "SELECT cc.id, cc.conversation_uuid, cc.page_title, cc.page_url, cc.status,
+			cc.handover_enabled, cc.handover_requested, cc.handover_requested_at, cc.started_at, cc.last_message_at,
+			(
+				SELECT cm.message_text FROM {$messages} cm
+				WHERE cm.conversation_id = cc.id AND cm.message_role = 'user'
+				ORDER BY cm.id DESC LIMIT 1
+			) AS latest_user_message,
+			(
+				SELECT cm.created_at FROM {$messages} cm
+				WHERE cm.conversation_id = cc.id AND cm.message_role = 'user'
+				ORDER BY cm.id DESC LIMIT 1
+			) AS latest_user_message_at
+			FROM {$conversations} cc
+			WHERE cc.ended_at IS NULL AND cc.last_message_at > %s
+			ORDER BY cc.last_message_at DESC
+			LIMIT 30";
+
+		$rows = $wpdb->get_results( $wpdb->prepare( $query, $since ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
 	 * Build conversation filter SQL.
 	 *
 	 * @param array<string, string> $filters Filters.

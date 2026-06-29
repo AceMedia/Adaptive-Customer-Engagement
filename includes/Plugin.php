@@ -120,6 +120,7 @@ final class Plugin {
 		$this->maybe_migrate_voice_provider();
 
 		$menu->register();
+		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
 	}
 
 	/**
