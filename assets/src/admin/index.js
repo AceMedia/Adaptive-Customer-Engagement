@@ -155,7 +155,7 @@ const PAGE_META = {
 	'ai-agent': {
 		title: __('AI agent', 'adaptive-customer-engagement'),
 		icon: 'format-chat',
-		description: __('Configure the OpenAI-powered website assistant, frontend chat experience, prompts, and live site-context controls.', 'adaptive-customer-engagement'),
+		description: __('Configure the AI-powered website assistant, frontend chat experience, prompts, and live site-context controls.', 'adaptive-customer-engagement'),
 	},
 	'import-export': {
 		title: __('Import and export', 'adaptive-customer-engagement'),
@@ -286,8 +286,24 @@ function hasEnrichmentConfig(settings = {}) {
 	return !!(settings?.provider && settings.provider !== 'none' && settings?.api_key);
 }
 
+function aiProviderName(aiAgent = {}) {
+	return aiAgent?.provider === 'anthropic' ? 'anthropic' : 'openai';
+}
+
+function aiProviderKeyField(aiAgent = {}) {
+	return aiProviderName(aiAgent) === 'anthropic' ? 'anthropic_api_key' : 'openai_api_key';
+}
+
+function aiProviderModelField(aiAgent = {}) {
+	return aiProviderName(aiAgent) === 'anthropic' ? 'anthropic_model' : 'openai_model';
+}
+
+function aiProviderLabel(aiAgent = {}) {
+	return aiProviderName(aiAgent) === 'anthropic' ? 'Claude' : 'OpenAI';
+}
+
 function hasOpenAiConfig(settings = {}) {
-	return !!String(settings?.openai_api_key || '').trim();
+	return !!String(settings?.[aiProviderKeyField(settings)] || '').trim();
 }
 
 function getApiErrorMessage(error, fallback) {
@@ -4914,7 +4930,11 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsData, setOpenAiModelsData] = useState(null);
 	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
-	const currentOpenAiKey = String(settings?.ai_agent?.openai_api_key || '').trim();
+	const aiProvider = aiProviderName(settings?.ai_agent || {});
+	const aiKeyField = aiProviderKeyField(settings?.ai_agent || {});
+	const aiModelField = aiProviderModelField(settings?.ai_agent || {});
+	const aiProviderTitle = aiProviderLabel(settings?.ai_agent || {});
+	const currentOpenAiKey = String(settings?.ai_agent?.[aiKeyField] || '').trim();
 	const aiEnabled = !!settings?.ai_agent?.enabled;
 	const availableSiteContextPostTypes = Array.isArray(settings?.available_site_context_post_types) ? settings.available_site_context_post_types : [];
 	const selectedSiteContextPostTypes = Array.isArray(settings?.ai_agent?.live_context_post_types) ? settings.ai_agent.live_context_post_types : [];
@@ -4996,10 +5016,10 @@ function SettingsView({ section = 'settings', active }) {
 		try {
 			const response = await request('/admin/openai/models', {
 				method: 'POST',
-				data: { api_key: apiKey },
+				data: { api_key: apiKey, provider: aiProvider },
 			});
 			const modelIds = (response?.models || []).map((item) => item.id);
-			const selectedModel = settings?.ai_agent?.openai_model || '';
+			const selectedModel = settings?.ai_agent?.[aiModelField] || '';
 			const nextModel = modelIds.includes(selectedModel)
 				? selectedModel
 				: (response?.preferred_model || modelIds[0] || '');
@@ -5011,13 +5031,13 @@ function SettingsView({ section = 'settings', active }) {
 			setOpenAiModelsKey(apiKey);
 
 			if (nextModel && nextModel !== selectedModel) {
-				setAiAgent({ openai_model: nextModel, provider: 'openai' });
+				setAiAgent({ [aiModelField]: nextModel, provider: aiProvider });
 			}
 		} catch (error) {
 			setOpenAiModelsData({
 				active: false,
 				models: [],
-				error: getApiErrorMessage(error, __('The OpenAI token could not be verified.', 'adaptive-customer-engagement')),
+				error: getApiErrorMessage(error, sprintf(__('The %s token could not be verified.', 'adaptive-customer-engagement'), aiProviderTitle)),
 			});
 			setOpenAiModelsKey(apiKey);
 		}
@@ -5243,7 +5263,7 @@ function SettingsView({ section = 'settings', active }) {
 	const openAiConfigured = hasOpenAiConfig(settings.ai_agent || {});
 	const connectLiveReady = connectConfigured && !contactFlowData?.error;
 	const openAiTokenActive = !!openAiModelsData?.active && openAiModelsKey === currentOpenAiKey;
-	const aiProviderReady = aiEnabled && openAiTokenActive && !!settings.ai_agent?.openai_model;
+	const aiProviderReady = aiEnabled && openAiTokenActive && !!settings.ai_agent?.[aiModelField];
 	const openAiModelOptions = [{ label: __('Choose a model', 'adaptive-customer-engagement'), value: '' }].concat(
 		(openAiModelsData?.models || []).map((item) => ({
 			label: item.label || item.id,
@@ -5725,37 +5745,59 @@ function SettingsView({ section = 'settings', active }) {
 				title: __('Configure the frontend AI chat, prompts, and live site context from one control surface.', 'adaptive-customer-engagement'),
 				description: __('Use OpenAI as the website chat runtime so prompts, models, and grounding stay under direct control inside WordPress.', 'adaptive-customer-engagement'),
 				highlights: commonHighlights.concat([
-					{ label: __('Runtime', 'adaptive-customer-engagement'), value: __('OpenAI website chat', 'adaptive-customer-engagement') },
+					{ label: __('Runtime', 'adaptive-customer-engagement'), value: sprintf(__('%s website chat', 'adaptive-customer-engagement'), aiProviderTitle) },
 				]),
 			}),
-			createElement(SetupGuideCard, {
-				title: __('OpenAI setup', 'adaptive-customer-engagement'),
-				description: __('Connect an OpenAI key, choose the model, and control how the website assistant uses current site content in its replies.', 'adaptive-customer-engagement'),
-				links: [
-					{ label: __('OpenAI API keys', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/api-keys' },
-					{ label: __('OpenAI model docs', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/docs/models' },
-					{ label: __('OpenAI text generation guide', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/docs/guides/text' },
-				],
-			}),
+			createElement(SetupGuideCard, aiProvider === 'anthropic'
+				? {
+					title: __('Claude setup', 'adaptive-customer-engagement'),
+					description: __('Connect an Anthropic (Claude) key, choose the model, and control how the website assistant uses current site content in its replies.', 'adaptive-customer-engagement'),
+					links: [
+						{ label: __('Anthropic API keys', 'adaptive-customer-engagement'), href: 'https://console.anthropic.com/settings/keys' },
+						{ label: __('Claude model docs', 'adaptive-customer-engagement'), href: 'https://docs.claude.com/en/docs/about-claude/models/overview' },
+						{ label: __('Claude Messages API', 'adaptive-customer-engagement'), href: 'https://docs.claude.com/en/api/messages' },
+					],
+				}
+				: {
+					title: __('OpenAI setup', 'adaptive-customer-engagement'),
+					description: __('Connect an OpenAI key, choose the model, and control how the website assistant uses current site content in its replies.', 'adaptive-customer-engagement'),
+					links: [
+						{ label: __('OpenAI API keys', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/api-keys' },
+						{ label: __('OpenAI model docs', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/docs/models' },
+						{ label: __('OpenAI text generation guide', 'adaptive-customer-engagement'), href: 'https://platform.openai.com/docs/guides/text' },
+					],
+				}),
 			createElement(SettingsPanel, {
 				title: __('Connection and model', 'adaptive-customer-engagement'),
-				description: __('Enable the AI surface, connect the OpenAI key, and pull the available models straight from the active token.', 'adaptive-customer-engagement'),
+				description: __('Enable the AI surface, choose a provider, connect its key, and pull the available models straight from the active token.', 'adaptive-customer-engagement'),
 			},
 			createElement(SettingsToggleList, null,
 				createElement(ToggleControl, { label: __('Enable AI agent features', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.enabled, onChange: (next) => setAiAgent({ enabled: next }) }),
-				aiEnabled ? createElement(ToggleControl, { label: __('Allow human handoff', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.handoff_to_human, onChange: (next) => setAiAgent({ handoff_to_human: next }) }) : null
+				aiEnabled ? createElement(ToggleControl, { label: __('Allow human handoff', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.handoff_to_human, onChange: (next) => setAiAgent({ handoff_to_human: next }) }) : null,
+				aiEnabled ? createElement(ToggleControl, { label: __('Restrict the assistant to this business only', 'adaptive-customer-engagement'), help: __('Keeps replies on topic (products, services, orders, support) and refuses unrelated or general-purpose requests.', 'adaptive-customer-engagement'), checked: settings.ai_agent.restrict_to_site_scope !== false, onChange: (next) => setAiAgent({ restrict_to_site_scope: next }) }) : null
 			),
 			aiEnabled
 				? createElement(Fragment, null,
 					createElement(SettingsFieldGrid, { compact: true },
-						createElement(TextControl, { label: __('OpenAI API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.openai_api_key || '', onChange: (next) => setAiAgent({ openai_api_key: next, provider: 'openai', openai_model: next !== (settings.ai_agent.openai_api_key || '') ? '' : settings.ai_agent.openai_model }) }),
+						createElement(SelectControl, {
+							label: __('Provider', 'adaptive-customer-engagement'),
+							value: aiProvider,
+							options: [
+								{ label: __('OpenAI', 'adaptive-customer-engagement'), value: 'openai' },
+								{ label: __('Anthropic (Claude)', 'adaptive-customer-engagement'), value: 'anthropic' },
+							],
+							onChange: (next) => setAiAgent({ provider: next === 'anthropic' ? 'anthropic' : 'openai' }),
+						}),
+					),
+					createElement(SettingsFieldGrid, { compact: true },
+						createElement(TextControl, { label: sprintf(__('%s API key', 'adaptive-customer-engagement'), aiProviderTitle), type: 'password', value: settings.ai_agent[aiKeyField] || '', onChange: (next) => setAiAgent({ [aiKeyField]: next, provider: aiProvider, [aiModelField]: next !== (settings.ai_agent[aiKeyField] || '') ? '' : settings.ai_agent[aiModelField] }) }),
 					),
 					createElement(SettingsActionRow, null,
 						createElement(Button, {
 							variant: 'secondary',
 							onClick: () => refreshOpenAiModels(),
 							disabled: openAiModelsBusy || !openAiConfigured,
-						}, openAiModelsBusy ? __('Checking token…', 'adaptive-customer-engagement') : __('Check OpenAI token', 'adaptive-customer-engagement'))
+						}, openAiModelsBusy ? __('Checking token…', 'adaptive-customer-engagement') : sprintf(__('Check %s token', 'adaptive-customer-engagement'), aiProviderTitle))
 					),
 					openAiModelsBusy ? createElement(Spinner) : null,
 					openAiModelsData?.error
@@ -5763,24 +5805,25 @@ function SettingsView({ section = 'settings', active }) {
 						: null,
 					openAiTokenActive
 						? createElement(Fragment, null,
-							createElement(Notice, { status: 'success', isDismissible: false }, __('OpenAI is connected. Model and chat settings are now available below.', 'adaptive-customer-engagement')),
+							createElement(Notice, { status: 'success', isDismissible: false }, sprintf(__('%s is connected. Model and chat settings are now available below.', 'adaptive-customer-engagement'), aiProviderTitle)),
 							createElement(SettingsFieldGrid, { compact: true },
-								createElement(SelectControl, { label: __('Model', 'adaptive-customer-engagement'), value: settings.ai_agent.openai_model || '', options: openAiModelOptions, onChange: (next) => setAiAgent({ openai_model: next, provider: 'openai' }) }),
+								createElement(SelectControl, { label: __('Model', 'adaptive-customer-engagement'), value: settings.ai_agent[aiModelField] || '', options: openAiModelOptions, onChange: (next) => setAiAgent({ [aiModelField]: next, provider: aiProvider }) }),
 							)
 						)
 						: null
 				)
-				: createElement(Notice, { status: 'info', isDismissible: false }, __('Enable AI agent features first to reveal the OpenAI connection fields.', 'adaptive-customer-engagement')),
+				: createElement(Notice, { status: 'info', isDismissible: false }, __('Enable AI agent features first to reveal the provider connection fields.', 'adaptive-customer-engagement')),
 			aiEnabled && !openAiConfigured
-				? createElement(Notice, { status: 'warning', isDismissible: false }, __('Add an OpenAI API key first, then check the token to reveal the website-assistant settings.', 'adaptive-customer-engagement'))
+				? createElement(Notice, { status: 'warning', isDismissible: false }, sprintf(__('Add a %s API key first, then check the token to reveal the website-assistant settings.', 'adaptive-customer-engagement'), aiProviderTitle))
 				: null,
 			aiEnabled && openAiConfigured && !openAiTokenActive && !openAiModelsBusy
-				? createElement(Notice, { status: 'info', isDismissible: false }, __('Check the OpenAI token to load the models available to this account.', 'adaptive-customer-engagement'))
+				? createElement(Notice, { status: 'info', isDismissible: false }, sprintf(__('Check the %s token to load the models available to this account.', 'adaptive-customer-engagement'), aiProviderTitle))
 				: null,
 			openAiTokenActive
 				? createElement(SettingsResultCard, {
 					items: [
-						{ label: __('Selected model', 'adaptive-customer-engagement'), value: settings.ai_agent.openai_model || '—' },
+						{ label: __('Provider', 'adaptive-customer-engagement'), value: aiProviderTitle },
+						{ label: __('Selected model', 'adaptive-customer-engagement'), value: settings.ai_agent[aiModelField] || '—' },
 						{ label: __('Available models', 'adaptive-customer-engagement'), value: `${(openAiModelsData?.models || []).length}` },
 						{ label: __('Frontend chat', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_enabled ? __('Enabled', 'adaptive-customer-engagement') : __('Disabled', 'adaptive-customer-engagement') },
 					],
@@ -5803,8 +5846,56 @@ function SettingsView({ section = 'settings', active }) {
 					),
 					createElement(SettingsFieldGrid, { compact: true },
 						createElement(TextControl, { label: __('Temperature', 'adaptive-customer-engagement'), type: 'number', min: 0, max: 2, step: '0.1', value: settings.ai_agent.openai_temperature ?? 0.2, onChange: (next) => setAiAgent({ openai_temperature: Number(next || 0) }) }),
-						createElement(TextControl, { label: __('Max response tokens', 'adaptive-customer-engagement'), type: 'number', min: 200, max: 4000, step: '50', value: settings.ai_agent.openai_max_response_tokens ?? 700, onChange: (next) => setAiAgent({ openai_max_response_tokens: Number(next || 700) }) }),
+						createElement(TextControl, { label: __('Max response tokens', 'adaptive-customer-engagement'), type: 'number', min: 200, max: 8000, step: '50', value: settings.ai_agent.openai_max_response_tokens ?? 1500, onChange: (next) => setAiAgent({ openai_max_response_tokens: Number(next || 1500) }) }),
 					),
+					settings.ai_agent.frontend_chat_enabled
+						? createElement(SettingsPanel, {
+							title: __('Voice (talk to the assistant)', 'adaptive-customer-engagement'),
+							description: __('Let visitors speak to the assistant and hear replies. Voice uses the browser by default (works with both OpenAI and Claude); connect a premium voice provider below for studio-quality speech.', 'adaptive-customer-engagement'),
+							tone: 'soft',
+						},
+						createElement(SettingsToggleList, null,
+							createElement(ToggleControl, { label: __('Enable voice input (microphone)', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_voice_input, onChange: (next) => setAiAgent({ frontend_voice_input: next }) }),
+							createElement(ToggleControl, { label: __('Enable spoken replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_voice_replies, onChange: (next) => setAiAgent({ frontend_voice_replies: next }) }),
+							settings.ai_agent.frontend_voice_replies ? createElement(ToggleControl, { label: __('Speak replies automatically', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_voice_autospeak, onChange: (next) => setAiAgent({ frontend_voice_autospeak: next }) }) : null,
+							(settings.ai_agent.frontend_voice_input && settings.ai_agent.frontend_voice_replies) ? createElement(ToggleControl, { label: __('Hands-free conversation (auto-listen after each reply)', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_voice_hands_free, onChange: (next) => setAiAgent({ frontend_voice_hands_free: next }) }) : null
+						),
+						(settings.ai_agent.frontend_voice_input || settings.ai_agent.frontend_voice_replies)
+							? createElement(SettingsFieldGrid, { compact: true },
+								createElement(TextControl, { label: __('Voice language / locale', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_voice_lang || 'en-GB', help: __('BCP-47 code, e.g. en-GB, en-US, fr-FR.', 'adaptive-customer-engagement'), onChange: (next) => setAiAgent({ frontend_voice_lang: next }) }),
+							)
+							: null,
+						settings.ai_agent.frontend_voice_replies
+							? createElement(SettingsFieldGrid, { compact: true },
+								createElement(SelectControl, {
+									label: __('Spoken-reply voice engine', 'adaptive-customer-engagement'),
+									value: settings.ai_agent.frontend_voice_provider || 'browser',
+									help: __('Browser is free and works everywhere; premium engines sound more natural (key kept server-side, browser used as fallback).', 'adaptive-customer-engagement'),
+									options: [
+										{ label: __('Browser (free, device voices)', 'adaptive-customer-engagement'), value: 'browser' },
+										{ label: __('OpenAI (premium)', 'adaptive-customer-engagement'), value: 'openai' },
+										{ label: __('ElevenLabs (premium)', 'adaptive-customer-engagement'), value: 'elevenlabs' },
+									],
+									onChange: (next) => setAiAgent({ frontend_voice_provider: next }),
+								}),
+							)
+							: null,
+						(settings.ai_agent.frontend_voice_replies && settings.ai_agent.frontend_voice_provider === 'openai')
+							? createElement(SettingsFieldGrid, { compact: true },
+								createElement(TextControl, { label: __('OpenAI voice API key (optional)', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.voice_openai_api_key || '', help: __('Leave blank to reuse the OpenAI chat key.', 'adaptive-customer-engagement'), onChange: (next) => setAiAgent({ voice_openai_api_key: next }) }),
+								createElement(SelectControl, { label: __('OpenAI voice', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_openai_voice || 'alloy', options: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse'].map((v) => ({ label: v, value: v })), onChange: (next) => setAiAgent({ voice_openai_voice: next }) }),
+								createElement(TextControl, { label: __('OpenAI TTS model', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_openai_model || 'gpt-4o-mini-tts', onChange: (next) => setAiAgent({ voice_openai_model: next }) }),
+							)
+							: null,
+						(settings.ai_agent.frontend_voice_replies && settings.ai_agent.frontend_voice_provider === 'elevenlabs')
+							? createElement(SettingsFieldGrid, { compact: true },
+								createElement(TextControl, { label: __('ElevenLabs API key', 'adaptive-customer-engagement'), type: 'password', value: settings.ai_agent.voice_elevenlabs_api_key || '', onChange: (next) => setAiAgent({ voice_elevenlabs_api_key: next }) }),
+								createElement(TextControl, { label: __('ElevenLabs voice ID', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_elevenlabs_voice_id || '', help: __('Find voice IDs in your ElevenLabs Voice Library.', 'adaptive-customer-engagement'), onChange: (next) => setAiAgent({ voice_elevenlabs_voice_id: next }) }),
+								createElement(TextControl, { label: __('ElevenLabs model', 'adaptive-customer-engagement'), value: settings.ai_agent.voice_elevenlabs_model || 'eleven_turbo_v2_5', onChange: (next) => setAiAgent({ voice_elevenlabs_model: next }) }),
+							)
+							: null
+						)
+						: null,
 					settings.ai_agent.frontend_chat_enabled
 						? createElement(SettingsFieldGrid, { compact: true },
 							createElement(TextControl, { label: __('Chatbot name', 'adaptive-customer-engagement'), value: settings.ai_agent.frontend_chat_bot_name || settings.ai_agent.frontend_chat_title || '', onChange: (next) => setAiAgent({ frontend_chat_bot_name: next, frontend_chat_title: next }) }),
@@ -5840,7 +5931,7 @@ function SettingsView({ section = 'settings', active }) {
 					}),
 					createElement(Notice, { status: aiProviderReady && settings.ai_agent.frontend_chat_enabled ? 'success' : 'info', isDismissible: false }, aiProviderReady && settings.ai_agent.frontend_chat_enabled
 						? sprintf(__('Frontend chat messages will post to %s once these settings are saved.', 'adaptive-customer-engagement'), frontendChatEndpoint)
-						: __('Save the OpenAI key and enable the frontend chat to activate the website assistant.', 'adaptive-customer-engagement'))
+						: sprintf(__('Save the %s key and enable the frontend chat to activate the website assistant.', 'adaptive-customer-engagement'), aiProviderTitle))
 					),
 					createElement(SettingsPanel, {
 						title: __('Prompts and context', 'adaptive-customer-engagement'),
