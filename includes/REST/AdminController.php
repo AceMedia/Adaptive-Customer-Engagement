@@ -4589,22 +4589,15 @@ final class AdminController {
 		$fallback_action_id   = wp_generate_uuid4();
 		$disconnect_action_id = wp_generate_uuid4();
 		$fallback_text        = '' !== $failure_message ? $failure_message : __( 'Sorry, the forwarding destination is unavailable just now. Please try again later.', 'adaptive-customer-engagement' );
-		$transfer_parameters  = array(
-			'PhoneNumber' => $target_phone_number,
-			'Timeout'     => $timeout_seconds,
+		// Amazon Connect's external-transfer action is TransferParticipantToThirdParty.
+		// Caller ID / DTMF are not parameters of this action, so they are not sent.
+		$transfer_parameters = array(
+			'ThirdPartyPhoneNumber'              => $target_phone_number,
+			'ThirdPartyConnectionTimeoutSeconds' => $timeout_seconds,
+			// End the flow once the caller is connected to the destination.
+			'ContinueFlowExecution'              => 'False',
 		);
-
-		if ( '' !== $caller_id_number ) {
-			$transfer_parameters['CallerIdNumber'] = $caller_id_number;
-		}
-
-		if ( '' !== $dtmf_sequence ) {
-			$transfer_parameters['DTMF'] = $dtmf_sequence;
-		}
-
-		if ( $resume_after_disconnect ) {
-			$transfer_parameters['ResumeFlowAfterDisconnect'] = true;
-		}
+		unset( $caller_id_number, $dtmf_sequence, $resume_after_disconnect );
 
 		$content = array(
 			'Version'     => '2019-10-30',
@@ -4641,9 +4634,9 @@ final class AdminController {
 				),
 				array(
 					'Identifier'  => $transfer_action_id,
-					'Type'        => 'TransferParticipantToPhoneNumber',
+					'Type'        => 'TransferParticipantToThirdParty',
 					'Transitions' => array(
-						'NextAction' => $resume_after_disconnect ? $disconnect_action_id : '',
+						'NextAction' => $disconnect_action_id,
 						'Errors'     => array(
 							array(
 								'NextAction' => $fallback_action_id,
