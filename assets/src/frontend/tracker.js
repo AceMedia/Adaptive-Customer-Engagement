@@ -5,7 +5,8 @@ const WOO_INTEREST_STORAGE_KEY = 'ace_wc_interest_v1';
 
 function setCookie(name, value, duration, useDays = false) {
 	const maxAge = useDays ? duration * 24 * 60 * 60 : duration * 60;
-	document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; SameSite=Lax`;
+	const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+	document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
 }
 
 function getCookie(name) {
@@ -422,6 +423,19 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	window.__aceAiChatConfigured = true;
 
+	// Voice (provider-agnostic — works regardless of whether the text brain is OpenAI or Claude).
+	const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+	const voiceOutputSupported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+	const voiceInputEnabled = !!chatConfig.voiceInput && !!SpeechRecognitionImpl;
+	const premiumTtsEnabled = !!chatConfig.voiceTtsEnabled && !!chatConfig.voiceProvider && chatConfig.voiceProvider !== 'browser' && !!chatConfig.voiceTtsEndpoint;
+	const voiceRepliesEnabled = !!chatConfig.voiceReplies && (voiceOutputSupported || premiumTtsEnabled);
+	const voiceHandsFree = !!chatConfig.voiceHandsFree;
+	const voiceLang = String(chatConfig.voiceLang || 'en-GB');
+	let speechRecognition = null;
+	let lastSpokenKey = '';
+	let voiceRenderPrimed = false;
+	let currentAudio = null;
+
 	const launcher = document.createElement('button');
 	const panel = document.createElement('section');
 	const header = document.createElement('div');
@@ -447,6 +461,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const actions = document.createElement('div');
 	const meta = document.createElement('div');
 	const send = document.createElement('button');
+	const micButton = document.createElement('button');
+	const voiceToggle = document.createElement('button');
 	const state = {
 		open: false,
 		started: false,
@@ -461,6 +477,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		followUpRequested: false,
 		typing: {},
 		syncBackoffUntil: 0,
+		voiceListening: false,
+		voiceSpeaking: false,
+		voiceSpeakerOn: voiceRepliesEnabled && !!chatConfig.voiceAutospeak,
 	};
 	const chatStateKey = `ace_ai_chat_state_v1:${visitorUuid || 'guest'}`;
 	let syncTimer = null;
@@ -499,7 +518,16 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	endChat.type = 'button';
 	endChat.textContent = 'End chat';
 	headerActions.id = 'ace-ai-chat-header-actions';
+	voiceToggle.id = 'ace-ai-chat-voice-toggle';
+	voiceToggle.type = 'button';
+	voiceToggle.className = 'ace-ai-chat-voice-toggle';
+	voiceToggle.setAttribute('aria-label', 'Toggle spoken replies');
+	voiceToggle.setAttribute('aria-pressed', 'false');
+	voiceToggle.textContent = '🔇';
 	headerActions.appendChild(contactToggle);
+	if (voiceRepliesEnabled) {
+		headerActions.appendChild(voiceToggle);
+	}
 	headerActions.appendChild(endChat);
 	headerActions.appendChild(close);
 
@@ -543,8 +571,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	send.id = 'ace-ai-chat-send';
 	send.type = 'submit';
 	send.textContent = 'Send';
+	micButton.id = 'ace-ai-chat-mic';
+	micButton.type = 'button';
+	micButton.className = 'ace-ai-chat-mic';
+	micButton.setAttribute('aria-label', 'Speak your message');
+	micButton.setAttribute('aria-pressed', 'false');
+	micButton.textContent = '🎤';
 
 	actions.appendChild(meta);
+	if (voiceInputEnabled) {
+		actions.appendChild(micButton);
+	}
 	actions.appendChild(send);
 	contactPanel.appendChild(contactCopy);
 	contactPanel.appendChild(contactName);
@@ -1542,6 +1579,221 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		});
 	};
 
+	const updateVoiceUi = () => {
+		if (voiceInputEnabled) {
+			micButton.classList.toggle('is-listening', state.voiceListening);
+			micButton.disabled = state.pending || state.conversationStatus === 'ended';
+			micButton.setAttribute('aria-pressed', state.voiceListening ? 'true' : 'false');
+		}
+
+		if (voiceRepliesEnabled) {
+			voiceToggle.classList.toggle('is-on', state.voiceSpeakerOn);
+			voiceToggle.classList.toggle('is-speaking', state.voiceSpeaking);
+			voiceToggle.textContent = state.voiceSpeakerOn ? '🔊' : '🔇';
+			voiceToggle.setAttribute('aria-pressed', state.voiceSpeakerOn ? 'true' : 'false');
+		}
+	};
+
+	const stopSpeaking = () => {
+		try {
+			if (voiceOutputSupported) {
+				window.speechSynthesis.cancel();
+			}
+		} catch (error) {
+			// Ignore speech synthesis failures.
+		}
+
+		if (currentAudio) {
+			try {
+				currentAudio.pause();
+				currentAudio.src = '';
+			} catch (error) {
+				// Ignore audio teardown failures.
+			}
+
+			currentAudio = null;
+		}
+
+		state.voiceSpeaking = false;
+	};
+
+	const onSpeakStart = () => {
+		state.voiceSpeaking = true;
+		updateVoiceUi();
+	};
+
+	const onSpeakEnd = () => {
+		state.voiceSpeaking = false;
+		updateVoiceUi();
+
+		if (voiceHandsFree && voiceInputEnabled && state.voiceSpeakerOn && state.open && !state.pending && state.conversationStatus !== 'ended') {
+			startListening();
+		}
+	};
+
+	const speakBrowser = (text) => {
+		if (!voiceOutputSupported) {
+			onSpeakEnd();
+			return;
+		}
+
+		try {
+			const utterance = new window.SpeechSynthesisUtterance(text);
+			utterance.lang = voiceLang;
+			utterance.onstart = onSpeakStart;
+			utterance.onend = onSpeakEnd;
+			utterance.onerror = onSpeakEnd;
+			window.speechSynthesis.speak(utterance);
+		} catch (error) {
+			onSpeakEnd();
+		}
+	};
+
+	const speakPremium = async (text) => {
+		try {
+			onSpeakStart();
+
+			const headers = { 'Content-Type': 'application/json' };
+
+			if (chatConfig.restNonce) {
+				headers['X-WP-Nonce'] = chatConfig.restNonce;
+			}
+
+			const response = await fetch(chatConfig.voiceTtsEndpoint, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers,
+				body: JSON.stringify({ text }),
+			});
+
+			if (!response.ok) {
+				throw new Error('tts-request-failed');
+			}
+
+			const data = await response.json();
+
+			if (!data || !data.audio) {
+				throw new Error('tts-empty');
+			}
+
+			stopSpeaking();
+			currentAudio = new Audio(`data:${data.mime || 'audio/mpeg'};base64,${data.audio}`);
+			state.voiceSpeaking = true;
+			updateVoiceUi();
+			currentAudio.onended = onSpeakEnd;
+			currentAudio.onerror = onSpeakEnd;
+			await currentAudio.play();
+		} catch (error) {
+			// Fall back to the browser voice if the premium provider fails.
+			currentAudio = null;
+			speakBrowser(text);
+		}
+	};
+
+	const speakText = (text) => {
+		const clean = String(text || '').replace(/\s+/g, ' ').trim();
+
+		if (!clean || !voiceRepliesEnabled || !state.voiceSpeakerOn) {
+			return;
+		}
+
+		stopSpeaking();
+
+		if (premiumTtsEnabled) {
+			speakPremium(clean);
+		} else {
+			speakBrowser(clean);
+		}
+	};
+
+	const startListening = () => {
+		if (!voiceInputEnabled || state.voiceListening || state.pending || state.conversationStatus === 'ended') {
+			return;
+		}
+
+		try {
+			stopSpeaking();
+			speechRecognition = new SpeechRecognitionImpl();
+			speechRecognition.lang = voiceLang;
+			speechRecognition.interimResults = false;
+			speechRecognition.maxAlternatives = 1;
+			speechRecognition.onstart = () => {
+				state.voiceListening = true;
+				updateVoiceUi();
+			};
+			speechRecognition.onerror = () => {
+				state.voiceListening = false;
+				updateVoiceUi();
+			};
+			speechRecognition.onend = () => {
+				state.voiceListening = false;
+				updateVoiceUi();
+			};
+			speechRecognition.onresult = (event) => {
+				const transcript = Array.from(event.results || [])
+					.map((result) => (result[0] && result[0].transcript) || '')
+					.join(' ')
+					.trim();
+
+				if (!transcript) {
+					return;
+				}
+
+				input.value = transcript;
+				updateInputHeight();
+
+				if (voiceHandsFree) {
+					form.requestSubmit();
+				} else {
+					input.focus();
+				}
+			};
+			speechRecognition.start();
+		} catch (error) {
+			state.voiceListening = false;
+			updateVoiceUi();
+		}
+	};
+
+	const stopListening = () => {
+		try {
+			if (speechRecognition) {
+				speechRecognition.stop();
+			}
+		} catch (error) {
+			// Ignore.
+		}
+
+		state.voiceListening = false;
+		updateVoiceUi();
+	};
+
+	const maybeSpeakLatest = () => {
+		if (!voiceRepliesEnabled) {
+			return;
+		}
+
+		const speakable = [...state.messages].reverse().find((message) => (message.role === 'assistant' || message.role === 'operator') && String(message.content || '').trim() && !message.is_error);
+		const key = speakable ? String(speakable.client_key || speakable.id || '') : '';
+
+		// On the first render after restore, prime the marker so existing history is not read aloud.
+		if (!voiceRenderPrimed) {
+			voiceRenderPrimed = true;
+			lastSpokenKey = key;
+			return;
+		}
+
+		if (!key || key === lastSpokenKey) {
+			return;
+		}
+
+		lastSpokenKey = key;
+
+		if (state.voiceSpeakerOn && state.open) {
+			speakText(speakable.content);
+		}
+	};
+
 	const renderMessages = ({ force = false, focusLatest = false } = {}) => {
 		const existingNodes = Array.from(messagesNode.querySelectorAll('[data-ace-message="true"]'));
 		const existingKeys = existingNodes.map((node) => node.dataset.messageKey || '');
@@ -1572,6 +1824,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		if (focusLatest && latestNode) {
 			scrollLatestMessageIntoView(latestNode);
 		}
+
+		updateVoiceUi();
+		maybeSpeakLatest();
 	};
 
 	restoreChatState();
@@ -1770,6 +2025,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		} else {
 			stopSync();
 			stopAvailabilityPolling();
+			stopSpeaking();
+			stopListening();
 		}
 	};
 
@@ -1778,6 +2035,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		send.textContent = nextPending ? 'Sending…' : 'Send';
 		updateInputHeight();
 		updateChatMeta();
+		updateVoiceUi();
 	};
 
 	const buildHistory = () => state.messages
@@ -1988,6 +2246,30 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			form.requestSubmit();
 		}
 	});
+
+	if (voiceInputEnabled) {
+		micButton.addEventListener('click', () => {
+			if (state.voiceListening) {
+				stopListening();
+			} else {
+				startListening();
+			}
+		});
+	}
+
+	if (voiceRepliesEnabled) {
+		voiceToggle.addEventListener('click', () => {
+			state.voiceSpeakerOn = !state.voiceSpeakerOn;
+
+			if (!state.voiceSpeakerOn) {
+				stopSpeaking();
+			}
+
+			updateVoiceUi();
+		});
+	}
+
+	updateVoiceUi();
 }
 
 function init() {

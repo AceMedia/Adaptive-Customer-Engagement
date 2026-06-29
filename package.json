@@ -7,7 +7,10 @@
   "license": "GPL-2.0-or-later",
   "scripts": {
     "build": "wp-scripts build",
-    "start": "wp-scripts start"
+    "start": "wp-scripts start",
+    "format": "wp-scripts format",
+    "lint:js": "wp-scripts lint-js",
+    "lint:css": "wp-scripts lint-style"
   },
   "devDependencies": {
     "@wordpress/api-fetch": "^7.0.0",

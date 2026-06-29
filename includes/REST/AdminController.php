@@ -9,7 +9,7 @@ namespace ACE\AdaptiveCustomerEngagement\REST;
 
 use ACE\AdaptiveCustomerEngagement\AI\AgentAvailability;
 use ACE\AdaptiveCustomerEngagement\AI\ChatPresence;
-use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
+use ACE\AdaptiveCustomerEngagement\AI\ChatClientFactory;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
@@ -1214,11 +1214,12 @@ final class AdminController {
 			}
 		}
 
-		$settings       = Settings::get();
-		$ai_agent       = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
-		$api_key        = sanitize_text_field( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
-		$model          = sanitize_text_field( (string) ( $ai_agent['openai_model'] ?? 'gpt-4.1-mini' ) );
-		$site_context   = new SiteContextService();
+		$settings        = Settings::get();
+		$ai_agent        = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+		$provider_config = ChatClientFactory::resolve( $ai_agent );
+		$api_key         = sanitize_text_field( (string) $provider_config['api_key'] );
+		$model           = sanitize_text_field( (string) $provider_config['model'] );
+		$site_context    = new SiteContextService();
 		$site_answer    = $site_context->answer_question( $latest_user_text, 3 );
 		$session_brief  = ! empty( $conversation['session_id'] ) ? $this->events->get_session_woocommerce_interest( (int) $conversation['session_id'] ) : array();
 		$company_brief  = ! empty( $conversation['company_id'] ) ? $this->events->get_company_woocommerce_interest( (int) $conversation['company_id'] ) : array();
@@ -1237,7 +1238,7 @@ final class AdminController {
 		);
 
 		if ( '' !== $api_key ) {
-			$response = ( new OpenAIClient() )->create_chat_completion(
+			$response = $provider_config['client']->create_chat_completion(
 				array(
 					array(
 						'role'    => 'system',
@@ -1620,7 +1621,9 @@ final class AdminController {
 		$payload = is_array( $payload ) ? $payload : array();
 		$settings = Settings::get();
 		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
-		$api_key  = sanitize_text_field( (string) ( $payload['api_key'] ?? $ai_agent['openai_api_key'] ?? '' ) );
+		$provider = sanitize_key( (string) ( $payload['provider'] ?? $ai_agent['provider'] ?? 'openai' ) );
+		$saved_key = 'anthropic' === $provider ? ( $ai_agent['anthropic_api_key'] ?? '' ) : ( $ai_agent['openai_api_key'] ?? '' );
+		$api_key  = sanitize_text_field( (string) ( $payload['api_key'] ?? $saved_key ) );
 
 		if ( '' === trim( $api_key ) ) {
 			return new WP_REST_Response(
@@ -1632,7 +1635,7 @@ final class AdminController {
 			);
 		}
 
-		$result = ( new OpenAIClient() )->list_models( $api_key );
+		$result = ChatClientFactory::make_for_provider( $provider )->list_models( $api_key );
 
 		if ( is_wp_error( $result ) ) {
 			return $result;
@@ -5639,6 +5642,21 @@ final class AdminController {
 	 * @param array<int, array<string, mixed>>    $rows     Row data.
 	 * @return void
 	 */
+	/**
+	 * Neutralise CSV formula injection: prefix cells that begin with a formula
+	 * trigger character so spreadsheet apps treat them as text.
+	 *
+	 * @param string $value Cell value.
+	 * @return string
+	 */
+	private function neutralize_csv_value( string $value ): string {
+		if ( '' !== $value && in_array( $value[0], array( '=', '+', '-', '@', "\t", "\r" ), true ) ) {
+			return "'" . $value;
+		}
+
+		return $value;
+	}
+
 	private function stream_csv( string $filename, array $columns, array $rows ): void {
 		$stream = fopen( 'php://temp', 'r+' );
 
@@ -5646,14 +5664,14 @@ final class AdminController {
 			wp_die( esc_html__( 'The export file could not be created.', 'adaptive-customer-engagement' ), 500 );
 		}
 
-		fputcsv( $stream, array_values( $columns ) );
+		fputcsv( $stream, array_map( array( $this, 'neutralize_csv_value' ), array_values( $columns ) ) );
 
 		foreach ( $rows as $row ) {
 			$line = array();
 
 			foreach ( array_keys( $columns ) as $key ) {
 				$value  = $row[ $key ] ?? '';
-				$line[] = is_scalar( $value ) ? (string) $value : wp_json_encode( $value );
+				$line[] = $this->neutralize_csv_value( is_scalar( $value ) ? (string) $value : (string) wp_json_encode( $value ) );
 			}
 
 			fputcsv( $stream, $line );

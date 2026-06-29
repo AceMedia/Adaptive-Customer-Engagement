@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.6';
+	public const SCHEMA_VERSION        = '0.1.7';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -63,7 +63,9 @@ final class Schema {
 			KEY last_seen (last_seen),
 			KEY ip_hash (ip_hash),
 			KEY company_id (company_id),
-			KEY is_bot (is_bot)
+			KEY is_bot (is_bot),
+			KEY company_confidence (company_confidence),
+			KEY ip_raw_expires_at (ip_raw_expires_at)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'events' ) . " (
@@ -90,7 +92,9 @@ final class Schema {
 			KEY event_type (event_type),
 			KEY occurred_at (occurred_at),
 			KEY post_id (post_id),
-			KEY number_id (number_id)
+			KEY number_id (number_id),
+			KEY event_type_occurred (event_type, occurred_at),
+			KEY session_event_type (session_id, event_type)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'companies' ) . " (
@@ -173,7 +177,9 @@ final class Schema {
 			KEY number_id (number_id),
 			KEY started_at (started_at),
 			KEY matched_session_id (matched_session_id),
-			KEY matched_company_id (matched_company_id)
+			KEY matched_company_id (matched_company_id),
+			KEY status (status),
+			KEY caller_number_expires_at (caller_number_expires_at)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'enrichment_cache' ) . " (
@@ -299,7 +305,8 @@ final class Schema {
 			KEY company_id (company_id),
 			KEY message_role (message_role),
 			KEY operator_user_id (operator_user_id),
-			KEY created_at (created_at)
+			KEY created_at (created_at),
+			KEY conversation_role (conversation_id, message_role)
 		) {$collate};";
 
 		foreach ( $tables as $table_sql ) {

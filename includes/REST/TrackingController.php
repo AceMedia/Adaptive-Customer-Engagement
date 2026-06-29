@@ -9,6 +9,7 @@ namespace ACE\AdaptiveCustomerEngagement\REST;
 
 use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
+use ACE\AdaptiveCustomerEngagement\AI\TextToSpeechService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
@@ -150,6 +151,16 @@ final class TrackingController {
 				'methods'             => 'POST',
 				'permission_callback' => '__return_true',
 				'callback'            => array( $this, 'ai_chat_respond' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/ai/voice/tts',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_voice_tts' ),
 			)
 		);
 
@@ -312,6 +323,11 @@ final class TrackingController {
 			return new WP_Error( 'ace_rate_limited', __( 'Too many chat messages have been sent just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
 		}
 
+		// Site-wide ceiling so a spoofed per-IP key cannot run up unbounded spend on the paid AI provider.
+		if ( ! $this->rate_limiter->allow( 'ace-ai-chat-global', (int) apply_filters( 'ace_ai_chat_global_rate_limit', 600 ), MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'The assistant is handling a lot of requests right now. Please try again shortly.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
 		$payload  = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 		$response = $this->frontend_chat->respond( $payload );
 
@@ -320,6 +336,51 @@ final class TrackingController {
 		}
 
 		return new WP_REST_Response( $response );
+	}
+
+	/**
+	 * Synthesise spoken-reply audio with the configured premium voice provider.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_voice_tts( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) || empty( $ai_agent['frontend_voice_replies'] ) ) {
+			return new WP_Error( 'ace_tts_disabled', __( 'Spoken replies are not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_tts_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		$service = new TextToSpeechService();
+
+		if ( ! $service->is_configured( $ai_agent ) ) {
+			return new WP_Error( 'ace_tts_unconfigured', __( 'No premium voice provider is configured.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-voice-tts';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 60, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many voice requests have been made just now.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		// Site-wide ceiling so a spoofed per-IP key cannot run up unbounded spend on the paid voice provider.
+		if ( ! $this->rate_limiter->allow( 'ace-ai-voice-global', (int) apply_filters( 'ace_ai_voice_global_rate_limit', 600 ), MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Voice playback is busy right now. Please try again shortly.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$result  = $service->synthesize( (string) ( $payload['text'] ?? '' ), $ai_agent );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response( $result );
 	}
 
 	/**

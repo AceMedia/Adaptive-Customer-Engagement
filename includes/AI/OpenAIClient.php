@@ -11,7 +11,7 @@ use WP_Error;
 
 defined( 'ABSPATH' ) || exit;
 
-final class OpenAIClient {
+final class OpenAIClient implements ChatCompletionClient {
 	/**
 	 * List chat-capable models for an API key.
 	 *
@@ -123,7 +123,7 @@ final class OpenAIClient {
 					'model'                 => $model,
 					'messages'              => $sanitised_messages,
 					'temperature'           => max( 0, min( 2, (float) ( $options['temperature'] ?? 0.2 ) ) ),
-					'max_completion_tokens' => max( 200, min( 4000, absint( $options['max_response_tokens'] ?? 700 ) ) ),
+					'max_completion_tokens' => max( 200, min( 8000, absint( $options['max_response_tokens'] ?? 700 ) ) ),
 				),
 			)
 		);

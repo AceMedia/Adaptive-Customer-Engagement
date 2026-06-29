@@ -106,6 +106,11 @@ final class Menu {
 		}
 
 		wp_enqueue_script( 'ace-admin', $script_src, $asset['dependencies'], $asset['version'], true );
+
+		if ( function_exists( 'wp_set_script_translations' ) ) {
+			wp_set_script_translations( 'ace-admin', 'adaptive-customer-engagement' );
+		}
+
 		wp_add_inline_script(
 			'ace-admin',
 			'window.ACEAdminConfig = ' . wp_json_encode(

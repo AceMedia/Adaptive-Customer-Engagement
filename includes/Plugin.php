@@ -7,10 +7,11 @@
 
 namespace ACE\AdaptiveCustomerEngagement;
 
+use ACE\AdaptiveCustomerEngagement\AI\ChatClientFactory;
 use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\LeadProfileService;
-use ACE\AdaptiveCustomerEngagement\AI\OpenAIClient;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
+use ACE\AdaptiveCustomerEngagement\AI\TextToSpeechService;
 use ACE\AdaptiveCustomerEngagement\AmazonConnect\Client as AmazonConnectClient;
 use ACE\AdaptiveCustomerEngagement\Admin\SampleDataSeeder;
 use ACE\AdaptiveCustomerEngagement\Admin\Menu;
@@ -100,7 +101,7 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service,
 			$site_context,
-			new FrontendChatService( new OpenAIClient(), $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository )
+			new FrontendChatService( $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository )
 		);
 		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client, $site_context );
 		
@@ -155,6 +156,11 @@ final class Plugin {
 		}
 
 		wp_enqueue_script( 'ace-frontend', $script_src, $asset['dependencies'], $asset['version'], true );
+
+		if ( function_exists( 'wp_set_script_translations' ) ) {
+			wp_set_script_translations( 'ace-frontend', 'adaptive-customer-engagement' );
+		}
+
 		wp_add_inline_script(
 			'ace-frontend',
 			'window.ACEFrontendConfig = ' . wp_json_encode(
@@ -195,7 +201,7 @@ final class Plugin {
 
 		$enabled    = ! empty( $ai_agent['enabled'] )
 			&& ! empty( $ai_agent['frontend_chat_enabled'] )
-			&& ! empty( $ai_agent['openai_api_key'] )
+			&& '' !== trim( (string) ChatClientFactory::resolve( $ai_agent )['api_key'] )
 			&& $can_view;
 
 		return array(
@@ -220,6 +226,14 @@ final class Plugin {
 			'pollIntervalMs'    => 5000,
 			'availabilityPollIntervalMs' => 15000,
 			'handoffEnabled'    => ! empty( $ai_agent['handoff_to_human'] ),
+			'voiceInput'        => ! empty( $ai_agent['frontend_voice_input'] ),
+			'voiceReplies'      => ! empty( $ai_agent['frontend_voice_replies'] ),
+			'voiceAutospeak'    => ! empty( $ai_agent['frontend_voice_autospeak'] ),
+			'voiceHandsFree'    => ! empty( $ai_agent['frontend_voice_hands_free'] ),
+			'voiceLang'         => sanitize_text_field( (string) ( $ai_agent['frontend_voice_lang'] ?? 'en-GB' ) ),
+			'voiceProvider'     => sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'browser' ) ),
+			'voiceTtsEnabled'   => ! empty( $ai_agent['frontend_voice_replies'] ) && ( new TextToSpeechService() )->is_configured( $ai_agent ),
+			'voiceTtsEndpoint'  => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/tts' ) ) ),
 		);
 	}
 }

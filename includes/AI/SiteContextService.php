@@ -727,6 +727,29 @@ final class SiteContextService {
 				foreach ( $attributes as $label => $value ) {
 					$parts[] = sprintf( '%s: %s', sanitize_text_field( (string) $label ), sanitize_text_field( (string) $value ) );
 				}
+
+				foreach ( $this->get_product_variations( $product, '' ) as $variation ) {
+					$variation_bits = array_filter(
+						array(
+							(string) ( $variation['label'] ?? '' ),
+							(string) ( $variation['sku'] ?? '' ),
+							(string) ( $variation['price_html'] ?? '' ),
+							! empty( $variation['capacity_litres'] ) ? $variation['capacity_litres'] . ' litres' : '',
+						)
+					);
+
+					if ( ! empty( $variation_bits ) ) {
+						$parts[] = implode( ' ', $variation_bits );
+					}
+				}
+
+				$category_names = wp_get_post_terms( $post->ID, 'product_cat', array( 'fields' => 'names' ) );
+
+				if ( ! is_wp_error( $category_names ) ) {
+					foreach ( (array) $category_names as $category_name ) {
+						$parts[] = sanitize_text_field( (string) $category_name );
+					}
+				}
 			}
 		}
 
@@ -920,7 +943,7 @@ final class SiteContextService {
 		$is_variable       = $product->is_type( 'variable' );
 		$is_simple         = $product->is_type( 'simple' );
 		$variation_count   = $is_variable && method_exists( $product, 'get_children' ) ? count( $product->get_children() ) : 0;
-		$price_html        = sanitize_text_field( trim( wp_strip_all_tags( (string) $product->get_price_html() ) ) );
+		$price_html        = (string) $product->get_price_html();
 		$direct_weight     = method_exists( $product, 'get_weight' ) ? (float) $product->get_weight() : 0.0;
 		$length_cm         = method_exists( $product, 'get_length' ) ? (float) $product->get_length() : 0.0;
 		$width_cm          = method_exists( $product, 'get_width' ) ? (float) $product->get_width() : 0.0;
@@ -930,6 +953,48 @@ final class SiteContextService {
 		$needs_shipping    = method_exists( $product, 'needs_shipping' ) ? (bool) $product->needs_shipping() : ! ( method_exists( $product, 'is_virtual' ) && $product->is_virtual() );
 		$can_add_to_cart   = $is_simple && ! $is_variable && $product->is_purchasable() && $product->is_in_stock() && '' !== $product_permalink;
 		$add_to_cart_url   = $can_add_to_cart ? add_query_arg( 'add-to-cart', (string) $product->get_id(), $product_permalink ) : '';
+		$variations        = $this->get_product_variations( $product, $product_permalink );
+		$variation_count   = ! empty( $variations ) ? count( $variations ) : $variation_count;
+		$price_value       = method_exists( $product, 'get_price' ) && '' !== (string) $product->get_price() ? (float) $product->get_price() : null;
+		$regular_price     = method_exists( $product, 'get_regular_price' ) && '' !== (string) $product->get_regular_price() ? (float) $product->get_regular_price() : null;
+		$sale_price        = method_exists( $product, 'get_sale_price' ) && '' !== (string) $product->get_sale_price() ? (float) $product->get_sale_price() : null;
+		$on_sale           = method_exists( $product, 'is_on_sale' ) ? (bool) $product->is_on_sale() : false;
+		$variation_prices  = array_values(
+			array_filter(
+				array_map(
+					static function ( array $variation ) {
+						return isset( $variation['price'] ) ? $variation['price'] : null;
+					},
+					$variations
+				),
+				static function ( $price ): bool {
+					return null !== $price;
+				}
+			)
+		);
+		$price_min         = ! empty( $variation_prices ) ? (float) min( $variation_prices ) : $price_value;
+		$price_max         = ! empty( $variation_prices ) ? (float) max( $variation_prices ) : $price_value;
+
+		// Build a clean price string from numeric values where possible, avoiding
+		// WooCommerce's screen-reader "Price range … through …" markup and HTML entities.
+		if ( null !== $price_min && null !== $price_max && function_exists( 'wc_price' ) ) {
+			$price_html = $price_min === $price_max
+				? (string) wc_price( $price_min )
+				: (string) wc_price( $price_min ) . ' – ' . (string) wc_price( $price_max );
+		}
+
+		$price_html        = $this->clean_price_text( $price_html );
+		$related_ids       = array();
+
+		if ( method_exists( $product, 'get_upsell_ids' ) ) {
+			$related_ids = array_merge( $related_ids, (array) $product->get_upsell_ids() );
+		}
+
+		if ( method_exists( $product, 'get_cross_sell_ids' ) ) {
+			$related_ids = array_merge( $related_ids, (array) $product->get_cross_sell_ids() );
+		}
+
+		$related_products  = $this->get_product_names_for_ids( array_slice( array_values( array_unique( array_map( 'absint', $related_ids ) ) ), 0, 4 ) );
 		$measurements = array_merge(
 			array_values( $attributes ),
 			array(
@@ -945,6 +1010,12 @@ final class SiteContextService {
 		return array_filter(
 			array(
 				'price'            => $price_html,
+				'price_value'      => $price_value,
+				'price_min'        => $price_min,
+				'price_max'        => $price_max,
+				'regular_price'    => $regular_price,
+				'sale_price'       => $sale_price,
+				'on_sale'          => $on_sale,
 				'sku'              => sanitize_text_field( (string) $product->get_sku() ),
 				'in_stock'         => $product->is_in_stock(),
 				'stock_status'     => sanitize_key( (string) $product->get_stock_status() ),
@@ -969,6 +1040,8 @@ final class SiteContextService {
 				'product_kind'     => $product_kind,
 				'product_type'     => sanitize_key( $product->get_type() ),
 				'variation_count'  => $variation_count,
+				'variations'       => $variations,
+				'related_products' => $related_products,
 				'can_add_to_cart'  => $can_add_to_cart,
 				'add_to_cart_url'  => esc_url_raw( $add_to_cart_url ),
 				'view_url'         => esc_url_raw( $product_permalink ),
@@ -988,6 +1061,167 @@ final class SiteContextService {
 	}
 
 	/**
+	 * Normalise a WooCommerce price string: decode entities, strip tags and the
+	 * screen-reader "Price range … through …" suffix, collapse whitespace.
+	 *
+	 * @param string $price_html Raw price HTML.
+	 * @return string
+	 */
+	private function clean_price_text( string $price_html ): string {
+		$text = html_entity_decode( wp_strip_all_tags( $price_html ), ENT_QUOTES, 'UTF-8' );
+		// WooCommerce appends an sr-only "Price range: X through Y" block; drop it.
+		$text = preg_replace( '/Price range:.*$/is', '', $text );
+		$text = preg_replace( '/\s+/u', ' ', (string) $text );
+
+		return sanitize_text_field( trim( (string) $text ) );
+	}
+
+	/**
+	 * Format a comparison metric value for display (price as currency, otherwise units).
+	 *
+	 * @param float  $value Metric value.
+	 * @param string $unit  Unit: price|kg|litres.
+	 * @return string
+	 */
+	private function format_comparison_value( float $value, string $unit ): string {
+		if ( 'price' === $unit ) {
+			return function_exists( 'wc_price' )
+				? $this->clean_price_text( (string) wc_price( $value ) )
+				: '£' . number_format_i18n( $value, 2 );
+		}
+
+		if ( 'kg' === $unit ) {
+			return number_format_i18n( $value, 0 ) . 'kg';
+		}
+
+		return sprintf(
+			/* translators: %s: capacity in litres. */
+			__( '%s litres', 'adaptive-customer-engagement' ),
+			number_format_i18n( $value, 0 )
+		);
+	}
+
+	/**
+	 * Resolve a list of product IDs to their published product names.
+	 *
+	 * @param array<int, int> $ids Product IDs.
+	 * @return array<int, string>
+	 */
+	private function get_product_names_for_ids( array $ids ): array {
+		$names = array();
+
+		foreach ( $ids as $id ) {
+			$id = absint( $id );
+
+			if ( $id <= 0 ) {
+				continue;
+			}
+
+			$related = get_post( $id );
+
+			if ( ! $related || 'product' !== $related->post_type || 'publish' !== $related->post_status ) {
+				continue;
+			}
+
+			$names[] = sanitize_text_field( (string) $related->post_title );
+		}
+
+		return $names;
+	}
+
+	/**
+	 * Extract per-variation pricing, stock, and attribute data for a variable product.
+	 *
+	 * @param \WC_Product $product   WooCommerce product.
+	 * @param string      $permalink Product permalink (for add-to-cart links).
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_product_variations( $product, string $permalink ): array {
+		if ( ! is_object( $product ) || ! method_exists( $product, 'is_type' ) || ! $product->is_type( 'variable' ) || ! method_exists( $product, 'get_children' ) ) {
+			return array();
+		}
+
+		$variations = array();
+
+		foreach ( $product->get_children() as $child_id ) {
+			$variation = function_exists( 'wc_get_product' ) ? wc_get_product( $child_id ) : null;
+
+			if ( ! $variation || ! method_exists( $variation, 'exists' ) || ! $variation->exists() ) {
+				continue;
+			}
+
+			$attributes    = array();
+			$raw_attributes = method_exists( $variation, 'get_variation_attributes' ) ? $variation->get_variation_attributes() : array();
+
+			foreach ( (array) $raw_attributes as $key => $value ) {
+				if ( '' === (string) $value ) {
+					continue;
+				}
+
+				$taxonomy = str_replace( 'attribute_', '', (string) $key );
+				$label    = function_exists( 'wc_attribute_label' ) ? wc_attribute_label( $taxonomy, $product ) : ucfirst( str_replace( array( 'pa_', '-', '_' ), array( '', ' ', ' ' ), $taxonomy ) );
+				$display  = (string) $value;
+
+				if ( taxonomy_exists( $taxonomy ) ) {
+					$term = get_term_by( 'slug', $value, $taxonomy );
+
+					if ( $term && ! is_wp_error( $term ) ) {
+						$display = $term->name;
+					}
+				}
+
+				$attributes[ sanitize_text_field( (string) $label ) ] = sanitize_text_field( $display );
+			}
+
+			$label_parts = array();
+
+			foreach ( $attributes as $attribute_label => $attribute_value ) {
+				$label_parts[] = $attribute_value;
+			}
+
+			$price          = method_exists( $variation, 'get_price' ) && '' !== (string) $variation->get_price() ? (float) $variation->get_price() : null;
+			$capacity       = $this->extract_measurement_value( array_values( $attributes ), '/(\d+(?:\.\d+)?)\s*(?:litres?|ltr|l)\b/i' );
+			$in_stock       = method_exists( $variation, 'is_in_stock' ) ? (bool) $variation->is_in_stock() : true;
+			$purchasable    = $in_stock && method_exists( $variation, 'is_purchasable' ) && $variation->is_purchasable();
+			$add_to_cart    = '';
+
+			if ( $purchasable && '' !== $permalink ) {
+				$query = array(
+					'add-to-cart'  => (int) $product->get_id(),
+					'variation_id' => (int) $child_id,
+				);
+
+				foreach ( (array) $raw_attributes as $attr_key => $attr_value ) {
+					$query[ (string) $attr_key ] = (string) $attr_value;
+				}
+
+				$add_to_cart = add_query_arg( $query, $permalink );
+			}
+
+			$variations[] = array(
+				'id'             => (int) $child_id,
+				'label'          => sanitize_text_field( implode( ', ', $label_parts ) ),
+				'attributes'     => $attributes,
+				'price'          => $price,
+				'price_html'     => method_exists( $variation, 'get_price_html' ) ? $this->clean_price_text( (string) $variation->get_price_html() ) : '',
+				'regular_price'  => method_exists( $variation, 'get_regular_price' ) && '' !== (string) $variation->get_regular_price() ? (float) $variation->get_regular_price() : null,
+				'sale_price'     => method_exists( $variation, 'get_sale_price' ) && '' !== (string) $variation->get_sale_price() ? (float) $variation->get_sale_price() : null,
+				'on_sale'        => method_exists( $variation, 'is_on_sale' ) ? (bool) $variation->is_on_sale() : false,
+				'sku'            => method_exists( $variation, 'get_sku' ) ? sanitize_text_field( (string) $variation->get_sku() ) : '',
+				'in_stock'       => $in_stock,
+				'stock_status'   => method_exists( $variation, 'get_stock_status' ) ? sanitize_key( (string) $variation->get_stock_status() ) : '',
+				'stock_quantity' => method_exists( $variation, 'get_stock_quantity' ) && null !== $variation->get_stock_quantity() ? (int) $variation->get_stock_quantity() : null,
+				'weight_kg'      => method_exists( $variation, 'get_weight' ) && '' !== (string) $variation->get_weight() ? (float) $variation->get_weight() : null,
+				'capacity_litres'=> $capacity > 0 ? $capacity : null,
+				'purchasable'    => $purchasable,
+				'add_to_cart_url'=> esc_url_raw( $add_to_cart ),
+			);
+		}
+
+		return $variations;
+	}
+
+	/**
 	 * Build a compact structured product summary.
 	 *
 	 * @param array<string, mixed> $commerce Product details.
@@ -995,6 +1229,38 @@ final class SiteContextService {
 	 */
 	private function build_commerce_summary( array $commerce ): string {
 		$parts = array();
+
+		if ( ! empty( $commerce['price'] ) ) {
+			$price_line = sprintf(
+				/* translators: %s: product price (may be a range). */
+				__( 'Price: %s.', 'adaptive-customer-engagement' ),
+				sanitize_text_field( (string) $commerce['price'] )
+			);
+
+			if ( ! empty( $commerce['on_sale'] ) ) {
+				$price_line .= ' ' . __( 'Currently on sale.', 'adaptive-customer-engagement' );
+			}
+
+			$parts[] = $price_line;
+		}
+
+		$stock_status = (string) ( $commerce['stock_status'] ?? '' );
+
+		if ( '' !== $stock_status || array_key_exists( 'in_stock', $commerce ) ) {
+			if ( 'outofstock' === $stock_status ) {
+				$parts[] = __( 'Stock: out of stock.', 'adaptive-customer-engagement' );
+			} elseif ( 'onbackorder' === $stock_status ) {
+				$parts[] = __( 'Stock: available on backorder.', 'adaptive-customer-engagement' );
+			} elseif ( ! empty( $commerce['stock_quantity'] ) ) {
+				$parts[] = sprintf(
+					/* translators: %s: stock quantity. */
+					__( 'Stock: in stock (%s available).', 'adaptive-customer-engagement' ),
+					number_format_i18n( (int) $commerce['stock_quantity'] )
+				);
+			} else {
+				$parts[] = __( 'Stock: in stock.', 'adaptive-customer-engagement' );
+			}
+		}
 
 		if ( ! empty( $commerce['capacity_litres'] ) ) {
 			$parts[] = sprintf(
@@ -1040,7 +1306,28 @@ final class SiteContextService {
 			);
 		}
 
-		if ( ! empty( $commerce['variation_count'] ) ) {
+		if ( ! empty( $commerce['variations'] ) && is_array( $commerce['variations'] ) ) {
+			$rows = array();
+
+			foreach ( array_slice( $commerce['variations'], 0, 12 ) as $variation ) {
+				if ( ! is_array( $variation ) ) {
+					continue;
+				}
+
+				$name  = '' !== (string) ( $variation['label'] ?? '' ) ? (string) $variation['label'] : (string) ( $variation['sku'] ?? __( 'Option', 'adaptive-customer-engagement' ) );
+				$price = '' !== (string) ( $variation['price_html'] ?? '' ) ? (string) $variation['price_html'] : '—';
+				$stock = ! empty( $variation['in_stock'] ) ? __( 'in stock', 'adaptive-customer-engagement' ) : __( 'out of stock', 'adaptive-customer-engagement' );
+				$rows[] = sprintf( '%s — %s (%s)', sanitize_text_field( $name ), sanitize_text_field( $price ), $stock );
+			}
+
+			if ( ! empty( $rows ) ) {
+				$parts[] = sprintf(
+					/* translators: %s: semicolon-separated list of product variations with price and stock. */
+					__( 'Options: %s.', 'adaptive-customer-engagement' ),
+					implode( '; ', $rows )
+				);
+			}
+		} elseif ( ! empty( $commerce['variation_count'] ) ) {
 			$parts[] = sprintf(
 				/* translators: %s: variation count. */
 				_n( '%s variation available.', '%s variations available.', (int) $commerce['variation_count'], 'adaptive-customer-engagement' ),
@@ -1053,6 +1340,14 @@ final class SiteContextService {
 				/* translators: %s: shipping class label. */
 				__( 'Shipping class: %s.', 'adaptive-customer-engagement' ),
 				sanitize_text_field( (string) $commerce['shipping_class'] )
+			);
+		}
+
+		if ( ! empty( $commerce['related_products'] ) && is_array( $commerce['related_products'] ) ) {
+			$parts[] = sprintf(
+				/* translators: %s: comma-separated related product names. */
+				__( 'Often recommended with: %s.', 'adaptive-customer-engagement' ),
+				implode( ', ', array_slice( array_map( 'sanitize_text_field', $commerce['related_products'] ), 0, 4 ) )
 			);
 		}
 
@@ -1310,7 +1605,7 @@ final class SiteContextService {
 				continue;
 			}
 
-			if ( ! $this->is_primary_bin_product( $document ) ) {
+			if ( 'price' !== ( $comparison['unit'] ?? '' ) && ! $this->is_primary_bin_product( $document ) ) {
 				continue;
 			}
 
@@ -1349,24 +1644,22 @@ final class SiteContextService {
 		$winner      = $candidates[0];
 		$winner_name = sanitize_text_field( (string) ( $winner['title'] ?? '' ) );
 		$winner_value = (float) ( $winner['comparison_metric_value'] ?? 0 );
-		$metric_label = 'capacity_litres' === $comparison['metric'] ? __( 'litres', 'adaptive-customer-engagement' ) : __( 'kg', 'adaptive-customer-engagement' );
+		$unit         = (string) ( $comparison['unit'] ?? 'litres' );
 		$answer      = sprintf(
-			/* translators: 1: ranking word, 2: product title, 3: measurement value, 4: measurement unit. */
-			__( 'The %1$s bin I can find in the live catalogue is %2$s at %3$s %4$s.', 'adaptive-customer-engagement' ),
+			/* translators: 1: ranking word, 2: product title, 3: formatted measurement or price. */
+			__( 'The %1$s option I can find in the live catalogue is %2$s at %3$s.', 'adaptive-customer-engagement' ),
 			sanitize_text_field( (string) $comparison['label'] ),
 			$winner_name,
-			number_format_i18n( $winner_value, 0 ),
-			$metric_label
+			$this->format_comparison_value( $winner_value, $unit )
 		);
 
 		$runner_ups = array();
 
 		foreach ( array_slice( $candidates, 1, max( 0, $limit - 1 ) ) as $candidate ) {
 			$runner_ups[] = sprintf(
-				'%s (%s %s)',
+				'%s (%s)',
 				sanitize_text_field( (string) ( $candidate['title'] ?? '' ) ),
-				number_format_i18n( (float) ( $candidate['comparison_metric_value'] ?? 0 ), 0 ),
-				$metric_label
+				$this->format_comparison_value( (float) ( $candidate['comparison_metric_value'] ?? 0 ), $unit )
 			);
 		}
 
@@ -1416,6 +1709,9 @@ final class SiteContextService {
 			'image_url'    => esc_url_raw( (string) ( $document['image_url'] ?? '' ) ),
 			'commerce'     => array(
 				'price'           => sanitize_text_field( (string) ( $commerce['price'] ?? '' ) ),
+				'price_min'       => isset( $commerce['price_min'] ) && null !== $commerce['price_min'] ? (float) $commerce['price_min'] : null,
+				'price_max'       => isset( $commerce['price_max'] ) && null !== $commerce['price_max'] ? (float) $commerce['price_max'] : null,
+				'on_sale'         => ! empty( $commerce['on_sale'] ),
 				'sku'             => sanitize_text_field( (string) ( $commerce['sku'] ?? '' ) ),
 				'stock_status'    => sanitize_key( (string) ( $commerce['stock_status'] ?? '' ) ),
 				'stock_quantity'  => isset( $commerce['stock_quantity'] ) ? (int) $commerce['stock_quantity'] : null,
@@ -2635,14 +2931,33 @@ final class SiteContextService {
 	private function detect_product_comparison( string $question ): array {
 		$question = $this->normalise_text( $question );
 
-		if ( ! preg_match( '/\b(bin|bins|container|containers|product|products|capacity|size|litre|litres)\b/', $question ) ) {
+		if ( ! preg_match( '/\b(bin|bins|container|containers|product|products|capacity|size|litre|litres|price|prices|cost|cheap|cheapest|expensive|affordable|budget)\b/', $question ) ) {
 			return array();
+		}
+
+		if ( preg_match( '/\b(cheapest|least expensive|lowest price|most affordable|best value|budget)\b/', $question ) ) {
+			return array(
+				'metric'    => 'price_min',
+				'direction' => 'asc',
+				'unit'      => 'price',
+				'label'     => __( 'cheapest', 'adaptive-customer-engagement' ),
+			);
+		}
+
+		if ( preg_match( '/\b(most expensive|dearest|highest price|priciest|premium)\b/', $question ) ) {
+			return array(
+				'metric'    => 'price_min',
+				'direction' => 'desc',
+				'unit'      => 'price',
+				'label'     => __( 'most expensive', 'adaptive-customer-engagement' ),
+			);
 		}
 
 		if ( preg_match( '/\b(largest|biggest|max(?:imum)?)\b/', $question ) ) {
 			return array(
 				'metric'    => 'capacity_litres',
 				'direction' => 'desc',
+				'unit'      => 'litres',
 				'label'     => __( 'largest', 'adaptive-customer-engagement' ),
 			);
 		}
@@ -2651,6 +2966,7 @@ final class SiteContextService {
 			return array(
 				'metric'    => 'capacity_litres',
 				'direction' => 'asc',
+				'unit'      => 'litres',
 				'label'     => __( 'smallest', 'adaptive-customer-engagement' ),
 			);
 		}
@@ -2659,6 +2975,7 @@ final class SiteContextService {
 			return array(
 				'metric'    => 'empty_weight_kg',
 				'direction' => 'desc',
+				'unit'      => 'kg',
 				'label'     => __( 'heaviest', 'adaptive-customer-engagement' ),
 			);
 		}
@@ -2667,6 +2984,7 @@ final class SiteContextService {
 			return array(
 				'metric'    => 'empty_weight_kg',
 				'direction' => 'asc',
+				'unit'      => 'kg',
 				'label'     => __( 'lightest', 'adaptive-customer-engagement' ),
 			);
 		}
