@@ -1,3 +1,31 @@
+/*
+ * Frontend chat widget.
+ *
+ * Colours are driven by the active theme's palette presets where available
+ * (block themes expose --wp--preset--color--*), falling back to the IEG brand
+ * palette so the widget stays on-brand everywhere it is embedded.
+ */
+
+#ace-ai-chat-launcher,
+#ace-ai-chat-panel {
+	--ace-base: var(--wp--preset--color--base, #ffffff);
+	--ace-ink: var(--wp--preset--color--contrast, #111111);
+	--ace-slate: var(--wp--preset--color--accent-1, #364048);
+	--ace-green: var(--wp--preset--color--accent-2, #69b853);
+	--ace-blue: var(--wp--preset--color--accent-3, #225570);
+	--ace-muted-ink: color-mix(in srgb, var(--ace-slate) 70%, #ffffff);
+	--ace-surface: var(--ace-base);
+	--ace-surface-soft: color-mix(in srgb, var(--ace-slate) 5%, #ffffff);
+	--ace-border: color-mix(in srgb, var(--ace-slate) 16%, transparent);
+	--ace-border-strong: color-mix(in srgb, var(--ace-slate) 28%, transparent);
+	--ace-shadow: 0 24px 60px color-mix(in srgb, var(--ace-slate) 26%, transparent);
+	--ace-shadow-soft: 0 10px 30px color-mix(in srgb, var(--ace-slate) 14%, transparent);
+	--ace-radius: 18px;
+	--ace-radius-sm: 12px;
+	--ace-radius-pill: 999px;
+	--ace-font: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
 #ace-ai-chat-launcher {
 	position: fixed;
 	left: 24px;
@@ -6,14 +34,27 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	padding: 14px 20px;
+	gap: 8px;
+	padding: 14px 22px;
 	border: 0;
-	border-radius: 999px;
-	background: #2563eb;
+	border-radius: var(--ace-radius-pill);
+	background: var(--ace-green);
 	color: #ffffff;
-	font: 700 15px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+	font: 700 15px/1.2 var(--ace-font);
+	letter-spacing: 0.01em;
+	box-shadow: 0 18px 40px color-mix(in srgb, var(--ace-green) 38%, transparent);
 	cursor: pointer;
+	transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+#ace-ai-chat-launcher:hover {
+	transform: translateY(-2px);
+	background: color-mix(in srgb, var(--ace-green) 88%, #000000);
+	box-shadow: 0 22px 50px color-mix(in srgb, var(--ace-green) 46%, transparent);
+}
+
+#ace-ai-chat-launcher:active {
+	transform: translateY(0);
 }
 
 #ace-ai-chat-panel {
@@ -25,29 +66,46 @@
 	height: min(560px, calc(100vh - 132px));
 	display: flex;
 	flex-direction: column;
-	background: #ffffff;
-	border: 1px solid rgba(15, 23, 42, 0.1);
-	border-radius: 18px;
-	box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+	background: var(--ace-surface);
+	border: 1px solid var(--ace-border);
+	border-radius: var(--ace-radius);
+	box-shadow: var(--ace-shadow);
 	overflow: hidden;
+	font-family: var(--ace-font);
+	animation: ace-ai-chat-panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 #ace-ai-chat-panel[hidden] {
 	display: none;
 }
 
+@keyframes ace-ai-chat-panel-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px) scale(0.98);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
 #ace-ai-chat-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 12px;
 	padding: 16px 18px;
-	background: #0f172a;
+	background: linear-gradient(135deg, var(--ace-slate), var(--ace-blue));
 	color: #ffffff;
 }
 
 #ace-ai-chat-header strong {
 	display: block;
 	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: 0.01em;
 }
 
 #ace-ai-chat-header small {
@@ -61,22 +119,22 @@
 	align-items: center;
 	gap: 6px;
 	margin-top: 6px;
-	font: 600 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: rgba(255, 255, 255, 0.82);
+	font: 600 12px/1.4 var(--ace-font);
+	color: rgba(255, 255, 255, 0.85);
 }
 
 #ace-ai-chat-status::before {
 	content: '';
 	width: 8px;
 	height: 8px;
-	border-radius: 999px;
-	background: #f59e0b;
-	box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+	border-radius: var(--ace-radius-pill);
+	background: #f5b942;
+	box-shadow: 0 0 0 3px rgba(245, 185, 66, 0.25);
 }
 
 #ace-ai-chat-status[data-online='true']::before {
-	background: #22c55e;
-	box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.22);
+	background: var(--ace-green);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ace-green) 30%, transparent);
 }
 
 #ace-ai-chat-close {
@@ -86,6 +144,13 @@
 	font-size: 22px;
 	line-height: 1;
 	cursor: pointer;
+	opacity: 0.85;
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+#ace-ai-chat-close:hover {
+	opacity: 1;
+	transform: scale(1.08);
 }
 
 #ace-ai-chat-header-actions {
@@ -97,12 +162,18 @@
 #ace-ai-chat-end,
 #ace-ai-chat-contact-toggle {
 	border: 0;
-	border-radius: 999px;
-	background: rgba(255, 255, 255, 0.14);
+	border-radius: var(--ace-radius-pill);
+	background: rgba(255, 255, 255, 0.16);
 	color: #ffffff;
 	padding: 8px 12px;
-	font: 600 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font: 600 12px/1 var(--ace-font);
 	cursor: pointer;
+	transition: background 0.15s ease;
+}
+
+#ace-ai-chat-end:hover,
+#ace-ai-chat-contact-toggle:hover {
+	background: rgba(255, 255, 255, 0.28);
 }
 
 #ace-ai-chat-end[disabled],
@@ -121,7 +192,18 @@
 	flex: 1;
 	padding: 16px;
 	overflow-y: auto;
-	background: #f8fafc;
+	background: var(--ace-surface-soft);
+	scrollbar-width: thin;
+	scrollbar-color: var(--ace-border-strong) transparent;
+}
+
+#ace-ai-chat-messages::-webkit-scrollbar {
+	width: 8px;
+}
+
+#ace-ai-chat-messages::-webkit-scrollbar-thumb {
+	background: var(--ace-border-strong);
+	border-radius: var(--ace-radius-pill);
 }
 
 .ace-ai-chat-message {
@@ -129,6 +211,19 @@
 	gap: 10px;
 	align-items: flex-start;
 	margin-bottom: 14px;
+	animation: ace-ai-chat-message-in 0.28s ease both;
+}
+
+@keyframes ace-ai-chat-message-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .ace-ai-chat-message[data-role='user'] {
@@ -154,10 +249,10 @@
 	flex: 0 0 32px;
 	width: 32px;
 	height: 32px;
-	border-radius: 999px;
+	border-radius: var(--ace-radius-pill);
 	object-fit: cover;
-	background: #dbeafe;
-	border: 1px solid rgba(15, 23, 42, 0.08);
+	background: color-mix(in srgb, var(--ace-green) 22%, #ffffff);
+	border: 1px solid var(--ace-border);
 }
 
 .ace-ai-chat-avatar-placeholder {
@@ -167,93 +262,130 @@
 	flex: 0 0 32px;
 	width: 32px;
 	height: 32px;
-	border-radius: 999px;
-	background: linear-gradient(135deg, #dbeafe, #eff6ff);
-	color: #1d4ed8;
-	font: 700 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	border: 1px solid rgba(15, 23, 42, 0.08);
+	border-radius: var(--ace-radius-pill);
+	background: linear-gradient(135deg, var(--ace-slate), var(--ace-green));
+	color: #ffffff;
+	font: 700 12px/1 var(--ace-font);
+	border: 0;
 }
 
 .ace-ai-chat-message-name {
-	font: 700 12px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: #334155;
+	font: 700 12px/1.3 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 .ace-ai-chat-bubble {
 	display: inline-block;
 	max-width: 100%;
 	padding: 11px 14px;
-	border-radius: 14px;
+	border-radius: var(--ace-radius-sm);
 	white-space: pre-wrap;
 	word-break: break-word;
-	font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font: 14px/1.55 var(--ace-font);
+	box-shadow: var(--ace-shadow-soft);
 }
 
 .ace-ai-chat-bubble a {
-	color: #1d4ed8;
+	color: var(--ace-blue);
 	font-weight: 600;
 	text-decoration: underline;
+	text-underline-offset: 2px;
+	transition: color 0.15s ease;
+}
+
+.ace-ai-chat-bubble a:hover {
+	color: var(--ace-green);
 }
 
 .ace-ai-chat-message[data-role='assistant'] .ace-ai-chat-bubble {
-	background: #ffffff;
-	color: #0f172a;
-	border: 1px solid rgba(15, 23, 42, 0.08);
+	background: var(--ace-base);
+	color: var(--ace-ink);
+	border: 1px solid var(--ace-border);
+	border-bottom-left-radius: 4px;
 }
 
 .ace-ai-chat-message[data-role='operator'] .ace-ai-chat-bubble {
-	background: #f8fafc;
-	color: #0f172a;
-	border: 1px solid rgba(99, 102, 241, 0.18);
+	background: color-mix(in srgb, var(--ace-blue) 8%, #ffffff);
+	color: var(--ace-ink);
+	border: 1px solid color-mix(in srgb, var(--ace-blue) 22%, transparent);
+	border-bottom-left-radius: 4px;
 }
 
 .ace-ai-chat-message[data-role='user'] .ace-ai-chat-bubble {
-	background: #2563eb;
+	background: var(--ace-blue);
+	color: #ffffff;
+	border-bottom-right-radius: 4px;
+}
+
+.ace-ai-chat-message[data-role='user'] .ace-ai-chat-bubble a {
 	color: #ffffff;
 }
 
+/* Thinking / typing indicator */
 .ace-ai-chat-message[data-role='typing'] .ace-ai-chat-bubble {
 	display: inline-flex;
 	align-items: center;
 	gap: 10px;
-	background: #ffffff;
-	color: #0f172a;
-	border: 1px dashed rgba(15, 23, 42, 0.14);
+	background: var(--ace-base);
+	color: var(--ace-muted-ink);
+	border: 1px solid var(--ace-border);
+	border-bottom-left-radius: 4px;
+}
+
+.ace-ai-chat-message[data-role='typing'] .ace-ai-chat-avatar,
+.ace-ai-chat-message[data-role='typing'] .ace-ai-chat-avatar-placeholder {
+	animation: ace-ai-chat-avatar-pulse 1.6s ease-in-out infinite;
+}
+
+.ace-ai-chat-typing-text {
+	font: 600 12.5px/1.4 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 .ace-ai-chat-typing-dots {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	gap: 5px;
 }
 
 .ace-ai-chat-typing-dots span {
-	width: 7px;
-	height: 7px;
-	border-radius: 999px;
-	background: #94a3b8;
-	animation: ace-ai-chat-typing 1.2s ease-in-out infinite;
+	width: 8px;
+	height: 8px;
+	border-radius: var(--ace-radius-pill);
+	background: var(--ace-green);
+	animation: ace-ai-chat-typing 1.3s ease-in-out infinite;
 }
 
 .ace-ai-chat-typing-dots span:nth-child(2) {
-	animation-delay: 0.15s;
+	animation-delay: 0.18s;
 }
 
 .ace-ai-chat-typing-dots span:nth-child(3) {
-	animation-delay: 0.3s;
+	animation-delay: 0.36s;
 }
 
 @keyframes ace-ai-chat-typing {
 	0%,
-	80%,
+	70%,
 	100% {
-		opacity: 0.32;
-		transform: translateY(0);
+		opacity: 0.3;
+		transform: translateY(0) scale(0.85);
 	}
 
-	40% {
+	35% {
 		opacity: 1;
-		transform: translateY(-2px);
+		transform: translateY(-3px) scale(1);
+	}
+}
+
+@keyframes ace-ai-chat-avatar-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--ace-green) 45%, transparent);
+	}
+
+	50% {
+		box-shadow: 0 0 0 5px color-mix(in srgb, var(--ace-green) 0%, transparent);
 	}
 }
 
@@ -282,17 +414,22 @@
 	padding: 0;
 	border: 0;
 	background: transparent;
-	color: #1d4ed8;
-	font: 700 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	color: var(--ace-blue);
+	font: 700 12px/1.4 var(--ace-font);
 	cursor: pointer;
 	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.ace-ai-chat-source-toggle:hover {
+	color: var(--ace-green);
 }
 
 .ace-ai-chat-source-meta {
 	display: block;
 	margin-top: 4px;
-	font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: #334155;
+	font: 12px/1.45 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 .ace-ai-chat-source-card {
@@ -301,24 +438,26 @@
 	gap: 10px;
 	align-items: start;
 	padding: 10px;
-	border-radius: 14px;
-	background: #ffffff;
-	border: 1px solid rgba(15, 23, 42, 0.08);
-	color: #0f172a;
+	border-radius: var(--ace-radius-sm);
+	background: var(--ace-base);
+	border: 1px solid var(--ace-border);
+	color: var(--ace-ink);
 	text-decoration: none;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .ace-ai-chat-source-card:hover {
-	border-color: rgba(37, 99, 235, 0.28);
-	box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+	border-color: color-mix(in srgb, var(--ace-green) 40%, transparent);
+	box-shadow: var(--ace-shadow-soft);
+	transform: translateY(-1px);
 }
 
 .ace-ai-chat-source-thumb {
 	width: 64px;
 	height: 64px;
-	border-radius: 12px;
+	border-radius: 10px;
 	object-fit: cover;
-	background: #e2e8f0;
+	background: color-mix(in srgb, var(--ace-slate) 12%, #ffffff);
 }
 
 .ace-ai-chat-source-thumb-placeholder {
@@ -327,10 +466,10 @@
 	justify-content: center;
 	width: 64px;
 	height: 64px;
-	border-radius: 12px;
-	background: linear-gradient(135deg, #dbeafe, #eff6ff);
-	color: #1d4ed8;
-	font: 700 18px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	border-radius: 10px;
+	background: linear-gradient(135deg, var(--ace-slate), var(--ace-green));
+	color: #ffffff;
+	font: 700 18px/1 var(--ace-font);
 }
 
 .ace-ai-chat-source-copy {
@@ -339,15 +478,15 @@
 
 .ace-ai-chat-source-title {
 	display: block;
-	font: 700 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font: 700 13px/1.4 var(--ace-font);
 	color: inherit;
 }
 
 .ace-ai-chat-source-summary {
 	display: block;
 	margin-top: 4px;
-	font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: #475569;
+	font: 12px/1.45 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 .ace-ai-chat-source-actions {
@@ -362,19 +501,30 @@
 	align-items: center;
 	justify-content: center;
 	padding: 8px 12px;
-	border-radius: 999px;
-	border: 1px solid rgba(37, 99, 235, 0.16);
-	background: #eff6ff;
-	color: #1d4ed8;
-	font: 700 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	border-radius: var(--ace-radius-pill);
+	border: 0;
+	background: var(--ace-green);
+	color: #ffffff;
+	font: 700 12px/1 var(--ace-font);
 	text-decoration: none;
 	cursor: pointer;
+	transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.ace-ai-chat-source-action:hover {
+	background: color-mix(in srgb, var(--ace-green) 88%, #000000);
+	transform: translateY(-1px);
 }
 
 .ace-ai-chat-source-action--secondary {
-	background: #ffffff;
-	color: #0f172a;
-	border-color: rgba(15, 23, 42, 0.12);
+	background: var(--ace-base);
+	color: var(--ace-ink);
+	border: 1px solid var(--ace-border-strong);
+}
+
+.ace-ai-chat-source-action--secondary:hover {
+	background: var(--ace-surface-soft);
+	border-color: color-mix(in srgb, var(--ace-blue) 40%, transparent);
 }
 
 .ace-ai-chat-source-action[disabled] {
@@ -385,8 +535,8 @@
 #ace-ai-chat-form {
 	box-sizing: border-box;
 	padding: 12px;
-	border-top: 1px solid rgba(15, 23, 42, 0.08);
-	background: #ffffff;
+	border-top: 1px solid var(--ace-border);
+	background: var(--ace-base);
 }
 
 #ace-ai-chat-contact-panel {
@@ -394,9 +544,9 @@
 	gap: 10px;
 	margin-bottom: 12px;
 	padding: 12px;
-	border-radius: 14px;
-	background: #f8fafc;
-	border: 1px solid rgba(15, 23, 42, 0.08);
+	border-radius: var(--ace-radius-sm);
+	background: var(--ace-surface-soft);
+	border: 1px solid var(--ace-border);
 }
 
 #ace-ai-chat-contact-panel[hidden],
@@ -412,8 +562,8 @@
 
 .ace-ai-chat-starters-label {
 	margin: 0;
-	font: 700 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: #334155;
+	font: 700 12px/1.4 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 .ace-ai-chat-starters-list {
@@ -423,14 +573,21 @@
 }
 
 .ace-ai-chat-starter {
-	border: 1px solid rgba(37, 99, 235, 0.14);
-	border-radius: 999px;
-	background: #eff6ff;
-	color: #1d4ed8;
-	padding: 8px 12px;
-	font: 700 12px/1.35 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	border: 1px solid color-mix(in srgb, var(--ace-blue) 22%, transparent);
+	border-radius: var(--ace-radius-pill);
+	background: color-mix(in srgb, var(--ace-blue) 8%, #ffffff);
+	color: var(--ace-blue);
+	padding: 8px 13px;
+	font: 700 12px/1.35 var(--ace-font);
 	cursor: pointer;
 	text-align: left;
+	transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.ace-ai-chat-starter:hover {
+	background: var(--ace-blue);
+	border-color: var(--ace-blue);
+	color: #ffffff;
 }
 
 .ace-ai-chat-starter[disabled] {
@@ -440,8 +597,8 @@
 
 #ace-ai-chat-contact-panel p {
 	margin: 0;
-	color: #334155;
-	font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	color: var(--ace-muted-ink);
+	font: 13px/1.5 var(--ace-font);
 }
 
 .ace-ai-chat-contact-field {
@@ -449,20 +606,33 @@
 	width: 100%;
 	box-sizing: border-box;
 	padding: 10px 12px;
-	border: 1px solid rgba(15, 23, 42, 0.14);
-	border-radius: 12px;
-	font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	border: 1px solid var(--ace-border-strong);
+	border-radius: var(--ace-radius-sm);
+	font: 14px/1.4 var(--ace-font);
+	color: var(--ace-ink);
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ace-ai-chat-contact-field:focus {
+	outline: none;
+	border-color: var(--ace-green);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ace-green) 22%, transparent);
 }
 
 #ace-ai-chat-contact-submit {
 	justify-self: start;
 	border: 0;
-	border-radius: 999px;
-	background: #0f172a;
+	border-radius: var(--ace-radius-pill);
+	background: var(--ace-slate);
 	color: #ffffff;
-	padding: 10px 14px;
-	font: 700 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	padding: 10px 16px;
+	font: 700 13px/1 var(--ace-font);
 	cursor: pointer;
+	transition: background 0.15s ease;
+}
+
+#ace-ai-chat-contact-submit:hover {
+	background: color-mix(in srgb, var(--ace-slate) 86%, #000000);
 }
 
 #ace-ai-chat-input {
@@ -473,17 +643,25 @@
 	min-height: 42px;
 	max-height: 126px;
 	padding: 10px 14px;
-	border: 1px solid rgba(15, 23, 42, 0.14);
-	border-radius: 14px;
+	border: 1px solid var(--ace-border-strong);
+	border-radius: var(--ace-radius-sm);
 	resize: none;
 	overflow-y: hidden;
-	font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font: 14px/1.5 var(--ace-font);
+	color: var(--ace-ink);
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#ace-ai-chat-input:focus {
+	outline: none;
+	border-color: var(--ace-green);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--ace-green) 20%, transparent);
 }
 
 #ace-ai-chat-actions {
 	display: flex;
 	flex-wrap: wrap;
-	align-items: flex-start;
+	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
 	margin-top: 10px;
@@ -492,27 +670,37 @@
 #ace-ai-chat-meta {
 	flex: 1 1 180px;
 	min-width: 0;
-	font: 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-	color: #64748b;
+	font: 12px/1.4 var(--ace-font);
+	color: var(--ace-muted-ink);
 }
 
 #ace-ai-chat-send {
 	flex: 0 0 auto;
 	border: 0;
-	border-radius: 999px;
-	background: #2563eb;
+	border-radius: var(--ace-radius-pill);
+	background: var(--ace-green);
 	color: #ffffff;
-	padding: 10px 16px;
-	font: 700 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	padding: 10px 18px;
+	font: 700 14px/1 var(--ace-font);
 	cursor: pointer;
+	transition: background 0.15s ease, transform 0.12s ease;
+}
+
+#ace-ai-chat-send:not([disabled]):hover {
+	background: color-mix(in srgb, var(--ace-green) 88%, #000000);
+}
+
+#ace-ai-chat-send:not([disabled]):active {
+	transform: scale(0.97);
 }
 
 /* Voice controls (browser-native + premium tiers) */
 #ace-ai-chat-mic,
 #ace-ai-chat-voice-toggle {
-	border: 1px solid rgba(17, 17, 17, 0.15);
-	background: #ffffff;
-	border-radius: 999px;
+	border: 1px solid var(--ace-border-strong);
+	background: var(--ace-base);
+	color: var(--ace-slate);
+	border-radius: var(--ace-radius-pill);
 	width: 38px;
 	height: 38px;
 	line-height: 1;
@@ -522,6 +710,13 @@
 	align-items: center;
 	justify-content: center;
 	padding: 0;
+	transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+#ace-ai-chat-mic:not([disabled]):hover,
+#ace-ai-chat-voice-toggle:hover {
+	border-color: var(--ace-green);
+	color: var(--ace-green);
 }
 
 #ace-ai-chat-mic[disabled] {
@@ -530,15 +725,19 @@
 }
 
 #ace-ai-chat-mic.is-listening {
-	background: #69b853;
-	border-color: #69b853;
+	background: var(--ace-green);
+	border-color: var(--ace-green);
 	color: #ffffff;
 	animation: ace-ai-mic-pulse 1.2s ease-in-out infinite;
 }
 
 #ace-ai-chat-voice-toggle.is-on {
-	background: #225570;
-	border-color: #225570;
+	background: var(--ace-blue);
+	border-color: var(--ace-blue);
+	color: #ffffff;
+}
+
+#ace-ai-chat-voice-toggle.is-on:hover {
 	color: #ffffff;
 }
 
@@ -547,6 +746,24 @@
 }
 
 @keyframes ace-ai-mic-pulse {
-	0%, 100% { box-shadow: 0 0 0 0 rgba(105, 184, 83, 0.5); }
-	50% { box-shadow: 0 0 0 6px rgba(105, 184, 83, 0); }
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--ace-green) 50%, transparent);
+	}
+
+	50% {
+		box-shadow: 0 0 0 6px color-mix(in srgb, var(--ace-green) 0%, transparent);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#ace-ai-chat-panel,
+	.ace-ai-chat-message,
+	.ace-ai-chat-typing-dots span,
+	.ace-ai-chat-message[data-role='typing'] .ace-ai-chat-avatar,
+	.ace-ai-chat-message[data-role='typing'] .ace-ai-chat-avatar-placeholder,
+	#ace-ai-chat-mic.is-listening,
+	#ace-ai-chat-voice-toggle.is-speaking {
+		animation: none;
+	}
 }

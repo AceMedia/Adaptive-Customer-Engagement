@@ -1448,7 +1448,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		bubble.className = 'ace-ai-chat-bubble';
 		dots.className = 'ace-ai-chat-typing-dots';
 		dots.innerHTML = '<span></span><span></span><span></span>';
-		text.textContent = `${indicator.name} ${indicator.text}`;
+		text.className = 'ace-ai-chat-typing-text';
+		text.textContent = indicator.text;
 		metaRow.appendChild(avatar);
 		metaRow.appendChild(nameNode);
 		bubble.appendChild(dots);
