@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.8';
+	public const SCHEMA_VERSION        = '0.1.9';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -313,7 +313,63 @@ final class Schema {
 			dbDelta( $table_sql );
 		}
 
+		// dbDelta does not reliably widen existing CHAR columns to VARCHAR on
+		// MySQL, so force the visitor/session/conversation id columns explicitly.
+		self::ensure_uuid_column_widths();
+
 		update_option( self::SCHEMA_VERSION_OPTION, self::SCHEMA_VERSION, false );
+	}
+
+	/**
+	 * Ensure the id columns are wide enough for any client-supplied identifier.
+	 *
+	 * Older installs created these as CHAR(36); a longer cookie value then made
+	 * the INSERT fail. dbDelta will not always apply the type change, so this
+	 * runs an idempotent ALTER for any column not already at least VARCHAR(64).
+	 *
+	 * @return void
+	 */
+	private static function ensure_uuid_column_widths(): void {
+		global $wpdb;
+
+		$targets = array(
+			$wpdb->prefix . 'ace_sessions'           => array(
+				'session_uuid' => 'VARCHAR(64) NOT NULL',
+				'visitor_uuid' => 'VARCHAR(64) NULL',
+			),
+			$wpdb->prefix . 'ace_chat_conversations' => array(
+				'conversation_uuid' => 'VARCHAR(64) NOT NULL',
+				'session_uuid'      => 'VARCHAR(64) NULL',
+				'visitor_uuid'      => 'VARCHAR(64) NULL',
+			),
+		);
+
+		foreach ( $targets as $table => $columns ) {
+			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+				continue;
+			}
+
+			foreach ( $columns as $column => $definition ) {
+				$type = $wpdb->get_var(
+					$wpdb->prepare(
+						'SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s',
+						$table,
+						$column
+					)
+				);
+
+				if ( null === $type ) {
+					continue;
+				}
+
+				if ( preg_match( '/^varchar\((\d+)\)/i', (string) $type, $matches ) && (int) $matches[1] >= 64 ) {
+					continue;
+				}
+
+				// Table and column names come from internal constants, not user input.
+				$wpdb->query( "ALTER TABLE `{$table}` MODIFY COLUMN `{$column}` {$definition}" ); // phpcs:ignore WordPress.DB.PreparedSQL
+			}
+		}
 	}
 
 	/**
