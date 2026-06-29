@@ -2368,8 +2368,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		queueTypingState(false, { force: true });
 		pushMessage({ role: 'user', content });
-		renderMessages({ focusLatest: true });
 		setPending(true);
+		// Render after going pending so the "thinking" indicator shows for every
+		// entry path — typed messages and suggested-question clicks alike.
+		renderMessages({ focusLatest: true });
 
 		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {
 			event_type: 'chat_message',
