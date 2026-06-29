@@ -426,7 +426,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	// Voice (provider-agnostic — works regardless of whether the text brain is OpenAI or Claude).
 	const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 	const voiceOutputSupported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
-	const voiceInputEnabled = !!chatConfig.voiceInput && !!SpeechRecognitionImpl;
+	const voiceInputConfigured = !!chatConfig.voiceInput;
+	const voiceInputEnabled = voiceInputConfigured && !!SpeechRecognitionImpl;
 	const premiumTtsEnabled = !!chatConfig.voiceTtsEnabled && !!chatConfig.voiceProvider && chatConfig.voiceProvider !== 'browser' && !!chatConfig.voiceTtsEndpoint;
 	const voiceRepliesEnabled = !!chatConfig.voiceReplies && (voiceOutputSupported || premiumTtsEnabled);
 	const voiceHandsFree = !!chatConfig.voiceHandsFree;
@@ -578,8 +579,14 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	micButton.setAttribute('aria-pressed', 'false');
 	micButton.textContent = '🎤';
 
+	if (voiceInputConfigured && !voiceInputEnabled) {
+		// Site has voice input on, but this browser has no Speech Recognition API.
+		micButton.disabled = true;
+		micButton.title = 'Voice input is not supported in this browser. Try Chrome, Edge, or Safari.';
+	}
+
 	actions.appendChild(meta);
-	if (voiceInputEnabled) {
+	if (voiceInputConfigured) {
 		actions.appendChild(micButton);
 	}
 	actions.appendChild(send);

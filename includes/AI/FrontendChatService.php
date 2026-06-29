@@ -8,6 +8,7 @@
 namespace ACE\AdaptiveCustomerEngagement\AI;
 
 use ACE\AdaptiveCustomerEngagement\AI\AgentAvailability;
+use ACE\AdaptiveCustomerEngagement\Database\Schema;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
@@ -106,19 +107,24 @@ final class FrontendChatService {
 		$known_context = $this->lead_profiles->apply_known_context( $session );
 		$session       = $known_context['session'];
 		$ip_memory     = $known_context['memory'];
-		$thread     = $this->chat_conversations->create_or_touch(
-			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) ),
-			array(
-				'session_id'   => (int) ( $session['id'] ?? 0 ),
-				'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
-				'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
-				'company_id'   => (int) ( $session['company_id'] ?? 0 ),
-				'page_url'     => $page_url,
-				'page_title'   => $page_title,
-				'provider'     => $provider_config['provider'],
-				'model'        => $model,
-			)
+		$conversation_uuid_value = sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) );
+		$conversation_args = array(
+			'session_id'   => (int) ( $session['id'] ?? 0 ),
+			'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
+			'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
+			'company_id'   => (int) ( $session['company_id'] ?? 0 ),
+			'page_url'     => $page_url,
+			'page_title'   => $page_title,
+			'provider'     => $provider_config['provider'],
+			'model'        => $model,
 		);
+		$thread = $this->chat_conversations->create_or_touch( $conversation_uuid_value, $conversation_args );
+
+		if ( empty( $thread['id'] ) && $this->ensure_schema_installed() ) {
+			// The plugin tables may not exist yet on this site (e.g. a freshly
+			// deployed multisite blog). Create them on demand and retry once.
+			$thread = $this->chat_conversations->create_or_touch( $conversation_uuid_value, $conversation_args );
+		}
 
 		if ( empty( $thread['id'] ) ) {
 			return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
@@ -481,19 +487,22 @@ final class FrontendChatService {
 		$known_context = $this->lead_profiles->apply_known_context( $session );
 		$session       = $known_context['session'];
 		$provider_config = ChatClientFactory::resolve( is_array( Settings::get()['ai_agent'] ?? null ) ? Settings::get()['ai_agent'] : array() );
-		$thread  = $this->chat_conversations->create_or_touch(
-			sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) ),
-			array(
-				'session_id'   => (int) ( $session['id'] ?? 0 ),
-				'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
-				'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
-				'company_id'   => (int) ( $session['company_id'] ?? 0 ),
-				'page_url'     => esc_url_raw( (string) ( $payload['page_url'] ?? '' ) ),
-				'page_title'   => sanitize_text_field( (string) ( $payload['page_title'] ?? '' ) ),
-				'provider'     => $provider_config['provider'],
-				'model'        => sanitize_text_field( (string) $provider_config['model'] ),
-			)
+		$follow_up_uuid = sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) );
+		$follow_up_args = array(
+			'session_id'   => (int) ( $session['id'] ?? 0 ),
+			'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
+			'visitor_uuid' => sanitize_text_field( (string) ( $payload['visitor_uuid'] ?? '' ) ),
+			'company_id'   => (int) ( $session['company_id'] ?? 0 ),
+			'page_url'     => esc_url_raw( (string) ( $payload['page_url'] ?? '' ) ),
+			'page_title'   => sanitize_text_field( (string) ( $payload['page_title'] ?? '' ) ),
+			'provider'     => $provider_config['provider'],
+			'model'        => sanitize_text_field( (string) $provider_config['model'] ),
 		);
+		$thread = $this->chat_conversations->create_or_touch( $follow_up_uuid, $follow_up_args );
+
+		if ( empty( $thread['id'] ) && $this->ensure_schema_installed() ) {
+			$thread = $this->chat_conversations->create_or_touch( $follow_up_uuid, $follow_up_args );
+		}
 
 		if ( empty( $thread['id'] ) ) {
 			return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
@@ -750,6 +759,26 @@ final class FrontendChatService {
 	 * @param array<string, mixed> $captured Freshly captured lead data.
 	 * @return string
 	 */
+	/**
+	 * Ensure the plugin's database tables exist for the current site, at most once
+	 * per request. Guards against a chat arriving before the schema has been
+	 * created on a just-deployed (multisite) site.
+	 *
+	 * @return bool Whether an install attempt was made this request.
+	 */
+	private function ensure_schema_installed(): bool {
+		static $attempted = false;
+
+		if ( $attempted ) {
+			return false;
+		}
+
+		$attempted = true;
+		Schema::install();
+
+		return true;
+	}
+
 	/**
 	 * Build the scope-guard instruction that keeps the assistant on-topic and
 	 * resistant to misuse / prompt-injection, plus any admin-defined guardrails.
