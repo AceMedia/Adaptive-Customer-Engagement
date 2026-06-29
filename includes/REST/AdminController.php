@@ -513,6 +513,16 @@ final class AdminController {
 
 		register_rest_route(
 			$this->namespace,
+			'/admin/connect/phone-numbers/release',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'release_connect_phone_number' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/admin/connect/calls/import-status',
 			array(
 				'methods'             => 'GET',
@@ -2813,6 +2823,34 @@ final class AdminController {
 				'items'   => array_map( array( $this, 'sanitize_connect_phone_number' ), $items ),
 				'numbers' => $synced,
 				'summary' => $summary,
+			)
+		);
+	}
+
+	/**
+	 * Release a claimed Connect phone number (irreversible).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function release_connect_phone_number( WP_REST_Request $request ) {
+		$payload         = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$phone_number_id = sanitize_text_field( (string) ( $payload['phone_number_id'] ?? '' ) );
+
+		if ( '' === $phone_number_id ) {
+			return new WP_Error( 'ace_connect_release_required', __( 'A phone number ID is required to release a number.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$result = $this->connect->release_phone_number( $phone_number_id );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'released'        => true,
+				'phone_number_id' => $phone_number_id,
 			)
 		);
 	}

@@ -699,6 +699,34 @@ final class Client {
 	}
 
 	/**
+	 * Release a claimed Connect phone number (irreversible).
+	 *
+	 * @param string $phone_number_id Phone number ID.
+	 * @return true|WP_Error
+	 */
+	public function release_phone_number( string $phone_number_id ) {
+		$phone_number_id = sanitize_text_field( $phone_number_id );
+
+		if ( '' === $phone_number_id ) {
+			return new WP_Error( 'ace_connect_release_failed', __( 'A phone number ID is required to release a number.', 'adaptive-customer-engagement' ) );
+		}
+
+		$response = $this->request(
+			'connect',
+			'DELETE',
+			'/phone-number/' . rawurlencode( $phone_number_id ),
+			array(),
+			array( 'clientToken' => wp_generate_uuid4() )
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		return true;
+	}
+
+	/**
 	 * List contact flows for the configured instance.
 	 *
 	 * @param array<int, string> $types Optional flow types to keep.
