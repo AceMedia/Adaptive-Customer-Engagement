@@ -107,7 +107,14 @@ final class FrontendChatService {
 		$known_context = $this->lead_profiles->apply_known_context( $session );
 		$session       = $known_context['session'];
 		$ip_memory     = $known_context['memory'];
-		$conversation_uuid_value = sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) );
+		// Fall back through session UUID to a generated one. Use empty-aware
+		// fallbacks because the client can send an empty string (?? only catches
+		// null), which would otherwise fail conversation creation.
+		$conversation_uuid_value = $this->first_non_empty(
+			$payload['conversation_uuid'] ?? '',
+			$payload['session_uuid'] ?? '',
+			wp_generate_uuid4()
+		);
 		$conversation_args = array(
 			'session_id'   => (int) ( $session['id'] ?? 0 ),
 			'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
@@ -503,7 +510,11 @@ final class FrontendChatService {
 		$known_context = $this->lead_profiles->apply_known_context( $session );
 		$session       = $known_context['session'];
 		$provider_config = ChatClientFactory::resolve( is_array( Settings::get()['ai_agent'] ?? null ) ? Settings::get()['ai_agent'] : array() );
-		$follow_up_uuid = sanitize_text_field( (string) ( $payload['conversation_uuid'] ?? $payload['session_uuid'] ?? wp_generate_uuid4() ) );
+		$follow_up_uuid = $this->first_non_empty(
+			$payload['conversation_uuid'] ?? '',
+			$payload['session_uuid'] ?? '',
+			wp_generate_uuid4()
+		);
 		$follow_up_args = array(
 			'session_id'   => (int) ( $session['id'] ?? 0 ),
 			'session_uuid' => sanitize_text_field( (string) ( $payload['session_uuid'] ?? '' ) ),
@@ -562,6 +573,24 @@ final class FrontendChatService {
 			'conversation' => $this->normalise_conversation( $thread ),
 			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
 		);
+	}
+
+	/**
+	 * First non-empty, sanitised value from the candidates (falls back to a UUID).
+	 *
+	 * @param mixed ...$values Candidate values.
+	 * @return string
+	 */
+	private function first_non_empty( ...$values ): string {
+		foreach ( $values as $value ) {
+			$value = sanitize_text_field( (string) ( is_scalar( $value ) ? $value : '' ) );
+
+			if ( '' !== $value ) {
+				return $value;
+			}
+		}
+
+		return wp_generate_uuid4();
 	}
 
 	/**
