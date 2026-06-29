@@ -190,10 +190,33 @@ import './style.scss';
 		});
 	}
 
+	// Broadcast the operator's typing so the visitor sees "<name> is typing…".
+	function setMiniTyping(state, isTyping) {
+		if (state.typingSent === isTyping) return;
+		state.typingSent = isTyping;
+		apiFetch(chatUrl(state.id, '/typing'), { method: 'POST', body: JSON.stringify({ is_typing: isTyping }) }).catch(() => {});
+	}
+
+	function handleMiniInput(state) {
+		const ta = state.el.querySelector('.ace-mini-chat__input');
+		if (state.typingResetTimer) window.clearTimeout(state.typingResetTimer);
+
+		if (String(ta.value || '').trim()) {
+			setMiniTyping(state, true);
+			// Auto-clear if they pause, so the visitor's indicator doesn't stick.
+			state.typingResetTimer = window.setTimeout(() => setMiniTyping(state, false), 4000);
+		} else {
+			setMiniTyping(state, false);
+		}
+	}
+
 	function sendMiniReply(state) {
 		const ta = state.el.querySelector('.ace-mini-chat__input');
 		const text = String(ta.value || '').trim();
 		if (!text || state.sending) return;
+
+		if (state.typingResetTimer) window.clearTimeout(state.typingResetTimer);
+		setMiniTyping(state, false);
 
 		state.sending = true;
 		const sendBtn = state.el.querySelector('.ace-mini-chat__send');
@@ -213,6 +236,8 @@ import './style.scss';
 		const state = miniChats[id];
 		if (!state) return;
 		if (state.pollTimer) window.clearTimeout(state.pollTimer);
+		if (state.typingResetTimer) window.clearTimeout(state.typingResetTimer);
+		setMiniTyping(state, false);
 		if (handBack) {
 			apiFetch(chatUrl(id, '/status'), { method: 'POST', body: JSON.stringify({ action: 'resume_ai' }) }).catch(() => {});
 		}
@@ -299,6 +324,11 @@ import './style.scss';
 		form.addEventListener('submit', (e) => { e.preventDefault(); sendMiniReply(state); });
 		ta.addEventListener('keydown', (e) => {
 			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMiniReply(state); }
+		});
+		ta.addEventListener('input', () => handleMiniInput(state));
+		ta.addEventListener('blur', () => {
+			if (state.typingResetTimer) window.clearTimeout(state.typingResetTimer);
+			setMiniTyping(state, false);
 		});
 
 		if (restore) {
