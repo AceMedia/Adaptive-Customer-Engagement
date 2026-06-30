@@ -915,11 +915,23 @@ final class SiteContextService {
 		}
 
 		foreach ( $terms as $term ) {
-			if ( false !== strpos( $title_lc, $term ) ) {
+			// Short or numeric terms ("4", "2", "660") must match as whole words, so
+			// "4" matches "4 Wheeled" but not the "4" inside "1450" — this is what
+			// keeps "Schafer 4 Wheeled" ranked above "Schafer 2 Wheeled".
+			if ( strlen( $term ) < 3 || ctype_digit( $term ) ) {
+				$pattern    = '/\b' . preg_quote( $term, '/' ) . '\b/';
+				$in_title   = (bool) preg_match( $pattern, $title_lc );
+				$in_content = (bool) preg_match( $pattern, $content_lc );
+			} else {
+				$in_title   = false !== strpos( $title_lc, $term );
+				$in_content = false !== strpos( $content_lc, $term );
+			}
+
+			if ( $in_title ) {
 				$score += 8;
 			}
 
-			if ( false !== strpos( $content_lc, $term ) ) {
+			if ( $in_content ) {
 				$score += 3;
 			}
 		}
@@ -947,7 +959,18 @@ final class SiteContextService {
 						$parts
 					),
 					static function ( string $part ): bool {
-						return strlen( $part ) >= 3 && ! in_array( $part, array( 'what', 'when', 'where', 'with', 'that', 'this', 'from', 'your', 'about', 'have', 'just', 'site', 'page' ), true );
+						if ( '' === $part ) {
+								return false;
+							}
+
+							// Keep short numeric tokens ("2", "4", "660"): they distinguish
+							// product variants ("4 Wheeled" vs "2 Wheeled", "660" vs "1100")
+							// and must never be dropped as too short.
+							if ( ctype_digit( $part ) ) {
+								return true;
+							}
+
+							return strlen( $part ) >= 3 && ! in_array( $part, array( 'what', 'when', 'where', 'with', 'that', 'this', 'from', 'your', 'about', 'have', 'just', 'site', 'page' ), true );
 					}
 				)
 			)
