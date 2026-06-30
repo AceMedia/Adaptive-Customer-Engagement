@@ -1340,15 +1340,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		try {
 			const body = new URLSearchParams();
-			body.set('product_id', data.product_id);
+			// WooCommerce's AJAX add-to-cart expects the variation's own id as
+			// product_id for variable products (it derives the parent + attributes
+			// itself); posting the parent id fails with "choose options".
+			body.set('product_id', data.variation_id ? data.variation_id : data.product_id);
 			body.set('quantity', data.quantity || '1');
 
 			if (data.variation_id) {
 				body.set('variation_id', data.variation_id);
-			}
 
-			if (data.variation && typeof data.variation === 'object') {
-				Object.entries(data.variation).forEach(([key, value]) => body.set(`variation[${key}]`, value));
+				if (data.variation && typeof data.variation === 'object') {
+					Object.entries(data.variation).forEach(([key, value]) => body.set(`variation[${key}]`, value));
+				}
 			}
 
 			if (window.jQuery) {
