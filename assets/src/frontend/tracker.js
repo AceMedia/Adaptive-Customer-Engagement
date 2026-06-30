@@ -1328,7 +1328,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 
 	const performAddToCart = async (data, triggerButton) => {
-		if (!data || !data.product_id) {
+		const isBulk = !!data && Array.isArray(data.items) && data.items.length > 0;
+
+		if (!data || (!data.product_id && !isBulk)) {
 			throw new Error('This item could not be added to the basket just now.');
 		}
 
@@ -1358,11 +1360,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				method: 'POST',
 				credentials: 'same-origin',
 				headers,
-				body: JSON.stringify({
-					product_id: Number(data.product_id) || 0,
-					variation_id: Number(data.variation_id) || 0,
-					quantity: Number(data.quantity) || 1,
-				}),
+				body: JSON.stringify(isBulk
+					? { items: data.items.map((item) => ({
+						product_id: Number(item.product_id) || 0,
+						variation_id: Number(item.variation_id) || 0,
+						quantity: Number(item.quantity) || 1,
+					})) }
+					: {
+						product_id: Number(data.product_id) || 0,
+						variation_id: Number(data.variation_id) || 0,
+						quantity: Number(data.quantity) || 1,
+					}),
 			});
 			const result = await response.json();
 
@@ -1394,31 +1402,33 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const cartPageUrl = () => String(window.wc_add_to_cart_params?.cart_url || `${window.location.origin}/cart/`);
 
 	// Perform a server-resolved add-to-cart (from a conversational ACE_CART directive).
-	const runCartAction = async (cartAction) => {
-		if (!cartAction || !cartAction.product_id) {
+	const cartActionLabel = (cartAction) => {
+		const qty = Number(cartAction.quantity || 1);
+		const name = String(cartAction.name || 'item');
+		return `${qty > 1 ? `${qty}× ` : ''}${name}`;
+	};
+
+	// Add one or more server-resolved cart actions (from ACE_CART directives) to the
+	// basket in a single request, so "add three cage bins and a green Schafer" works.
+	const runCartActions = async (actions) => {
+		const list = (Array.isArray(actions) ? actions : [actions]).filter((action) => action && action.product_id);
+
+		if (!list.length) {
 			return;
 		}
 
-		let data = parseAddToCart(cartAction.add_to_cart_url);
-
-		if (!data) {
-			data = {
-				product_id: String(cartAction.product_id),
-				quantity: String(cartAction.quantity || 1),
-				variation_id: cartAction.variation_id ? String(cartAction.variation_id) : '',
-				variation: {},
-			};
-		} else if (cartAction.quantity) {
-			data.quantity = String(cartAction.quantity);
-		}
+		const items = list.map((action) => ({
+			product_id: Number(action.product_id) || 0,
+			variation_id: Number(action.variation_id) || 0,
+			quantity: Number(action.quantity) || 1,
+		}));
 
 		try {
-			await performAddToCart(data);
-			const qty = Number(cartAction.quantity || 1);
-			const name = String(cartAction.name || 'item');
+			await performAddToCart({ items });
+			const label = list.map(cartActionLabel).join(', ');
 			pushMessage({
 				role: 'assistant',
-				content: `🛒 Added ${qty > 1 ? `${qty}× ` : ''}${name} to your basket.\nView your basket: ${cartPageUrl()}`,
+				content: `🛒 Added ${label} to your basket.\nView your basket: ${cartPageUrl()}`,
 			});
 			renderMessages({ focusLatest: true });
 		} catch (error) {
@@ -1429,6 +1439,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			renderMessages({ focusLatest: true });
 		}
 	};
+
+	const runCartAction = (cartAction) => runCartActions(cartAction);
 
 	const getSourceTypeLabel = (source) => {
 		const contentType = String(source?.content_type || '').trim();
@@ -2580,8 +2592,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				});
 			}
 
-			if (data?.cart_action && addToCartEnabled) {
-				runCartAction(data.cart_action);
+			if (addToCartEnabled) {
+				if (Array.isArray(data?.cart_actions) && data.cart_actions.length) {
+					runCartActions(data.cart_actions);
+				} else if (data?.cart_action) {
+					runCartActions(data.cart_action);
+				}
 			}
 		} catch (error) {
 			pushMessage({

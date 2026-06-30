@@ -440,12 +440,30 @@ final class TrackingController {
 			return new WP_Error( 'ace_rate_limited', __( 'Too many cart requests just now. Please try again shortly.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
 		}
 
-		$payload      = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
-		$product_id   = absint( $payload['product_id'] ?? 0 );
-		$variation_id = absint( $payload['variation_id'] ?? 0 );
-		$quantity     = max( 1, absint( $payload['quantity'] ?? 1 ) );
+		$payload = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
 
-		if ( ! $product_id ) {
+		// Accept either a single item ({product_id,...}) or a bulk list
+		// ({"items":[{...},...]}) so several bins/variations add in one request.
+		$raw_items = ( isset( $payload['items'] ) && is_array( $payload['items'] ) ) ? $payload['items'] : array( $payload );
+		$items     = array();
+
+		foreach ( $raw_items as $raw ) {
+			if ( ! is_array( $raw ) ) {
+				continue;
+			}
+
+			$pid = absint( $raw['product_id'] ?? 0 );
+
+			if ( $pid ) {
+				$items[] = array(
+					'product_id'   => $pid,
+					'variation_id' => absint( $raw['variation_id'] ?? 0 ),
+					'quantity'     => max( 1, absint( $raw['quantity'] ?? 1 ) ),
+				);
+			}
+		}
+
+		if ( empty( $items ) ) {
 			return new WP_Error( 'ace_cart_product_required', __( 'A product is required.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
@@ -466,26 +484,41 @@ final class TrackingController {
 
 		WC()->cart->get_cart();
 
-		$reference = wc_get_product( $variation_id ? $variation_id : $product_id );
+		$added_names = array();
+		$last_name   = '';
 
-		if ( ! $reference || ! $reference->is_purchasable() ) {
-			return new WP_Error( 'ace_cart_not_purchasable', __( 'That product cannot be purchased right now.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
-		}
+		foreach ( $items as $item ) {
+			$product_id   = $item['product_id'];
+			$variation_id = $item['variation_id'];
+			$quantity     = $item['quantity'];
 
-		$variation = array();
+			$reference = wc_get_product( $variation_id ? $variation_id : $product_id );
 
-		if ( $variation_id ) {
-			$variation_product = wc_get_product( $variation_id );
+			if ( ! $reference || ! $reference->is_purchasable() ) {
+				continue;
+			}
 
-			if ( $variation_product && $variation_product->is_type( 'variation' ) ) {
-				$variation = $variation_product->get_variation_attributes();
+			$variation = array();
+
+			if ( $variation_id ) {
+				$variation_product = wc_get_product( $variation_id );
+
+				if ( $variation_product && $variation_product->is_type( 'variation' ) ) {
+					$variation = $variation_product->get_variation_attributes();
+				}
+			}
+
+			$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
+			$added  = $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false;
+
+			if ( false !== $added ) {
+				do_action( 'woocommerce_ajax_added_to_cart', $product_id );
+				$added_names[] = $reference->get_name();
+				$last_name     = $reference->get_name();
 			}
 		}
 
-		$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
-		$added  = $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false;
-
-		if ( false === $added ) {
+		if ( empty( $added_names ) ) {
 			$message = '';
 
 			if ( function_exists( 'wc_get_notices' ) ) {
@@ -500,7 +533,6 @@ final class TrackingController {
 			return new WP_Error( 'ace_cart_failed', '' !== $message ? $message : __( 'Sorry, that could not be added to your basket.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
 
-		do_action( 'woocommerce_ajax_added_to_cart', $product_id );
 		WC()->cart->calculate_totals();
 
 		if ( WC()->session ) {
@@ -536,7 +568,8 @@ final class TrackingController {
 				'cart_hash'  => WC()->cart->get_cart_hash(),
 				'cart_url'   => function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '',
 				'fragments'  => $fragments,
-				'name'       => $reference->get_name(),
+				'name'       => $last_name,
+				'names'      => $added_names,
 			)
 		);
 	}

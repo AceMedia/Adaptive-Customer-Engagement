@@ -1027,6 +1027,21 @@ final class SiteContextService {
 		$add_to_cart_url   = $can_add_to_cart ? add_query_arg( 'add-to-cart', (string) $product->get_id(), $product_permalink ) : '';
 		$variations        = $this->get_product_variations( $product, $product_permalink );
 		$variation_count   = ! empty( $variations ) ? count( $variations ) : $variation_count;
+
+		// Whether this product can actually end up in the basket: a simple product
+		// must be purchasable (have a price); a variable product needs at least one
+		// priced variation. Many catalogue items are quote-only (no price) and must
+		// NOT be offered as add-to-basket — the bot should offer a quote instead.
+		$is_purchasable = $product->is_purchasable();
+
+		if ( ! $is_purchasable && $is_variable && ! empty( $variations ) ) {
+			foreach ( $variations as $variation_entry ) {
+				if ( '' !== trim( (string) ( $variation_entry['price'] ?? '' ) ) ) {
+					$is_purchasable = true;
+					break;
+				}
+			}
+		}
 		$price_value       = method_exists( $product, 'get_price' ) && '' !== (string) $product->get_price() ? (float) $product->get_price() : null;
 		$regular_price     = method_exists( $product, 'get_regular_price' ) && '' !== (string) $product->get_regular_price() ? (float) $product->get_regular_price() : null;
 		$sale_price        = method_exists( $product, 'get_sale_price' ) && '' !== (string) $product->get_sale_price() ? (float) $product->get_sale_price() : null;
@@ -1117,6 +1132,7 @@ final class SiteContextService {
 				'variations'       => $variations,
 				'related_products' => $related_products,
 				'can_add_to_cart'  => $can_add_to_cart,
+				'purchasable'      => $is_purchasable,
 				'add_to_cart_url'  => esc_url_raw( $add_to_cart_url ),
 				'view_url'         => esc_url_raw( $product_permalink ),
 			),
@@ -2023,6 +2039,7 @@ final class SiteContextService {
 				'is_variable'     => ! empty( $commerce['is_variable'] ),
 				'variations'      => $this->trim_variations_for_source( is_array( $commerce['variations'] ?? null ) ? $commerce['variations'] : array() ),
 				'can_add_to_cart' => ! empty( $commerce['can_add_to_cart'] ),
+				'purchasable'     => ! empty( $commerce['purchasable'] ),
 				'add_to_cart_url' => esc_url_raw( (string) ( $commerce['add_to_cart_url'] ?? '' ) ),
 				'view_url'        => esc_url_raw( (string) ( $commerce['view_url'] ?? $document['url'] ?? '' ) ),
 			),

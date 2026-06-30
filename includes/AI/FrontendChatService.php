@@ -337,7 +337,10 @@ final class FrontendChatService {
 				'role'    => 'system',
 				'content' => 'Adding to the basket: visitors can add products to their basket directly in this chat. When the visitor clearly wants to add a product AND you know the exact product (use its "cart product id" from the facts) and every required option, finish your reply with a directive on its own final line, exactly in this form: '
 					. '[[ACE_CART:{"product_id":123,"qty":1,"attributes":{"Colour":"Blue","Size":"1100L"}}]] '
-					. 'Use the option labels and values exactly as listed under the product\'s "required options". For a product with no options use "attributes":{}. If a required option has only one possible value listed, use it automatically without asking. Only ask the visitor about options that genuinely have more than one value and that they have not already specified. If, after that, a required multi-value option is still missing or ambiguous, DO NOT emit the directive — instead ask for it (for example, "What size would you like — 660L or 1100L?"). The directive must be the very last line and is processed silently; never describe it or show its text in your prose. Only ever add products that appear in the provided context. The basket add is performed and confirmed automatically, so phrase your reply as adding it (e.g. "Adding the blue 1100L bin to your basket now.").',
+					. 'Use the option labels and values exactly as listed under the product\'s "required options". For a product with no options use "attributes":{}. If a required option has only one possible value listed, use it automatically without asking. Only ask the visitor about options that genuinely have more than one value and that they have not already specified. If, after that, a required multi-value option is still missing or ambiguous, DO NOT emit the directive — instead ask for it (for example, "What size would you like — 660L or 1100L?"). '
+						. 'To add several products at once (e.g. "add three cage bins and a green Schafer bin"), list them all in a single directive using an items array, like [[ACE_CART:{"items":[{"product_id":123,"qty":3,"attributes":{}},{"product_id":456,"qty":1,"attributes":{"Colour":"Green"}}]}]]. Set "qty" for the number of units of each line. '
+						. 'Only ever emit the directive (and only ever say you are adding something) for a product that has a "cart product id" in the facts. If a product is shown as "price on request" / has no cart product id, it CANNOT be added to the basket — never say you are adding it; instead offer to arrange a quote or put them in touch with the team. '
+						. 'The directive must be the very last line and is processed silently; never describe it or show its text in your prose. Only ever add products that appear in the provided context. The basket add is performed and confirmed automatically, so phrase your reply as adding it (e.g. "Adding the blue 1100L bin to your basket now.").',
 			);
 		}
 
@@ -385,24 +388,34 @@ final class FrontendChatService {
 
 		// Parse and strip any add-to-cart directive the model emitted, and resolve
 		// it to a concrete product/variation the frontend can add to the basket.
-		$cart_action = null;
+		$cart_action  = null;
+		$cart_actions = array();
 
 		if ( $cart_enabled ) {
-			$parsed = $this->parse_cart_directive( $response_message );
+			$parsed = $this->parse_cart_directives( $response_message );
 
-			if ( null !== $parsed ) {
+			if ( ! empty( $parsed['items'] ) ) {
 				$response_message = $parsed['message'];
+				$out_of_stock     = false;
 
-				if ( $parsed['product_id'] > 0 ) {
-					$resolved = $this->site_context->resolve_cart_selection( $parsed['product_id'], $parsed['attributes'], $parsed['qty'] );
+				foreach ( $parsed['items'] as $item ) {
+					$resolved = $this->site_context->resolve_cart_selection( $item['product_id'], $item['attributes'], $item['qty'] );
 
 					if ( is_array( $resolved ) ) {
 						if ( ! empty( $resolved['error'] ) && 'out_of_stock' === $resolved['error'] ) {
-							$response_message = trim( $response_message . "\n\nThat option looks out of stock right now, so I haven't added it." );
+							$out_of_stock = true;
 						} elseif ( empty( $resolved['needs_more'] ) && ! empty( $resolved['product_id'] ) ) {
-							$cart_action = $resolved;
+							$cart_actions[] = $resolved;
 						}
 					}
+				}
+
+				if ( $out_of_stock && empty( $cart_actions ) ) {
+					$response_message = trim( $response_message . "\n\nThat option looks out of stock right now, so I haven't added it." );
+				}
+
+				if ( ! empty( $cart_actions ) ) {
+					$cart_action = $cart_actions[0];
 				}
 			}
 		}
@@ -431,6 +444,7 @@ final class FrontendChatService {
 			'message'      => $response_message,
 			'sources'      => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
 			'cart_action'  => $cart_action,
+			'cart_actions' => $cart_actions,
 			'model'        => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
 			'conversation' => $this->normalise_conversation( $thread ),
 			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
@@ -627,40 +641,68 @@ final class FrontendChatService {
 	}
 
 	/**
-	 * Extract and strip an add-to-cart directive emitted by the model.
+	 * Extract and strip every add-to-cart directive the model emitted.
+	 *
+	 * Supports one or more [[ACE_CART:{...}]] directives, and within each either a
+	 * single item ({product_id,qty,attributes}) or a bulk list ({"items":[{...},...]})
+	 * so the visitor can add several bins (or several variations) in one request.
 	 *
 	 * @param string $message Assistant message.
-	 * @return array{message:string,product_id:int,qty:int,attributes:array<string,string>}|null
+	 * @return array{message:string,items:array<int,array{product_id:int,qty:int,attributes:array<string,string>}>}
 	 */
-	private function parse_cart_directive( string $message ) {
-		if ( ! preg_match( '/\[\[ACE_CART:(\{.*?\})\]\]/s', $message, $matches ) ) {
-			return null;
+	private function parse_cart_directives( string $message ): array {
+		$items = array();
+
+		if ( preg_match_all( '/\[\[ACE_CART:(\{.*?\})\]\]/s', $message, $matches ) ) {
+			foreach ( $matches[1] as $json_str ) {
+				$json = json_decode( (string) $json_str, true );
+
+				if ( ! is_array( $json ) ) {
+					continue;
+				}
+
+				$raw_items = ( isset( $json['items'] ) && is_array( $json['items'] ) ) ? $json['items'] : array( $json );
+
+				foreach ( $raw_items as $raw ) {
+					$item = $this->normalise_cart_directive_item( $raw );
+
+					if ( null !== $item ) {
+						$items[] = $item;
+					}
+				}
+			}
 		}
 
 		$stripped = trim( (string) preg_replace( '/\s*\[\[ACE_CART:\{.*?\}\]\]\s*/s', '', $message ) );
-		$json     = json_decode( (string) $matches[1], true );
 
-		if ( ! is_array( $json ) || empty( $json['product_id'] ) ) {
-			return array(
-				'message'    => $stripped,
-				'product_id' => 0,
-				'qty'        => 1,
-				'attributes' => array(),
-			);
+		return array(
+			'message' => $stripped,
+			'items'   => $items,
+		);
+	}
+
+	/**
+	 * Normalise one raw directive item to {product_id, qty, attributes}.
+	 *
+	 * @param mixed $raw Raw decoded item.
+	 * @return array{product_id:int,qty:int,attributes:array<string,string>}|null
+	 */
+	private function normalise_cart_directive_item( $raw ) {
+		if ( ! is_array( $raw ) || empty( $raw['product_id'] ) ) {
+			return null;
 		}
 
 		$attributes = array();
 
-		if ( isset( $json['attributes'] ) && is_array( $json['attributes'] ) ) {
-			foreach ( $json['attributes'] as $key => $value ) {
+		if ( isset( $raw['attributes'] ) && is_array( $raw['attributes'] ) ) {
+			foreach ( $raw['attributes'] as $key => $value ) {
 				$attributes[ sanitize_text_field( (string) $key ) ] = sanitize_text_field( (string) ( is_scalar( $value ) ? $value : '' ) );
 			}
 		}
 
 		return array(
-			'message'    => $stripped,
-			'product_id' => absint( $json['product_id'] ),
-			'qty'        => max( 1, absint( $json['qty'] ?? 1 ) ),
+			'product_id' => absint( $raw['product_id'] ),
+			'qty'        => max( 1, absint( $raw['qty'] ?? 1 ) ),
 			'attributes' => $attributes,
 		);
 	}
@@ -1482,11 +1524,18 @@ final class FrontendChatService {
 		}
 
 		// Give the model the data it needs to drive an add-to-cart directive:
-		// the cart product id and, for variable products, the option matrix.
-		$product_id = absint( $commerce['product_id'] ?? 0 );
+		// the cart product id and, for variable products, the option matrix. Only
+		// expose the cart product id for products that can actually be purchased —
+		// quote-only products (no price) are flagged so the bot offers a quote.
+		$product_id  = absint( $commerce['product_id'] ?? 0 );
+		$purchasable = ! empty( $commerce['purchasable'] );
 
 		if ( $product_id > 0 ) {
-			$facts[] = 'cart product id ' . $product_id;
+			if ( $purchasable ) {
+				$facts[] = 'cart product id ' . $product_id;
+			} else {
+				$facts[] = 'price on request — not purchasable online, so it cannot be added to the basket; offer to arrange a quote or put them in touch with the team instead of adding it';
+			}
 		}
 
 		$variations = is_array( $commerce['variations'] ?? null ) ? $commerce['variations'] : array();
