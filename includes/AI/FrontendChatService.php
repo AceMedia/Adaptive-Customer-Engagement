@@ -339,7 +339,7 @@ final class FrontendChatService {
 					. '[[ACE_CART:{"product_id":123,"qty":1,"attributes":{"Colour":"Blue","Size":"1100L"}}]] '
 					. 'Use the option labels and values exactly as listed under the product\'s "required options". For a product with no options use "attributes":{}. If a required option has only one possible value listed, use it automatically without asking. Only ask the visitor about options that genuinely have more than one value and that they have not already specified. If, after that, a required multi-value option is still missing or ambiguous, DO NOT emit the directive — instead ask for it (for example, "What size would you like — 660L or 1100L?"). '
 						. 'To add several products at once (e.g. "add three cage bins and a green Schafer bin"), list them all in a single directive using an items array, like [[ACE_CART:{"items":[{"product_id":123,"qty":3,"attributes":{}},{"product_id":456,"qty":1,"attributes":{"Colour":"Green"}}]}]]. Set "qty" for the number of units of each line. '
-						. 'Only ever emit the directive (and only ever say you are adding something) for a product that has a "cart product id" in the facts. If a product is shown as "price on request" / has no cart product id, it CANNOT be added to the basket — never say you are adding it; instead offer to arrange a quote or put them in touch with the team. '
+						. 'Only ever emit the directive (and only ever say you are adding something) for a product that has a "cart product id" in the facts. If a product is shown as "price on request" / has no cart product id, it CANNOT be added to the basket — never say you are adding it. Instead: clearly say it is available on request, refer to it by its exact product name, include the link to its product page from the facts, and offer to arrange a quote (you can take their name and email so the team can follow up). '
 						. 'The directive must be the very last line and is processed silently; never describe it or show its text in your prose. Only ever add products that appear in the provided context. The basket add is performed and confirmed automatically, so phrase your reply as adding it (e.g. "Adding the blue 1100L bin to your basket now.").',
 			);
 		}
@@ -1534,7 +1534,14 @@ final class FrontendChatService {
 			if ( $purchasable ) {
 				$facts[] = 'cart product id ' . $product_id;
 			} else {
-				$facts[] = 'price on request — not purchasable online, so it cannot be added to the basket; offer to arrange a quote or put them in touch with the team instead of adding it';
+				$view_url  = esc_url_raw( (string) ( $commerce['view_url'] ?? '' ) );
+				$quote_fact = 'price on request — not purchasable online, so it cannot be added to the basket; tell the visitor it is available on request, offer to arrange a quote (you can take their details), and link them to the product page';
+
+				if ( '' !== $view_url ) {
+					$quote_fact .= ' at ' . $view_url;
+				}
+
+				$facts[] = $quote_fact;
 			}
 		}
 

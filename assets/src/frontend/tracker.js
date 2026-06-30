@@ -1147,6 +1147,21 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			});
 		});
 
+		// Linkify bare URLs (e.g. a product page the assistant links for a quote).
+		Array.from(content.matchAll(/\bhttps?:\/\/[^\s<>"')\]]+/gi)).forEach((match) => {
+			const raw = String(match[0] || '');
+			const value = raw.replace(/[.,;:!?)]+$/, '') || raw;
+			const index = Number(match.index || 0);
+
+			matches.push({
+				index,
+				length: value.length,
+				href: value,
+				text: value,
+				external: true,
+			});
+		});
+
 		matches.sort((left, right) => {
 			if (left.index === right.index) {
 				return right.length - left.length;
