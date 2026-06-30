@@ -462,6 +462,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const voiceRepliesEnabled = !!chatConfig.voiceReplies && (voiceOutputSupported || premiumTtsEnabled);
 	const voiceHandsFree = !!chatConfig.voiceHandsFree;
 	const voiceLang = String(chatConfig.voiceLang || 'en-GB');
+	const addToCartEnabled = chatConfig.addToCartEnabled !== false;
+	const chatPlacement = ['bottom-right', 'bottom-left', 'top-right', 'top-left'].indexOf(String(chatConfig.placement || '')) !== -1 ? String(chatConfig.placement) : 'bottom-right';
+	const dockAllowed = chatConfig.dockEnabled !== false;
 	let speechRecognition = null;
 	let lastSpokenKey = '';
 	let voiceRenderPrimed = false;
@@ -502,6 +505,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const voiceToggle = document.createElement('button');
 	const state = {
 		open: false,
+		docked: false,
 		started: false,
 		pending: false,
 		conversationUuid: '',
@@ -542,6 +546,15 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	panel.id = 'ace-ai-chat-panel';
 	panel.hidden = true;
+	launcher.classList.add(`ace-place-${chatPlacement}`);
+	panel.classList.add(`ace-place-${chatPlacement}`);
+
+	const dockToggle = document.createElement('button');
+	dockToggle.id = 'ace-ai-chat-dock';
+	dockToggle.type = 'button';
+	dockToggle.setAttribute('aria-label', 'Expand chat to a side panel');
+	dockToggle.setAttribute('aria-pressed', 'false');
+	dockToggle.textContent = '⤢';
 
 	header.id = 'ace-ai-chat-header';
 	title.textContent = chatConfig.title || chatConfig.botName || 'Site assistant';
@@ -572,6 +585,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	headerActions.appendChild(contactToggle);
 	if (voiceRepliesEnabled) {
 		headerActions.appendChild(voiceToggle);
+	}
+	if (dockAllowed) {
+		headerActions.appendChild(dockToggle);
 	}
 	headerActions.appendChild(endChat);
 	headerActions.appendChild(close);
@@ -1250,24 +1266,40 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		return String(template).replace('%%endpoint%%', 'add_to_cart');
 	};
 
-	const getAddToCartRequestData = (source) => {
-		const addToCartUrl = String(source?.commerce?.add_to_cart_url || '').trim();
+	const parseAddToCart = (addToCartUrl) => {
+		addToCartUrl = String(addToCartUrl || '').trim();
 
 		if (!addToCartUrl) {
 			return null;
 		}
 
-		const parsed = new URL(addToCartUrl, window.location.origin);
+		let parsed;
+
+		try {
+			parsed = new URL(addToCartUrl, window.location.origin);
+		} catch (error) {
+			return null;
+		}
+
 		const params = parsed.searchParams;
-		const productId = params.get('add-to-cart') || params.get('product_id') || params.get('variation_id') || '';
+		const productId = params.get('add-to-cart') || params.get('product_id') || '';
 
 		if (!productId) {
 			return null;
 		}
 
+		const variation = {};
+		params.forEach((value, key) => {
+			if (key.indexOf('attribute_') === 0) {
+				variation[key] = value;
+			}
+		});
+
 		return {
 			product_id: productId,
 			quantity: params.get('quantity') || '1',
+			variation_id: params.get('variation_id') || '',
+			variation,
 		};
 	};
 
@@ -1294,12 +1326,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 	};
 
-	const addSourceToCart = async (source, triggerButton) => {
-		const data = getAddToCartRequestData(source);
-
-		if (!data) {
+	const performAddToCart = async (data, triggerButton) => {
+		if (!data || !data.product_id) {
 			throw new Error('This item could not be added to the basket just now.');
 		}
+
+		const originalLabel = triggerButton instanceof HTMLButtonElement ? triggerButton.textContent : '';
 
 		if (triggerButton instanceof HTMLButtonElement) {
 			triggerButton.disabled = true;
@@ -1307,7 +1339,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		try {
-			const payload = new URLSearchParams(data);
+			const body = new URLSearchParams();
+			body.set('product_id', data.product_id);
+			body.set('quantity', data.quantity || '1');
+
+			if (data.variation_id) {
+				body.set('variation_id', data.variation_id);
+			}
+
+			if (data.variation && typeof data.variation === 'object') {
+				Object.entries(data.variation).forEach(([key, value]) => body.set(`variation[${key}]`, value));
+			}
 
 			if (window.jQuery) {
 				window.jQuery(document.body).trigger('adding_to_cart', [window.jQuery(triggerButton), data]);
@@ -1319,7 +1361,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				headers: {
 					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
 				},
-				body: payload.toString(),
+				body: body.toString(),
 			});
 			const result = await response.json();
 
@@ -1339,11 +1381,54 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 			document.body.dispatchEvent(new CustomEvent('wc-blocks_added_to_cart', { bubbles: true }));
 			openMiniCartDrawer();
+
+			return result;
 		} finally {
 			if (triggerButton instanceof HTMLButtonElement) {
 				triggerButton.disabled = false;
-				triggerButton.textContent = 'Add to basket';
+				triggerButton.textContent = originalLabel || 'Add to basket';
 			}
+		}
+	};
+
+	const addSourceToCart = (source, triggerButton) => performAddToCart(parseAddToCart(source?.commerce?.add_to_cart_url), triggerButton);
+
+	const cartPageUrl = () => String(window.wc_add_to_cart_params?.cart_url || `${window.location.origin}/cart/`);
+
+	// Perform a server-resolved add-to-cart (from a conversational ACE_CART directive).
+	const runCartAction = async (cartAction) => {
+		if (!cartAction || !cartAction.product_id) {
+			return;
+		}
+
+		let data = parseAddToCart(cartAction.add_to_cart_url);
+
+		if (!data) {
+			data = {
+				product_id: String(cartAction.product_id),
+				quantity: String(cartAction.quantity || 1),
+				variation_id: cartAction.variation_id ? String(cartAction.variation_id) : '',
+				variation: {},
+			};
+		} else if (cartAction.quantity) {
+			data.quantity = String(cartAction.quantity);
+		}
+
+		try {
+			await performAddToCart(data);
+			const qty = Number(cartAction.quantity || 1);
+			const name = String(cartAction.name || 'item');
+			pushMessage({
+				role: 'assistant',
+				content: `🛒 Added ${qty > 1 ? `${qty}× ` : ''}${name} to your basket.\nView your basket: ${cartPageUrl()}`,
+			});
+			renderMessages({ focusLatest: true });
+		} catch (error) {
+			pushMessage({
+				role: 'assistant',
+				content: 'Sorry — I couldn’t add that to your basket just now. You can add it from the product page.',
+			});
+			renderMessages({ focusLatest: true });
 		}
 	};
 
@@ -1524,6 +1609,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				}
 			});
 			actionsNode.appendChild(addButton);
+		}
+
+		if (addToCartEnabled && !source?.commerce?.can_add_to_cart && (source?.commerce?.is_variable || Number(source?.commerce?.variation_count) > 0)) {
+			const chooseButton = document.createElement('button');
+			chooseButton.type = 'button';
+			chooseButton.className = 'ace-ai-chat-source-action';
+			chooseButton.textContent = 'Choose options';
+			chooseButton.addEventListener('click', () => {
+				const title = String(source?.title || 'this product').trim();
+				sendMessage(`I'd like to order the ${title} — which options do I need to choose?`);
+			});
+			actionsNode.appendChild(chooseButton);
 		}
 
 		if (source?.commerce?.view_url || source?.url) {
@@ -2342,8 +2439,24 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			stopAvailabilityPolling();
 			stopSpeaking();
 			stopListening();
+			if (state.docked) {
+				setDocked(false);
+			}
 		}
 	};
+
+	// Dock/expand: turn the panel into a ~1/3-width side column and shift the page.
+	const setDocked = (nextDocked) => {
+		state.docked = !!nextDocked && dockAllowed;
+		document.body.classList.toggle('ace-ai-chat-docked', state.docked);
+		document.body.classList.toggle(`ace-ai-chat-docked--${chatPlacement}`, state.docked);
+		panel.classList.toggle('is-docked', state.docked);
+		dockToggle.setAttribute('aria-pressed', state.docked ? 'true' : 'false');
+		dockToggle.textContent = state.docked ? '⤡' : '⤢';
+		dockToggle.setAttribute('aria-label', state.docked ? 'Collapse chat to the corner' : 'Expand chat to a side panel');
+	};
+
+	dockToggle.addEventListener('click', () => setDocked(!state.docked));
 
 	const setPending = (nextPending) => {
 		state.pending = nextPending;
@@ -2423,6 +2536,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					content: data?.message || 'Sorry, I could not prepare a reply just now.',
 					sources: Array.isArray(data?.sources) ? data.sources : [],
 				});
+			}
+
+			if (data?.cart_action && addToCartEnabled) {
+				runCartAction(data.cart_action);
 			}
 		} catch (error) {
 			pushMessage({

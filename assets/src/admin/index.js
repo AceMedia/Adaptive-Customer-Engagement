@@ -5850,11 +5850,24 @@ function SettingsView({ section = 'settings', active }) {
 						createElement(ToggleControl, { label: __('Restrict frontend AI chat to logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_admin_only, onChange: (next) => setAiAgent({ frontend_chat_admin_only: next }) }),
 						createElement(ToggleControl, { label: __('Use live site context in replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.use_live_site_context, onChange: (next) => setAiAgent({ use_live_site_context: next }) }),
 						createElement(ToggleControl, { label: __('Show source links beneath replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.show_source_links, onChange: (next) => setAiAgent({ show_source_links: next }) }),
-						createElement(ToggleControl, { label: __('Keep recent conversation history', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.keep_history, onChange: (next) => setAiAgent({ keep_history: next }) })
+						createElement(ToggleControl, { label: __('Keep recent conversation history', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.keep_history, onChange: (next) => setAiAgent({ keep_history: next }) }),
+						createElement(ToggleControl, { label: __('Add to basket from chat (WooCommerce)', 'adaptive-customer-engagement'), checked: settings.ai_agent.frontend_add_to_cart_enabled !== false, onChange: (next) => setAiAgent({ frontend_add_to_cart_enabled: next }) }),
+						createElement(ToggleControl, { label: __('Allow expand / dock to a side panel', 'adaptive-customer-engagement'), checked: settings.ai_agent.frontend_chat_dock_enabled !== false, onChange: (next) => setAiAgent({ frontend_chat_dock_enabled: next }) })
 					),
 					createElement(SettingsFieldGrid, { compact: true },
 						createElement(TextControl, { label: __('Temperature', 'adaptive-customer-engagement'), type: 'number', min: 0, max: 2, step: '0.1', value: settings.ai_agent.openai_temperature ?? 0.2, onChange: (next) => setAiAgent({ openai_temperature: Number(next || 0) }) }),
 						createElement(TextControl, { label: __('Max response tokens', 'adaptive-customer-engagement'), type: 'number', min: 200, max: 8000, step: '50', value: settings.ai_agent.openai_max_response_tokens ?? 1500, onChange: (next) => setAiAgent({ openai_max_response_tokens: Number(next || 1500) }) }),
+						createElement(SelectControl, {
+							label: __('Launcher position', 'adaptive-customer-engagement'),
+							value: settings.ai_agent.frontend_chat_placement || 'bottom-right',
+							options: [
+								{ label: __('Bottom right', 'adaptive-customer-engagement'), value: 'bottom-right' },
+								{ label: __('Bottom left', 'adaptive-customer-engagement'), value: 'bottom-left' },
+								{ label: __('Top right', 'adaptive-customer-engagement'), value: 'top-right' },
+								{ label: __('Top left', 'adaptive-customer-engagement'), value: 'top-left' },
+							],
+							onChange: (next) => setAiAgent({ frontend_chat_placement: next }),
+						}),
 					),
 					settings.ai_agent.frontend_chat_enabled
 						? createElement(SettingsPanel, {

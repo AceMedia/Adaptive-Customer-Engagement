@@ -322,6 +322,18 @@ final class FrontendChatService {
 			);
 		}
 
+		$cart_enabled = function_exists( 'wc_get_product' )
+			&& ( ! array_key_exists( 'frontend_add_to_cart_enabled', $ai_agent ) || ! empty( $ai_agent['frontend_add_to_cart_enabled'] ) );
+
+		if ( $cart_enabled ) {
+			$messages[] = array(
+				'role'    => 'system',
+				'content' => 'Adding to the basket: visitors can add products to their basket directly in this chat. When the visitor clearly wants to add a product AND you know the exact product (use its "cart product id" from the facts) and every required option, finish your reply with a directive on its own final line, exactly in this form: '
+					. '[[ACE_CART:{"product_id":123,"qty":1,"attributes":{"Colour":"Blue","Size":"1100L"}}]] '
+					. 'Use the option labels and values exactly as listed under the product\'s "required options". For a product with no options use "attributes":{}. If a required option has only one possible value listed, use it automatically without asking. Only ask the visitor about options that genuinely have more than one value and that they have not already specified. If, after that, a required multi-value option is still missing or ambiguous, DO NOT emit the directive — instead ask for it (for example, "What size would you like — 660L or 1100L?"). The directive must be the very last line and is processed silently; never describe it or show its text in your prose. Only ever add products that appear in the provided context. The basket add is performed and confirmed automatically, so phrase your reply as adding it (e.g. "Adding the blue 1100L bin to your basket now.").',
+			);
+		}
+
 		if ( ! empty( $ai_agent['keep_history'] ) ) {
 			$messages = array_merge( $messages, $this->sanitize_history( $payload['history'] ?? array(), (int) ( $ai_agent['max_history_messages'] ?? 8 ) ) );
 		}
@@ -363,6 +375,31 @@ final class FrontendChatService {
 		}
 
 		$response_message = sanitize_textarea_field( (string) ( $response['message'] ?? '' ) );
+
+		// Parse and strip any add-to-cart directive the model emitted, and resolve
+		// it to a concrete product/variation the frontend can add to the basket.
+		$cart_action = null;
+
+		if ( $cart_enabled ) {
+			$parsed = $this->parse_cart_directive( $response_message );
+
+			if ( null !== $parsed ) {
+				$response_message = $parsed['message'];
+
+				if ( $parsed['product_id'] > 0 ) {
+					$resolved = $this->site_context->resolve_cart_selection( $parsed['product_id'], $parsed['attributes'], $parsed['qty'] );
+
+					if ( is_array( $resolved ) ) {
+						if ( ! empty( $resolved['error'] ) && 'out_of_stock' === $resolved['error'] ) {
+							$response_message = trim( $response_message . "\n\nThat option looks out of stock right now, so I haven't added it." );
+						} elseif ( empty( $resolved['needs_more'] ) && ! empty( $resolved['product_id'] ) ) {
+							$cart_action = $resolved;
+						}
+					}
+				}
+			}
+		}
+
 		$show_sources     = $this->extract_source_display_decision( $response_message, ! empty( $sources ), $message, $sources );
 		$response_message = $this->apply_sales_follow_up_prompt( $response_message, $message, $thread, $lead_capture['captured'] ?? array() );
 		$response_message = $this->append_primary_contact_number( $response_message );
@@ -386,6 +423,7 @@ final class FrontendChatService {
 		return array(
 			'message'      => $response_message,
 			'sources'      => ! empty( $ai_agent['show_source_links'] ) ? $normalised_sources : array(),
+			'cart_action'  => $cart_action,
 			'model'        => sanitize_text_field( (string) ( $response['model'] ?? '' ) ),
 			'conversation' => $this->normalise_conversation( $thread ),
 			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
@@ -572,6 +610,45 @@ final class FrontendChatService {
 		return array(
 			'conversation' => $this->normalise_conversation( $thread ),
 			'messages'     => $this->normalise_conversation_messages( (int) $thread['id'] ),
+		);
+	}
+
+	/**
+	 * Extract and strip an add-to-cart directive emitted by the model.
+	 *
+	 * @param string $message Assistant message.
+	 * @return array{message:string,product_id:int,qty:int,attributes:array<string,string>}|null
+	 */
+	private function parse_cart_directive( string $message ) {
+		if ( ! preg_match( '/\[\[ACE_CART:(\{.*?\})\]\]/s', $message, $matches ) ) {
+			return null;
+		}
+
+		$stripped = trim( (string) preg_replace( '/\s*\[\[ACE_CART:\{.*?\}\]\]\s*/s', '', $message ) );
+		$json     = json_decode( (string) $matches[1], true );
+
+		if ( ! is_array( $json ) || empty( $json['product_id'] ) ) {
+			return array(
+				'message'    => $stripped,
+				'product_id' => 0,
+				'qty'        => 1,
+				'attributes' => array(),
+			);
+		}
+
+		$attributes = array();
+
+		if ( isset( $json['attributes'] ) && is_array( $json['attributes'] ) ) {
+			foreach ( $json['attributes'] as $key => $value ) {
+				$attributes[ sanitize_text_field( (string) $key ) ] = sanitize_text_field( (string) ( is_scalar( $value ) ? $value : '' ) );
+			}
+		}
+
+		return array(
+			'message'    => $stripped,
+			'product_id' => absint( $json['product_id'] ),
+			'qty'        => max( 1, absint( $json['qty'] ?? 1 ) ),
+			'attributes' => $attributes,
 		);
 	}
 
@@ -1388,7 +1465,46 @@ final class FrontendChatService {
 		if ( ! empty( $commerce['can_add_to_cart'] ) ) {
 			$facts[] = 'can be added to the basket directly in this chat';
 		} elseif ( ! empty( $commerce['variation_count'] ) ) {
-			$facts[] = 'has selectable options (see Options in the summary)';
+			$facts[] = 'has selectable options';
+		}
+
+		// Give the model the data it needs to drive an add-to-cart directive:
+		// the cart product id and, for variable products, the option matrix.
+		$product_id = absint( $commerce['product_id'] ?? 0 );
+
+		if ( $product_id > 0 ) {
+			$facts[] = 'cart product id ' . $product_id;
+		}
+
+		$variations = is_array( $commerce['variations'] ?? null ) ? $commerce['variations'] : array();
+
+		if ( ! empty( $commerce['is_variable'] ) && ! empty( $variations ) ) {
+			$options = array();
+
+			foreach ( $variations as $variation ) {
+				if ( empty( $variation['attributes'] ) || ! is_array( $variation['attributes'] ) ) {
+					continue;
+				}
+
+				foreach ( $variation['attributes'] as $label => $value ) {
+					$label = sanitize_text_field( (string) $label );
+					$value = sanitize_text_field( (string) $value );
+
+					if ( '' !== $label && '' !== $value ) {
+						$options[ $label ][ $value ] = true;
+					}
+				}
+			}
+
+			$parts = array();
+
+			foreach ( $options as $label => $values ) {
+				$parts[] = $label . ': ' . implode( ', ', array_keys( $values ) );
+			}
+
+			if ( ! empty( $parts ) ) {
+				$facts[] = 'required options — ' . implode( '; ', $parts );
+			}
 		}
 
 		return '' !== implode( '', $facts ) ? implode( '; ', $facts ) . '.' : '';
@@ -1426,6 +1542,8 @@ final class FrontendChatService {
 							'needs_shipping'  => isset( $source['commerce']['needs_shipping'] ) ? ! empty( $source['commerce']['needs_shipping'] ) : null,
 							'shipping_class'  => sanitize_text_field( (string) ( $source['commerce']['shipping_class'] ?? '' ) ),
 							'variation_count' => absint( $source['commerce']['variation_count'] ?? 0 ),
+							'product_id'      => absint( $source['commerce']['product_id'] ?? 0 ),
+							'is_variable'     => ! empty( $source['commerce']['is_variable'] ),
 							'can_add_to_cart' => ! empty( $source['commerce']['can_add_to_cart'] ),
 							'add_to_cart_url' => esc_url_raw( (string) ( $source['commerce']['add_to_cart_url'] ?? '' ) ),
 							'view_url'        => esc_url_raw( (string) ( $source['commerce']['view_url'] ?? $source['url'] ?? '' ) ),

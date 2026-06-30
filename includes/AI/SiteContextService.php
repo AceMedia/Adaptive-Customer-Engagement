@@ -90,6 +90,24 @@ final class SiteContextService {
 			$documents[] = $document;
 		}
 
+		// WordPress's default search is AND across all words, so a named product
+		// is easily missed inside a noisy sentence ("order the X in green please").
+		// Augment with OR title-term matches so named items still surface.
+		$seen_ids = array();
+
+		foreach ( $documents as $document ) {
+			$seen_ids[ (int) ( $document['id'] ?? 0 ) ] = true;
+		}
+
+		foreach ( $this->get_title_match_documents( $query_terms, $post_types ) as $document ) {
+			$id = (int) ( $document['id'] ?? 0 );
+
+			if ( $id > 0 && empty( $seen_ids[ $id ] ) ) {
+				$seen_ids[ $id ] = true;
+				$documents[]     = $document;
+			}
+		}
+
 		usort(
 			$documents,
 			static function ( array $left, array $right ): int {
@@ -343,6 +361,60 @@ final class SiteContextService {
 	 * @param bool              $include_content Whether to include fuller content.
 	 * @return array<string, mixed>
 	 */
+	/**
+	 * Find candidate documents whose title contains any significant query term
+	 * (OR match), so named products surface inside noisy sentences.
+	 *
+	 * @param array<int, string> $query_terms Significant query terms.
+	 * @param array<int, string> $post_types  Allowed post types.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_title_match_documents( array $query_terms, array $post_types ): array {
+		global $wpdb;
+
+		$terms = array_values(
+			array_filter(
+				$query_terms,
+				static function ( $term ): bool {
+					return strlen( (string) $term ) >= 3;
+				}
+			)
+		);
+
+		if ( empty( $terms ) || empty( $post_types ) ) {
+			return array();
+		}
+
+		$terms = array_slice( $terms, 0, 6 );
+		$likes = array();
+		$params = array();
+
+		foreach ( $terms as $term ) {
+			$likes[]  = 'post_title LIKE %s';
+			$params[] = '%' . $wpdb->esc_like( (string) $term ) . '%';
+		}
+
+		$type_placeholders = implode( ', ', array_fill( 0, count( $post_types ), '%s' ) );
+		$sql               = "SELECT ID FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_type IN ( {$type_placeholders} ) AND ( " . implode( ' OR ', $likes ) . ' ) ORDER BY post_modified DESC LIMIT 15';
+		$ids               = $wpdb->get_col( $wpdb->prepare( $sql, array_merge( array_values( $post_types ), $params ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+		$documents = array();
+
+		foreach ( (array) $ids as $id ) {
+			$post = get_post( (int) $id );
+
+			if ( $post instanceof \WP_Post ) {
+				$document = $this->build_document( $post, $query_terms, false );
+
+				if ( ! empty( $document ) ) {
+					$documents[] = $document;
+				}
+			}
+		}
+
+		return $documents;
+	}
+
 	private function build_document( \WP_Post $post, array $query_terms, bool $include_content ): array {
 		$title = sanitize_text_field( get_the_title( $post ) );
 
@@ -1039,6 +1111,8 @@ final class SiteContextService {
 				'tax_status'       => method_exists( $product, 'get_tax_status' ) ? sanitize_key( (string) $product->get_tax_status() ) : '',
 				'product_kind'     => $product_kind,
 				'product_type'     => sanitize_key( $product->get_type() ),
+				'product_id'       => (int) $product->get_id(),
+				'is_variable'      => $is_variable,
 				'variation_count'  => $variation_count,
 				'variations'       => $variations,
 				'related_products' => $related_products,
@@ -1297,6 +1371,149 @@ final class SiteContextService {
 		}
 
 		return $variations;
+	}
+
+	/**
+	 * Resolve an add-to-cart request (product + chosen options) to a concrete
+	 * purchasable product/variation the frontend can add to the basket.
+	 *
+	 * @param int                   $product_id Parent/simple product id.
+	 * @param array<string, string> $attributes Chosen options (label => value).
+	 * @param int                   $quantity   Quantity.
+	 * @return array<string, mixed>|null  cart action, ['error'=>...], ['needs_more'=>true], or null.
+	 */
+	public function resolve_cart_selection( int $product_id, array $attributes, int $quantity = 1 ) {
+		if ( $product_id <= 0 || ! function_exists( 'wc_get_product' ) ) {
+			return null;
+		}
+
+		$product = wc_get_product( $product_id );
+
+		if ( ! $product || ! method_exists( $product, 'is_purchasable' ) || ! $product->is_purchasable() ) {
+			return null;
+		}
+
+		$quantity  = max( 1, $quantity );
+		$permalink = get_permalink( $product_id ) ?: '';
+
+		if ( $product->is_type( 'simple' ) ) {
+			if ( ! $product->is_in_stock() ) {
+				return array( 'error' => 'out_of_stock', 'name' => sanitize_text_field( $product->get_name() ) );
+			}
+
+			return array(
+				'product_id'      => $product_id,
+				'variation_id'    => 0,
+				'quantity'        => $quantity,
+				'name'            => sanitize_text_field( $product->get_name() ),
+				'price'           => $this->clean_price_text( (string) $product->get_price_html() ),
+				'add_to_cart_url' => esc_url_raw( '' !== $permalink ? add_query_arg( 'add-to-cart', $product_id, $permalink ) : '' ),
+				'attributes'      => array(),
+			);
+		}
+
+		if ( ! $product->is_type( 'variable' ) ) {
+			return null;
+		}
+
+		$variations = $this->get_product_variations( $product, $permalink );
+
+		if ( empty( $variations ) ) {
+			return null;
+		}
+
+		$requested = array();
+
+		foreach ( $attributes as $key => $value ) {
+			$value = $this->normalise_attr_token( (string) $value );
+
+			if ( '' !== $value ) {
+				$requested[ $this->normalise_attr_token( (string) $key ) ] = $value;
+			}
+		}
+
+		if ( empty( $requested ) ) {
+			return array( 'needs_more' => true );
+		}
+
+		$matches = array();
+
+		foreach ( $variations as $variation ) {
+			$human = array();
+
+			foreach ( (array) ( $variation['attributes'] ?? array() ) as $label => $value ) {
+				$human[ $this->normalise_attr_token( (string) $label ) ] = $this->normalise_attr_token( (string) $value );
+			}
+
+			$all_ok = true;
+
+			foreach ( $requested as $req_key => $req_value ) {
+				$found = isset( $human[ $req_key ] ) && $this->attr_value_matches( $human[ $req_key ], $req_value );
+
+				if ( ! $found ) {
+					foreach ( $human as $human_value ) {
+						if ( $this->attr_value_matches( $human_value, $req_value ) ) {
+							$found = true;
+							break;
+						}
+					}
+				}
+
+				if ( ! $found ) {
+					$all_ok = false;
+					break;
+				}
+			}
+
+			if ( $all_ok ) {
+				$matches[] = $variation;
+			}
+		}
+
+		if ( count( $matches ) !== 1 ) {
+			return array( 'needs_more' => true );
+		}
+
+		$match = $matches[0];
+
+		if ( empty( $match['in_stock'] ) || empty( $match['purchasable'] ) ) {
+			return array( 'error' => 'out_of_stock', 'name' => sanitize_text_field( $product->get_name() . ' – ' . ( $match['label'] ?? '' ) ) );
+		}
+
+		return array(
+			'product_id'      => $product_id,
+			'variation_id'    => (int) $match['id'],
+			'quantity'        => $quantity,
+			'name'            => sanitize_text_field( $product->get_name() . ' – ' . ( $match['label'] ?? '' ) ),
+			'price'           => (string) ( $match['price_html'] ?? '' ),
+			'add_to_cart_url' => (string) ( $match['add_to_cart_url'] ?? '' ),
+			'attributes'      => is_array( $match['attributes'] ?? null ) ? $match['attributes'] : array(),
+		);
+	}
+
+	/**
+	 * Normalise an attribute label/value for tolerant matching.
+	 *
+	 * @param string $value Raw token.
+	 * @return string
+	 */
+	private function normalise_attr_token( string $value ): string {
+		return (string) preg_replace( '/[^a-z0-9]+/', '', strtolower( trim( $value ) ) );
+	}
+
+	/**
+	 * Whether two normalised attribute values match (equal or one contains the other).
+	 *
+	 * @param string $a First value.
+	 * @param string $b Second value.
+	 * @return bool
+	 */
+	private function attr_value_matches( string $a, string $b ): bool {
+		if ( '' === $a || '' === $b ) {
+			return false;
+		}
+
+		return $a === $b || false !== strpos( $a, $b ) || false !== strpos( $b, $a );
 	}
 
 	/**
@@ -1802,11 +2019,40 @@ final class SiteContextService {
 				'needs_shipping'  => isset( $commerce['needs_shipping'] ) ? ! empty( $commerce['needs_shipping'] ) : null,
 				'shipping_class'  => sanitize_text_field( (string) ( $commerce['shipping_class'] ?? '' ) ),
 				'variation_count' => absint( $commerce['variation_count'] ?? 0 ),
+				'product_id'      => absint( $commerce['product_id'] ?? 0 ),
+				'is_variable'     => ! empty( $commerce['is_variable'] ),
+				'variations'      => $this->trim_variations_for_source( is_array( $commerce['variations'] ?? null ) ? $commerce['variations'] : array() ),
 				'can_add_to_cart' => ! empty( $commerce['can_add_to_cart'] ),
 				'add_to_cart_url' => esc_url_raw( (string) ( $commerce['add_to_cart_url'] ?? '' ) ),
 				'view_url'        => esc_url_raw( (string) ( $commerce['view_url'] ?? $document['url'] ?? '' ) ),
 			),
 		);
+	}
+
+	/**
+	 * Trim variation data carried on a source to the fields needed for the
+	 * option matrix and add-to-cart resolution, bounding the payload size.
+	 *
+	 * @param array<int, array<string, mixed>> $variations Full variations.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function trim_variations_for_source( array $variations ): array {
+		$trimmed = array();
+
+		foreach ( array_slice( $variations, 0, 30 ) as $variation ) {
+			if ( empty( $variation['attributes'] ) || ! is_array( $variation['attributes'] ) ) {
+				continue;
+			}
+
+			$trimmed[] = array(
+				'id'         => absint( $variation['id'] ?? 0 ),
+				'attributes' => array_map( 'sanitize_text_field', $variation['attributes'] ),
+				'in_stock'   => ! empty( $variation['in_stock'] ),
+				'price_html' => sanitize_text_field( (string) ( $variation['price_html'] ?? '' ) ),
+			);
+		}
+
+		return $trimmed;
 	}
 
 	/**
