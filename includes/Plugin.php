@@ -189,6 +189,7 @@ final class Plugin {
 		$public_segments = array(
 			'adaptive-customer-engagement/v1/ai/chat/',
 			'adaptive-customer-engagement/v1/ai/voice/',
+			'adaptive-customer-engagement/v1/ai/cart/',
 			'adaptive-customer-engagement/v1/track',
 			'adaptive-customer-engagement/v1/number/',
 		);
@@ -313,6 +314,7 @@ final class Plugin {
 			'voiceTtsEndpoint'  => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/tts' ) ) ),
 			'voiceSttEnabled'   => ! empty( $ai_agent['frontend_voice_input'] ) && ( new SpeechToTextService() )->is_configured( $ai_agent ),
 			'voiceTranscribeEndpoint' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/transcribe' ) ) ),
+			'cartAddEndpoint'   => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/cart/add' ) ) ),
 		);
 	}
 }

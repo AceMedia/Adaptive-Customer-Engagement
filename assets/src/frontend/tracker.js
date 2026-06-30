@@ -1340,47 +1340,41 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		try {
-			const body = new URLSearchParams();
-			// WooCommerce's AJAX add-to-cart expects the variation's own id as
-			// product_id for variable products (it derives the parent + attributes
-			// itself); posting the parent id fails with "choose options".
-			body.set('product_id', data.variation_id ? data.variation_id : data.product_id);
-			body.set('quantity', data.quantity || '1');
-
-			if (data.variation_id) {
-				body.set('variation_id', data.variation_id);
-
-				if (data.variation && typeof data.variation === 'object') {
-					Object.entries(data.variation).forEach(([key, value]) => body.set(`variation[${key}]`, value));
-				}
-			}
-
 			if (window.jQuery) {
 				window.jQuery(document.body).trigger('adding_to_cart', [window.jQuery(triggerButton), data]);
 			}
 
-			const response = await fetch(getWooAjaxUrl(), {
+			// Add server-side via the plugin endpoint: it loads the cart, forces a
+			// customer session (so a guest's first add persists), and returns
+			// fragments — far more reliable than the legacy wc-ajax handler.
+			const endpoint = chatConfig.cartAddEndpoint || `${config.root}${config.namespace}/ai/cart/add`;
+			const headers = { 'Content-Type': 'application/json' };
+
+			if (chatConfig.restNonce) {
+				headers['X-WP-Nonce'] = chatConfig.restNonce;
+			}
+
+			const response = await fetch(endpoint, {
 				method: 'POST',
 				credentials: 'same-origin',
-				headers: {
-					'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-				},
-				body: body.toString(),
+				headers,
+				body: JSON.stringify({
+					product_id: Number(data.product_id) || 0,
+					variation_id: Number(data.variation_id) || 0,
+					quantity: Number(data.quantity) || 1,
+				}),
 			});
 			const result = await response.json();
 
-			if (!response.ok) {
-				throw new Error(result?.message || 'This item could not be added to the basket just now.');
+			if (!response.ok || !result || result.added !== true) {
+				throw new Error((result && result.message) || 'This item could not be added to the basket just now.');
 			}
 
-			if (result?.error && result?.product_url) {
-				throw new Error('This item needs to be selected on the product page.');
-			}
-
-			refreshCartFragments(result?.fragments);
+			refreshCartFragments(result.fragments);
 
 			if (window.jQuery) {
-				window.jQuery(document.body).trigger('added_to_cart', [result?.fragments || {}, result?.cart_hash || '', window.jQuery(triggerButton)]);
+				window.jQuery(document.body).trigger('added_to_cart', [result.fragments || {}, result.cart_hash || '', window.jQuery(triggerButton)]);
+				window.jQuery(document.body).trigger('wc_fragment_refresh');
 			}
 
 			document.body.dispatchEvent(new CustomEvent('wc-blocks_added_to_cart', { bubbles: true }));

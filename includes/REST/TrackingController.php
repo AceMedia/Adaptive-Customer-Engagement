@@ -177,6 +177,16 @@ final class TrackingController {
 
 		register_rest_route(
 			$this->namespace,
+			'/ai/cart/add',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => '__return_true',
+				'callback'            => array( $this, 'ai_cart_add' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
 			'/ai/chat/conversation',
 			array(
 				'methods'             => 'GET',
@@ -392,6 +402,143 @@ final class TrackingController {
 		}
 
 		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Add a product (or a specific variation) to the WooCommerce cart from chat.
+	 *
+	 * Loads the cart in this REST request and forces a customer session so a
+	 * guest's first add actually persists, adds via WC()->cart->add_to_cart(),
+	 * then returns cart fragments — the robust pattern used elsewhere on the network.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function ai_cart_add( WP_REST_Request $request ) {
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+
+		if ( empty( $ai_agent['enabled'] ) || empty( $ai_agent['frontend_chat_enabled'] ) ) {
+			return new WP_Error( 'ace_cart_disabled', __( 'The assistant is not available.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( array_key_exists( 'frontend_add_to_cart_enabled', $ai_agent ) && empty( $ai_agent['frontend_add_to_cart_enabled'] ) ) {
+			return new WP_Error( 'ace_cart_disabled', __( 'Adding to the basket from chat is disabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return new WP_Error( 'ace_cart_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
+		}
+
+		if ( ! function_exists( 'WC' ) || ! function_exists( 'wc_get_product' ) ) {
+			return new WP_Error( 'ace_cart_no_woo', __( 'WooCommerce is not available on this site.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$bucket = $this->privacy->hash_ip( $this->privacy->get_client_ip() ) . '|ai-cart';
+
+		if ( ! $this->rate_limiter->allow( $bucket, 60, MINUTE_IN_SECONDS ) ) {
+			return new WP_Error( 'ace_rate_limited', __( 'Too many cart requests just now. Please try again shortly.', 'adaptive-customer-engagement' ), array( 'status' => 429 ) );
+		}
+
+		$payload      = is_array( $request->get_json_params() ) ? $request->get_json_params() : array();
+		$product_id   = absint( $payload['product_id'] ?? 0 );
+		$variation_id = absint( $payload['variation_id'] ?? 0 );
+		$quantity     = max( 1, absint( $payload['quantity'] ?? 1 ) );
+
+		if ( ! $product_id ) {
+			return new WP_Error( 'ace_cart_product_required', __( 'A product is required.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		// The cart/session are not initialised in a REST request by default.
+		if ( function_exists( 'wc_load_cart' ) && is_null( WC()->cart ) ) {
+			wc_load_cart();
+		}
+
+		if ( is_null( WC()->cart ) ) {
+			return new WP_Error( 'ace_cart_unavailable', __( 'The basket is unavailable right now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+		}
+
+		// Force a customer session so a guest's first add persists (otherwise the
+		// add succeeds but the cart cookie is never set and the basket looks empty).
+		if ( WC()->session && ! WC()->session->has_session() ) {
+			WC()->session->set_customer_session_cookie( true );
+		}
+
+		WC()->cart->get_cart();
+
+		$reference = wc_get_product( $variation_id ? $variation_id : $product_id );
+
+		if ( ! $reference || ! $reference->is_purchasable() ) {
+			return new WP_Error( 'ace_cart_not_purchasable', __( 'That product cannot be purchased right now.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		$variation = array();
+
+		if ( $variation_id ) {
+			$variation_product = wc_get_product( $variation_id );
+
+			if ( $variation_product && $variation_product->is_type( 'variation' ) ) {
+				$variation = $variation_product->get_variation_attributes();
+			}
+		}
+
+		$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
+		$added  = $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false;
+
+		if ( false === $added ) {
+			$message = '';
+
+			if ( function_exists( 'wc_get_notices' ) ) {
+				$notices = wc_get_notices( 'error' );
+				$message = ! empty( $notices ) ? wp_strip_all_tags( (string) ( $notices[0]['notice'] ?? '' ) ) : '';
+
+				if ( function_exists( 'wc_clear_notices' ) ) {
+					wc_clear_notices();
+				}
+			}
+
+			return new WP_Error( 'ace_cart_failed', '' !== $message ? $message : __( 'Sorry, that could not be added to your basket.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
+		}
+
+		do_action( 'woocommerce_ajax_added_to_cart', $product_id );
+		WC()->cart->calculate_totals();
+
+		if ( WC()->session ) {
+			WC()->session->save_data();
+		}
+
+		if ( function_exists( 'wc_setcookie' ) ) {
+			wc_setcookie( 'woocommerce_items_in_cart', 1 );
+			wc_setcookie( 'woocommerce_cart_hash', WC()->cart->get_cart_hash() );
+		}
+
+		do_action( 'woocommerce_set_cart_cookies', true );
+
+		$mini_cart = '';
+
+		if ( function_exists( 'wc_get_template' ) ) {
+			ob_start();
+			wc_get_template( 'cart/mini-cart.php' );
+			$mini_cart = ob_get_clean();
+		}
+
+		$fragments = apply_filters(
+			'woocommerce_add_to_cart_fragments',
+			array(
+				'div.widget_shopping_cart_content' => '<div class="widget_shopping_cart_content">' . $mini_cart . '</div>',
+			)
+		);
+
+		return new WP_REST_Response(
+			array(
+				'added'      => true,
+				'cart_count' => (int) WC()->cart->get_cart_contents_count(),
+				'cart_hash'  => WC()->cart->get_cart_hash(),
+				'cart_url'   => function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '',
+				'fragments'  => $fragments,
+				'name'       => $reference->get_name(),
+			)
+		);
 	}
 
 	/**
