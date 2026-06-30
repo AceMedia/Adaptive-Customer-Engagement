@@ -536,6 +536,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let typingResetTimer = null;
 	let typingLastSentAt = 0;
 	let typingSentState = false;
+	let voiceAutoSendTimer = null;
 
 	const generateConversationUuid = () => generateUuid();
 
@@ -1860,17 +1861,55 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 	};
 
+	const cancelVoiceAutoSend = () => {
+		if (voiceAutoSendTimer) {
+			window.clearTimeout(voiceAutoSendTimer);
+			voiceAutoSendTimer = null;
+		}
+	};
+
+	const setVoicePlaceholder = (text) => {
+		if (!input) {
+			return;
+		}
+
+		if (typeof input.dataset.aceOrigPlaceholder === 'undefined') {
+			input.dataset.aceOrigPlaceholder = input.getAttribute('placeholder') || '';
+		}
+
+		input.setAttribute('placeholder', text);
+	};
+
+	const restoreVoicePlaceholder = () => {
+		if (input && typeof input.dataset.aceOrigPlaceholder !== 'undefined') {
+			input.setAttribute('placeholder', input.dataset.aceOrigPlaceholder || '');
+		}
+	};
+
+	// The spoken words are transcribed (server-side, via OpenAI) into the input so
+	// the visitor SEES their message as text; the bot only ever receives that text,
+	// never the audio. It then sends shortly after, unless the visitor edits it.
 	const applyTranscript = (transcript) => {
 		transcript = String(transcript || '').trim();
+		restoreVoicePlaceholder();
 
 		if (!transcript) {
 			return;
 		}
 
-		input.value = transcript;
+		const existing = input.value.trim();
+		input.value = existing ? `${existing} ${transcript}` : transcript;
 		updateInputHeight();
-		// Conversational: a spoken message is sent automatically when the visitor pauses.
-		form.requestSubmit();
+		input.focus();
+
+		cancelVoiceAutoSend();
+		voiceAutoSendTimer = window.setTimeout(() => {
+			voiceAutoSendTimer = null;
+
+			if (input.value.trim() && !state.pending && state.conversationStatus !== 'ended') {
+				form.requestSubmit();
+			}
+		}, 1500);
 	};
 
 	const blobToBase64 = (blob) => new Promise((resolve, reject) => {
@@ -1955,6 +1994,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				state.voiceListening = false;
 
 				if (!mediaChunks.length) {
+					restoreVoicePlaceholder();
 					flashVoiceNotice('Sorry, I didn’t catch that — please try again.');
 					updateVoiceUi();
 					return;
@@ -1964,6 +2004,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				const blob = new Blob(mediaChunks, { type: mime });
 				mediaChunks = [];
 				state.voiceTranscribing = true;
+				setVoicePlaceholder('✍️ Transcribing…');
 				updateVoiceUi();
 
 				try {
@@ -1986,9 +2027,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					if (transcript) {
 						applyTranscript(transcript);
 					} else {
+						restoreVoicePlaceholder();
 						flashVoiceNotice('Sorry, I didn’t catch that — please try again.');
 					}
 				} catch (error) {
+					restoreVoicePlaceholder();
 					flashVoiceNotice('Sorry, I couldn’t hear that — please try again.');
 				} finally {
 					state.voiceTranscribing = false;
@@ -1999,9 +2042,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			// otherwise deliver nothing when stop() races the final chunk.
 			mediaRecorder.start(250);
 			state.voiceListening = true;
+			setVoicePlaceholder('🎙 Listening… pause when you’re done');
 			updateVoiceUi();
 			startVad();
 		} catch (error) {
+			restoreVoicePlaceholder();
 			stopVad();
 			stopMediaStream();
 			state.voiceListening = false;
@@ -2656,6 +2701,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	});
 	form.addEventListener('submit', (event) => {
 		event.preventDefault();
+		cancelVoiceAutoSend();
 		const content = input.value.trim();
 
 		if (!content) {
@@ -2666,6 +2712,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		updateInputHeight();
 		sendMessage(content);
 	});
+	// Typing cancels a pending voice auto-send so the visitor can edit a mis-hear.
+	input.addEventListener('input', cancelVoiceAutoSend);
 	input.addEventListener('input', updateInputHeight);
 	input.addEventListener('input', () => {
 		if (input.value.trim()) {
