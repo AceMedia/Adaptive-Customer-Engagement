@@ -138,7 +138,14 @@ final class FrontendChatService {
 		}
 
 		if ( ChatConversationRepository::STATUS_ENDED === ( $thread['status'] ?? '' ) ) {
-			return new WP_Error( 'ace_ai_chat_ended', __( 'This chat session has already ended. Please start a new conversation.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+			// The reused conversation has already ended — transparently start a
+			// fresh one rather than blocking the visitor with an error.
+			$conversation_uuid_value = wp_generate_uuid4();
+			$thread                  = $this->chat_conversations->create_or_touch( $conversation_uuid_value, $conversation_args );
+
+			if ( empty( $thread['id'] ) ) {
+				return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+			}
 		}
 
 		$this->store_message(
@@ -574,7 +581,13 @@ final class FrontendChatService {
 		}
 
 		if ( ChatConversationRepository::STATUS_ENDED === ( $thread['status'] ?? '' ) ) {
-			return new WP_Error( 'ace_ai_chat_ended', __( 'This chat session has already ended. Please start a new conversation.', 'adaptive-customer-engagement' ), array( 'status' => 409 ) );
+			// Start a fresh conversation to attach the follow-up to, rather than erroring.
+			$follow_up_uuid = wp_generate_uuid4();
+			$thread         = $this->chat_conversations->create_or_touch( $follow_up_uuid, $follow_up_args );
+
+			if ( empty( $thread['id'] ) ) {
+				return new WP_Error( 'ace_ai_chat_unavailable', __( 'The chat conversation could not be created just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
+			}
 		}
 
 		$thread = $this->chat_conversations->record_follow_up_request(
