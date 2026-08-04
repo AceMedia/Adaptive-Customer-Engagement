@@ -19,7 +19,8 @@ This first release includes:
 * a public number-resolution endpoint for frontend placeholders
 * a React-powered wp-admin app with dashboard, sessions, companies, WooCommerce interest, calls, phone numbers, tracking, privacy, enrichment, Amazon Connect, and AI screens
 * rich single-record drilldowns for sessions, companies, calls, and numbers, with linked related data and charts
-* live enrichment provider support for ipregistry and ipinfo, with cached lookups, company linking, and an admin test lookup tool
+* live enrichment provider support for ipregistry, ipinfo, and a free keyless provider (DNS + RDAP, no API key), with cached lookups, company linking, and an admin test lookup tool
+* form-submission capture from the Adaptive Content Enhancer form plugin, linking declared contact details to tracked sessions and companies
 * saved reporting segments and CSV exports across sessions, companies, calls, and WooCommerce reporting
 * WooCommerce repeat-interest reporting for products, categories, sessions, and companies
 * setup-focused admin pages for tracking, privacy, enrichment, Amazon Connect, AI, and phone-number management

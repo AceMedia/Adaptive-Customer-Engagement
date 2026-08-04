@@ -45,6 +45,7 @@ final class Menu {
 			'companies'      => __( 'Companies', 'adaptive-customer-engagement' ),
 			'commerce'       => __( 'WooCommerce', 'adaptive-customer-engagement' ),
 			'calls'          => __( 'Calls', 'adaptive-customer-engagement' ),
+			'forms'          => __( 'Forms', 'adaptive-customer-engagement' ),
 			'numbers'        => __( 'Phone Numbers', 'adaptive-customer-engagement' ),
 			'enrichment'     => __( 'Enrichment', 'adaptive-customer-engagement' ),
 			'amazon-connect' => __( 'Amazon Connect', 'adaptive-customer-engagement' ),

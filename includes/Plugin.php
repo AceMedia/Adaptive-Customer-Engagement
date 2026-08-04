@@ -23,6 +23,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
@@ -36,6 +37,7 @@ use ACE\AdaptiveCustomerEngagement\Tracking\BotDetector;
 use ACE\AdaptiveCustomerEngagement\Tracking\EventLogger;
 use ACE\AdaptiveCustomerEngagement\Tracking\NumberResolver;
 use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
+use ACE\AdaptiveCustomerEngagement\Tracking\FormCaptureService;
 use ACE\AdaptiveCustomerEngagement\Tracking\SessionManager;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooCommerceContext;
 
@@ -80,6 +82,7 @@ final class Plugin {
 		$chat_conversations = new ChatConversationRepository();
 		$chat_messages      = new ChatMessageRepository();
 		$ip_company_memory  = new IpCompanyMemoryRepository();
+		$form_submissions   = new FormSubmissionRepository();
 		$privacy            = new Privacy();
 		$enrichment_service = new EnrichmentService(
 			new ProviderRegistry(),
@@ -116,6 +119,7 @@ final class Plugin {
 		add_action( 'admin_post_ace_export_commerce', array( $admin, 'export_commerce' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
+		( new FormCaptureService( $form_submissions, $session_repository, $company_repository, $ip_company_memory ) )->register();
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 		$this->maybe_migrate_voice_provider();
 

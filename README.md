@@ -46,7 +46,9 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 
 ### Enrichment already in place
 
-- Live enrichment provider support for **ipregistry** and **ipinfo**
+- Live enrichment provider support for **ipregistry**, **ipinfo**, and a free **keyless** provider (Team Cymru IP-to-ASN DNS, registry RDAP, and reverse DNS — no account or API key)
+- Every provider's results are augmented with free DNS signals: hosting/datacentre flagging by ASN and reverse-DNS suffix, plus a reverse-DNS confidence booster
+- Form-submission capture from the Adaptive Content Enhancer form plugin via the `ace_form_submitted` action: submissions are stored against the visitor's tracked session and declared identity (name, email, business) is promoted to a confirmed company match
 - Cached enrichment lookups, company linking, enrichment storage on sessions, and an admin test lookup tool
 - Reporting surfaces that reuse enrichment data for company views and prioritisation
 

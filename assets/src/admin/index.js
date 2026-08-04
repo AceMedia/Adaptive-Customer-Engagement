@@ -89,7 +89,7 @@ const NAV_GROUPS = [
 	},
 	{
 		label: __('Reporting', 'adaptive-customer-engagement'),
-		items: ['sessions', 'companies', 'commerce', 'calls', 'chats'],
+		items: ['sessions', 'companies', 'commerce', 'calls', 'chats', 'forms'],
 	},
 	{
 		label: __('Setup', 'adaptive-customer-engagement'),
@@ -126,6 +126,11 @@ const PAGE_META = {
 		title: __('Chats', 'adaptive-customer-engagement'),
 		icon: 'format-chat',
 		description: __('Review frontend assistant conversations, message counts, models used, and the linked session or company context behind each chat.', 'adaptive-customer-engagement'),
+	},
+	forms: {
+		title: __('Forms', 'adaptive-customer-engagement'),
+		icon: 'feedback',
+		description: __('Review captured form submissions with the declared contact details, the linked session journey, and the confirmed company behind each enquiry.', 'adaptive-customer-engagement'),
 	},
 	numbers: {
 		title: __('Phone numbers', 'adaptive-customer-engagement'),
@@ -283,6 +288,9 @@ function hasConnectConfig(settings = {}) {
 }
 
 function hasEnrichmentConfig(settings = {}) {
+	if (settings?.provider === 'keyless') {
+		return true;
+	}
 	return !!(settings?.provider && settings.provider !== 'none' && settings?.api_key);
 }
 
@@ -1414,6 +1422,112 @@ function CallsView({ active, route }) {
 			onNumberView: (id) => navigateToAdminPage('numbers', { ace_number: id }),
 			onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
 			onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+		})
+	);
+}
+
+function FormSubmissionsTable({ items, onSessionView, onCompanyView }) {
+	if (!items.length) {
+		return createElement(Notice, { status: 'info', isDismissible: false }, __('No form submissions have been captured yet.', 'adaptive-customer-engagement'));
+	}
+
+	return createElement(
+		'table',
+		{ className: 'widefat striped' },
+		createElement(
+			'thead',
+			null,
+			createElement(
+				'tr',
+				null,
+				['Received', 'Name', 'Email', 'Phone', 'Business', 'Company match', 'Session', 'Page', 'Email sent'].map((label) =>
+					createElement('th', { key: label }, __(label, 'adaptive-customer-engagement'))
+				)
+			)
+		),
+		createElement(
+			'tbody',
+			null,
+			items.map((item) =>
+				createElement(
+					'tr',
+					{ key: item.id },
+					createElement('td', null, item.created_at),
+					createElement('td', null, item.contact_name || '—'),
+					createElement('td', null, item.contact_email ? createElement('a', { href: `mailto:${item.contact_email}` }, item.contact_email) : '—'),
+					createElement('td', null, item.contact_phone || '—'),
+					createElement('td', null, item.contact_company || '—'),
+					createElement(
+						'td',
+						null,
+						item.company_id
+							? createElement(
+								'a',
+								{
+									href: getAdminPageUrl('companies', { ace_company: item.company_id }),
+									onClick: (event) => {
+										event.preventDefault();
+										onCompanyView(item.company_id);
+									},
+								},
+								item.company_display_name || `#${item.company_id}`
+							)
+							: '—'
+					),
+					createElement(
+						'td',
+						null,
+						item.session_id
+							? createElement(
+								'a',
+								{
+									href: getAdminPageUrl('sessions', { ace_session: item.session_id }),
+									onClick: (event) => {
+										event.preventDefault();
+										onSessionView(item.session_id);
+									},
+								},
+								`#${item.session_id}`
+							)
+							: '—'
+					),
+					createElement('td', null, item.page_url ? createElement('a', { href: item.page_url, target: '_blank', rel: 'noreferrer' }, new URL(item.page_url, window.location.origin).pathname) : '—'),
+					createElement('td', null, Number(item.mail_sent) ? __('Yes', 'adaptive-customer-engagement') : __('No', 'adaptive-customer-engagement'))
+				)
+			)
+		)
+	);
+}
+
+function FormsView({ active }) {
+	const [data, setData] = useState(null);
+	const [page, setPage] = useState(1);
+
+	const load = (nextPage = page) => {
+		request(withQuery('/admin/form-submissions', { page: nextPage, per_page: 25 })).then(setData);
+	};
+
+	useEffect(() => {
+		if (active) {
+			load(page);
+		}
+	}, [active, page]);
+
+	if (!data) {
+		return createElement(Spinner);
+	}
+
+	return createElement(
+		Fragment,
+		null,
+		createElement(FormSubmissionsTable, {
+			items: data.items || [],
+			onSessionView: (id) => navigateToAdminPage('sessions', { ace_session: id }),
+			onCompanyView: (id) => navigateToAdminPage('companies', { ace_company: id }),
+		}),
+		createElement(PaginationControls, {
+			pagination: data.pagination,
+			onPageChange: setPage,
 		})
 	);
 }
@@ -5424,10 +5538,15 @@ function SettingsView({ section = 'settings', active }) {
 				createElement(SelectControl, {
 					label: __('Provider', 'adaptive-customer-engagement'),
 					value: settings.enrichment.provider,
-					options: ['none', 'ipregistry', 'ipinfo'].map((entry) => ({ label: entry, value: entry })),
+					options: [
+						{ label: __('none', 'adaptive-customer-engagement'), value: 'none' },
+						{ label: __('keyless (free — DNS + RDAP, no account)', 'adaptive-customer-engagement'), value: 'keyless' },
+						{ label: 'ipregistry', value: 'ipregistry' },
+						{ label: 'ipinfo', value: 'ipinfo' },
+					],
 					onChange: (next) => setEnrichment({ provider: next }),
 				}),
-				createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), type: 'password', value: settings.enrichment.api_key, onChange: (next) => setEnrichment({ api_key: next }) }),
+				settings.enrichment.provider !== 'keyless' && createElement(TextControl, { label: __('API key', 'adaptive-customer-engagement'), type: 'password', value: settings.enrichment.api_key, onChange: (next) => setEnrichment({ api_key: next }) }),
 			),
 			!enrichmentProviderChosen
 				? createElement(Notice, { status: 'info', isDismissible: false }, __('Choose an enrichment provider to reveal the live enrichment settings.', 'adaptive-customer-engagement'))
@@ -6219,7 +6338,7 @@ function App() {
 		};
 	}, []);
 
-	const screenOrder = ['dashboard', 'sessions', 'companies', 'commerce', 'calls', 'chats', 'numbers', 'settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent', 'import-export'];
+	const screenOrder = ['dashboard', 'sessions', 'companies', 'commerce', 'calls', 'chats', 'forms', 'numbers', 'settings', 'privacy', 'enrichment', 'amazon-connect', 'ai-agent', 'import-export'];
 	const hideHero = (
 		(page === 'chats' && !!route?.params?.get('ace_chat'))
 		|| (page === 'sessions' && !!route?.params?.get('ace_session'))
@@ -6233,6 +6352,7 @@ function App() {
 		commerce: createElement(CommerceView, { active: page === 'commerce' }),
 		calls: createElement(CallsView, { active: page === 'calls', route }),
 		chats: createElement(ChatsView, { active: page === 'chats', route }),
+		forms: createElement(FormsView, { active: page === 'forms' }),
 		numbers: createElement(NumbersView, { active: page === 'numbers', route }),
 		settings: createElement(SettingsView, { section: 'settings', active: page === 'settings' }),
 		privacy: createElement(SettingsView, { section: 'privacy', active: page === 'privacy' }),

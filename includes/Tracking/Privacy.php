@@ -165,20 +165,24 @@ final class Privacy {
 
 		$session_days = max( 30, (int) ( $privacy['session_retention_days'] ?? 365 ) );
 		$bot_days     = max( 1, (int) ( $privacy['bot_retention_days'] ?? 30 ) );
+		$form_days    = max( 30, (int) ( $privacy['form_retention_days'] ?? 730 ) );
 
 		$session_cutoff = gmdate( 'Y-m-d H:i:s', time() - ( $session_days * DAY_IN_SECONDS ) );
 		$bot_cutoff     = gmdate( 'Y-m-d H:i:s', time() - ( $bot_days * DAY_IN_SECONDS ) );
+		$form_cutoff    = gmdate( 'Y-m-d H:i:s', time() - ( $form_days * DAY_IN_SECONDS ) );
 		$now            = current_time( 'mysql', true );
 
 		$sessions_table   = Schema::table_name( 'sessions' );
 		$events_table     = Schema::table_name( 'events' );
 		$enrichment_table = Schema::table_name( 'enrichment_cache' );
+		$forms_table      = Schema::table_name( 'form_submissions' );
 
 		$deleted = array(
 			'events_deleted'     => $this->delete_in_batches( "DELETE FROM {$events_table} WHERE occurred_at < %s", $session_cutoff ),
 			'sessions_deleted'   => $this->delete_in_batches( "DELETE FROM {$sessions_table} WHERE last_seen < %s", $session_cutoff ),
 			'bot_sessions_deleted' => $this->delete_in_batches( "DELETE FROM {$sessions_table} WHERE ( is_bot = 1 OR ignored = 1 ) AND last_seen < %s", $bot_cutoff ),
 			'enrichment_deleted' => $this->delete_in_batches( "DELETE FROM {$enrichment_table} WHERE expires_at < %s", $now ),
+			'form_submissions_deleted' => $this->delete_in_batches( "DELETE FROM {$forms_table} WHERE created_at < %s", $form_cutoff ),
 		);
 
 		return $deleted;

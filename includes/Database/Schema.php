@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.9';
+	public const SCHEMA_VERSION        = '0.1.10';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -285,6 +285,26 @@ final class Schema {
 			KEY last_seen (last_seen)
 		) {$collate};";
 
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'form_submissions' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			session_id BIGINT UNSIGNED NULL,
+			company_id BIGINT UNSIGNED NULL,
+			form_key VARCHAR(190) NULL,
+			page_url TEXT NULL,
+			contact_name VARCHAR(150) NULL,
+			contact_email VARCHAR(190) NULL,
+			contact_phone VARCHAR(50) NULL,
+			contact_company VARCHAR(255) NULL,
+			fields LONGTEXT NULL,
+			mail_sent TINYINT(1) NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			KEY session_id (session_id),
+			KEY company_id (company_id),
+			KEY contact_email (contact_email),
+			KEY created_at (created_at)
+		) {$collate};";
+
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'chat_messages' ) . " (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			conversation_id BIGINT UNSIGNED NOT NULL,
@@ -401,6 +421,7 @@ final class Schema {
 			self::table_name( 'chat_conversations' ),
 			self::table_name( 'chat_messages' ),
 			self::table_name( 'ip_company_memory' ),
+			self::table_name( 'form_submissions' ),
 		);
 	}
 

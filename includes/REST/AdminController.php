@@ -17,6 +17,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\CallRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatConversationRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\ChatMessageRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EventRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
@@ -38,6 +39,13 @@ final class AdminController {
 	 * @var string
 	 */
 	private $namespace = 'adaptive-customer-engagement/v1';
+
+	/**
+	 * Form submission repository.
+	 *
+	 * @var FormSubmissionRepository
+	 */
+	private $form_submissions;
 
 	/**
 	 * Session repository.
@@ -146,7 +154,8 @@ final class AdminController {
 	 * @param AmazonConnectClient $connect          Amazon Connect client.
 	 * @param SiteContextService $site_context      Site context helper.
 	 */
-	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect, SiteContextService $site_context ) {
+	public function __construct( SessionRepository $sessions, EventRepository $events, NumberRepository $numbers, CompanyRepository $companies, CallRepository $calls, ChatConversationRepository $chat_conversations, ChatMessageRepository $chat_messages, Privacy $privacy, EnrichmentService $enrichment_service, SampleDataSeeder $sample_data, AmazonConnectClient $connect, SiteContextService $site_context, ?FormSubmissionRepository $form_submissions = null ) {
+		$this->form_submissions   = $form_submissions ?: new FormSubmissionRepository();
 		$this->sessions           = $sessions;
 		$this->events             = $events;
 		$this->numbers            = $numbers;
@@ -175,6 +184,16 @@ final class AdminController {
 				'methods'             => 'GET',
 				'permission_callback' => array( $this, 'can_manage' ),
 				'callback'            => array( $this, 'dashboard' ),
+			)
+		);
+
+		register_rest_route(
+			$this->namespace,
+			'/admin/form-submissions',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => array( $this, 'can_manage' ),
+				'callback'            => array( $this, 'form_submissions' ),
 			)
 		);
 
@@ -760,6 +779,30 @@ final class AdminController {
 	/**
 	 * Sessions data.
 	 *
+	 * @return WP_REST_Response
+	 */
+	public function form_submissions( WP_REST_Request $request ): WP_REST_Response {
+		$page     = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page = min( 100, max( 1, (int) $request->get_param( 'per_page' ) ?: 25 ) );
+		$total    = $this->form_submissions->count();
+
+		return new WP_REST_Response(
+			array(
+				'items'      => $this->form_submissions->get_recent( $per_page, ( $page - 1 ) * $per_page ),
+				'pagination' => array(
+					'page'        => $page,
+					'per_page'    => $per_page,
+					'total'       => $total,
+					'total_pages' => max( 1, (int) ceil( $total / $per_page ) ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * List recent sessions.
+	 *
+	 * @param WP_REST_Request $request Request.
 	 * @return WP_REST_Response
 	 */
 	public function sessions( WP_REST_Request $request ): WP_REST_Response {

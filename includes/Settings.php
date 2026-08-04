@@ -41,6 +41,7 @@ final class Settings {
 				'raw_phone_retention_days' => 30,
 				'session_retention_days'   => 365,
 				'bot_retention_days'       => 30,
+				'form_retention_days'      => 730,
 				'ignore_internal_ips'      => false,
 			),
 			'enrichment'     => array(
@@ -413,6 +414,7 @@ final class Settings {
 				'raw_phone_retention_days' => max( 1, absint( $privacy['raw_phone_retention_days'] ?? $defaults['privacy']['raw_phone_retention_days'] ) ),
 				'session_retention_days'   => max( 30, absint( $privacy['session_retention_days'] ?? $defaults['privacy']['session_retention_days'] ) ),
 				'bot_retention_days'       => max( 1, absint( $privacy['bot_retention_days'] ?? $defaults['privacy']['bot_retention_days'] ) ),
+				'form_retention_days'      => max( 30, absint( $privacy['form_retention_days'] ?? $defaults['privacy']['form_retention_days'] ) ),
 				'ignore_internal_ips'      => rest_sanitize_boolean( $privacy['ignore_internal_ips'] ?? $defaults['privacy']['ignore_internal_ips'] ),
 			),
 			'enrichment'     => array(
