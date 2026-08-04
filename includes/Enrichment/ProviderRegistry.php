@@ -26,6 +26,8 @@ final class ProviderRegistry {
 				return new IpregistryProvider();
 			case 'ipinfo':
 				return new IpinfoProvider();
+			case 'keyless':
+				return new KeylessProvider();
 			case 'none':
 			default:
 				return new NullProvider();

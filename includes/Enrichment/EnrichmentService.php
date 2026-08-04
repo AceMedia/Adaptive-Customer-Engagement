@@ -177,9 +177,54 @@ final class EnrichmentService {
 			return $cached;
 		}
 
-		$result = $provider->lookup( $ip );
+		$result = $this->augment( $provider->lookup( $ip ), $ip );
 
-		$this->cache->upsert( $provider->get_name(), $ip_hash, $result, $cache_days );
+		// Errors are cached briefly so a transient provider outage does not
+		// pin an empty result against this IP for the full cache window.
+		$ttl_days = isset( $result->raw['error'] ) ? 1 : $cache_days;
+
+		$this->cache->upsert( $provider->get_name(), $ip_hash, $result, $ttl_days );
+
+		return $result;
+	}
+
+	/**
+	 * Augment a provider result with free DNS-derived signals: reverse DNS
+	 * as a confidence booster and hosting-ASN/PTR flagging.
+	 *
+	 * @param EnrichmentResult $result Provider result.
+	 * @param string           $ip     IP address.
+	 * @return EnrichmentResult
+	 */
+	private function augment( EnrichmentResult $result, string $ip ): EnrichmentResult {
+		if ( $this->privacy->is_private_ip( $ip ) ) {
+			return $result;
+		}
+
+		$ptr = array_key_exists( 'ptr', $result->raw ) ? $result->raw['ptr'] : DnsIntel::ptr( $ip );
+
+		if ( null !== $ptr ) {
+			$result->raw['ptr'] = $ptr;
+		}
+
+		if ( true !== $result->is_hosting && ( DnsIntel::is_hosting_asn( DnsIntel::parse_asn( $result->asn ) ) || DnsIntel::is_hosting_host( $ptr ) ) ) {
+			$result->is_hosting = true;
+
+			if ( 'likely' === $result->confidence ) {
+				$result->confidence = 'weak';
+			}
+		}
+
+		// A PTR inside the company's own domain confirms the association —
+		// but not for the keyless provider, whose domain came from the PTR
+		// itself and would self-confirm.
+		if ( $ptr && $result->company_domain && 'keyless' !== $result->provider && 'weak' === $result->confidence && true !== $result->is_hosting ) {
+			$ptr_domain = DnsIntel::registrable_domain( $ptr );
+
+			if ( $ptr_domain && strtolower( $result->company_domain ) === $ptr_domain ) {
+				$result->confidence = 'likely';
+			}
+		}
 
 		return $result;
 	}
