@@ -129,6 +129,7 @@ final class Plugin {
 		$this->maybe_migrate_voice_provider();
 		$this->maybe_backfill_company_classification();
 		$this->maybe_backfill_company_classification_v2();
+		$this->maybe_backfill_order_identity();
 
 		$menu->register();
 		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
@@ -365,6 +366,116 @@ final class Plugin {
 		if ( ! get_transient( 'ace_peeringdb_backoff' ) ) {
 			update_option( 'ace_company_classification_backfill_2', '1', false );
 		}
+	}
+
+	/**
+	 * One-off order-history backwash: every past WooCommerce order carries
+	 * declared first-party identity — billing company, email domain, and
+	 * the customer's IP. Promote all of it into confirmed companies and
+	 * IP memory, then retro-match tracked sessions by IP hash. CLI-only:
+	 * it walks the whole order book.
+	 *
+	 * @return void
+	 */
+	private function maybe_backfill_order_identity(): void {
+		if ( ! defined( 'WP_CLI' )
+			|| ! function_exists( 'wc_get_orders' )
+			|| '1' === (string) get_option( 'ace_order_identity_backfill', '' ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$sessions_table = Schema::table_name( 'sessions' );
+		$privacy        = new Privacy();
+		$companies      = new CompanyRepository();
+		$ip_memory      = new IpCompanyMemoryRepository();
+		$orders         = wc_get_orders(
+			array(
+				'limit'   => -1,
+				'status'  => array( 'completed', 'processing', 'on-hold' ),
+				'orderby' => 'date',
+				'order'   => 'ASC',
+			)
+		);
+
+		foreach ( (array) $orders as $order ) {
+			if ( ! $order instanceof \WC_Order ) {
+				continue;
+			}
+
+			$company = sanitize_text_field( (string) $order->get_billing_company() );
+			$email   = sanitize_email( (string) $order->get_billing_email() );
+			$name    = sanitize_text_field( trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ) );
+			$phone   = sanitize_text_field( (string) $order->get_billing_phone() );
+			$domain  = '';
+
+			if ( '' !== $email && false !== strpos( $email, '@' ) ) {
+				$candidate = strtolower( substr( strrchr( $email, '@' ), 1 ) ?: '' );
+				$domain    = in_array( $candidate, FormCaptureService::GENERIC_EMAIL_DOMAINS, true ) ? '' : $candidate;
+			}
+
+			$company_row = null;
+
+			if ( '' !== $company || '' !== $domain ) {
+				$company_row = $companies->create_or_touch_local(
+					array(
+						'name'       => '' !== $company ? $company : $domain,
+						'domain'     => $domain,
+						'confidence' => 'confirmed',
+						'source'     => 'woocommerce_order',
+					)
+				);
+			}
+
+			$ip_hash = $privacy->hash_ip( (string) $order->get_customer_ip_address() );
+
+			if ( '' === $ip_hash ) {
+				continue;
+			}
+
+			if ( '' !== $company || '' !== $domain || '' !== $name || '' !== $email || '' !== $phone ) {
+				$ip_memory->upsert(
+					$ip_hash,
+					array(
+						'company_id'     => is_array( $company_row ) ? (int) ( $company_row['id'] ?? 0 ) : 0,
+						'company_name'   => $company,
+						'company_domain' => $domain,
+						'contact_name'   => $name,
+						'contact_email'  => $email,
+						'contact_phone'  => $phone,
+						'source'         => 'woocommerce_order',
+						'confidence'     => 'confirmed',
+						'evidence'       => array( 'order_id' => (int) $order->get_id() ),
+					)
+				);
+			}
+
+			if ( is_array( $company_row ) && ! empty( $company_row['id'] ) ) {
+				$matched = (int) $wpdb->query(
+					$wpdb->prepare(
+						// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from Schema.
+						"UPDATE {$sessions_table} SET company_id = %d, company_confidence = 'confirmed' WHERE ip_hash = %s AND company_confidence <> 'confirmed'",
+						(int) $company_row['id'],
+						$ip_hash
+					)
+				);
+
+				if ( $matched > 0 ) {
+					$wpdb->query(
+						$wpdb->prepare(
+							'UPDATE ' . Schema::table_name( 'companies' ) . ' SET total_sessions = total_sessions + %d, last_seen = %s, updated_at = %s WHERE id = %d',
+							$matched,
+							current_time( 'mysql', true ),
+							current_time( 'mysql', true ),
+							(int) $company_row['id']
+						)
+					);
+				}
+			}
+		}
+
+		update_option( 'ace_order_identity_backfill', '1', false );
 	}
 
 	/**
