@@ -5529,8 +5529,32 @@ function SettingsView({ section = 'settings', active }) {
 					{ label: __('Get an ipinfo API key', 'adaptive-customer-engagement'), href: 'https://ipinfo.io/' },
 					{ label: __('Read the ipregistry dashboard docs', 'adaptive-customer-engagement'), href: 'https://ipregistry.co/dashboard' },
 					{ label: __('Read the ipinfo account docs', 'adaptive-customer-engagement'), href: 'https://ipinfo.io/account/home' },
+					{ label: __('Register a free PeeringDB account', 'adaptive-customer-engagement'), href: 'https://www.peeringdb.com/register' },
+					{ label: __('Create a PeeringDB API key', 'adaptive-customer-engagement'), href: 'https://www.peeringdb.com/account/api_keys' },
+					{ label: __('Register for the Companies House API', 'adaptive-customer-engagement'), href: 'https://developer.company-information.service.gov.uk/get-started' },
+					{ label: __('Create a Companies House application key', 'adaptive-customer-engagement'), href: 'https://developer.company-information.service.gov.uk/manage-applications' },
 				],
 			}),
+			createElement(SettingsPanel, {
+				title: __('Reference APIs (free keys)', 'adaptive-customer-engagement'),
+				description: __('Optional free lookups that sharpen company classification for every enrichment provider, including keyless.', 'adaptive-customer-engagement'),
+			},
+			createElement(SettingsFieldGrid, { compact: true },
+				createElement(TextControl, {
+					label: __('PeeringDB API key (optional)', 'adaptive-customer-engagement'),
+					type: 'password',
+					value: settings.enrichment.peeringdb_api_key || '',
+					onChange: (next) => setEnrichment({ peeringdb_api_key: next }),
+					help: __('Classifies the network that owns each visitor IP (consumer ISP, hosting, enterprise, education, government) so telecoms and clouds stop ranking as likely businesses. Works without a key at low volume; a key from a free PeeringDB account raises the rate limit.', 'adaptive-customer-engagement'),
+				}),
+				createElement(TextControl, {
+					label: __('Companies House API key (free)', 'adaptive-customer-engagement'),
+					type: 'password',
+					value: settings.enrichment.companies_house_api_key || '',
+					onChange: (next) => setEnrichment({ companies_house_api_key: next }),
+					help: __('Checks identified company names against the UK register so genuine businesses are confirmed with their registered number and industry (SIC) classification. Register a free account, create an application, and paste its REST API key here.', 'adaptive-customer-engagement'),
+				})
+			)),
 			createElement(SettingsPanel, {
 				title: __('Provider connection', 'adaptive-customer-engagement'),
 				description: __('Select the enrichment provider and save the service API key.', 'adaptive-customer-engagement'),
