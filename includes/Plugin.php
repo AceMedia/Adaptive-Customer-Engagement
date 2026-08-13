@@ -129,10 +129,11 @@ final class Plugin {
 		$this->maybe_migrate_voice_provider();
 		$this->maybe_backfill_company_classification();
 		$this->maybe_backfill_company_classification_v2();
-		// Deferred: WooCommerce loads after this plugin, so wc_get_orders()
-		// does not exist yet at include time.
+		// Deferred to init: WooCommerce loads after this plugin, and its
+		// HPOS order data store is only wired once Woo boots on init 10 —
+		// wc_get_orders() fatals any earlier.
 		add_action(
-			'plugins_loaded',
+			'init',
 			function (): void {
 				$this->maybe_backfill_order_identity();
 			},
