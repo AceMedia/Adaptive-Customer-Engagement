@@ -191,7 +191,7 @@ final class DnsIntel {
 	 *
 	 * @var string
 	 */
-	private const ISP_NAME_PATTERN = '/\b(broadband|fibre\w*|fiber\w*|telecoms?|telecommunications?|telcom|telco|telekom|telefonica|telenor|telenet|telia|radiotelephone|cable|cellular|wireless|mobile|internet|isp|comcast|verizon|at&t|sfr|vodafone|virgin media|talktalk|plusnet|hyperoptic|gigaclear|kcom|brsk|hutchison|starlink|jio|sky uk|[345]g)\b/i';
+	private const ISP_NAME_PATTERN = '/(?<![a-z0-9])(broadband|fibre\w*|fiber\w*|telecoms?|telecommunications?|telcom|telco|telekom|telefonica|telenor|telenet|telia|radiotelephone|cable|cellular|wireless|mobile|internet|isp|comcast|verizon|at&t|sfr|vodafone|virgin media|talktalk|plusnet|hyperoptic|gigaclear|kcom|brsk|hutchison|starlink|jio|sky uk|[345]g)(?![a-z0-9])/i';
 
 	/**
 	 * Secure-web-gateway vendors: traffic egresses through their cloud, so
@@ -199,7 +199,7 @@ final class DnsIntel {
 	 *
 	 * @var string
 	 */
-	private const GATEWAY_NAME_PATTERN = '/\b(zscaler|iboss|netskope|forcepoint|menlo security|cisco umbrella|palo alto networks|cato networks)\b/i';
+	private const GATEWAY_NAME_PATTERN = '/(?<![a-z0-9])(zscaler|iboss|netskope|forcepoint|menlo security|cisco umbrella|palo alto networks|cato networks)(?![a-z0-9])/i';
 
 	/**
 	 * Tokens that mark a name as an organisation rather than a person.

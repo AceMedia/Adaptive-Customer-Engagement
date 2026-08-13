@@ -244,7 +244,10 @@ final class EnrichmentService {
 		$cached = $this->cache->find_valid( $provider->get_name(), $ip_hash );
 
 		if ( $cached ) {
-			return $cached;
+			// Re-augment cached results so classification improvements apply
+			// to entries cached before the rules changed; augment() is
+			// deterministic and cheap on a cached payload.
+			return $this->augment( $cached, $ip );
 		}
 
 		$result = $this->augment( $provider->lookup( $ip ), $ip );
@@ -307,12 +310,38 @@ final class EnrichmentService {
 			}
 		}
 
+		// PeeringDB knows what the network says it is (consumer ISP, transit,
+		// hosting, enterprise); that authoritative typing beats name keywords.
+		$asn_type = AsnIntel::network_type( DnsIntel::parse_asn( $result->asn ) );
+
+		if ( null !== $asn_type ) {
+			$result->raw['asn_type'] = $asn_type;
+		}
+
+		if ( 'hosting' === $asn_type && true !== $result->is_hosting ) {
+			$result->is_hosting = true;
+
+			if ( 'likely' === $result->confidence ) {
+				$result->confidence = 'weak';
+			}
+		}
+
 		// The org that owns an IP range is usually the network operator, not
 		// the business browsing through it: type ISPs/carriers and security
 		// gateways and keep them out of the likely-business bucket.
 		$kind = ( 'isp' === strtolower( (string) $result->company_type ) )
 			? 'isp'
 			: DnsIntel::network_kind( $result->company_name, $result->isp, $result->company_domain );
+
+		if ( 'proxy' !== $kind ) {
+			if ( 'isp' === $asn_type ) {
+				$kind = 'isp';
+			} elseif ( null !== $asn_type && 'hosting' !== $asn_type ) {
+				// PeeringDB says end-user organisation — clear a keyword
+				// false positive such as a business with "mobile" in its name.
+				$kind = null;
+			}
+		}
 
 		if ( null !== $kind ) {
 			$result->raw['network_kind'] = $kind;
@@ -323,6 +352,23 @@ final class EnrichmentService {
 
 			if ( 'likely' === $result->confidence ) {
 				$result->confidence = 'weak';
+			}
+		}
+
+		// An end-user organisation browsing from its own registered network
+		// is the strongest keyless business signal there is.
+		if ( null === $kind
+			&& in_array( $asn_type, array( 'business', 'education', 'government', 'organisation' ), true )
+			&& $result->company_name
+			&& true !== $result->is_hosting
+			&& true !== $result->is_vpn
+			&& true !== $result->is_proxy ) {
+			if ( null === $result->company_type || '' === $result->company_type ) {
+				$result->company_type = $asn_type;
+			}
+
+			if ( 'weak' === $result->confidence ) {
+				$result->confidence = 'likely';
 			}
 		}
 
