@@ -273,6 +273,12 @@ final class Plugin {
 		$asns = $wpdb->get_col( "SELECT DISTINCT asn FROM {$sessions} WHERE asn IS NOT NULL AND asn <> ''" );
 
 		foreach ( (array) $asns as $raw_asn ) {
+			// Rate-limited: stop fetching, apply what we have, resume on a
+			// later invocation once the back-off has expired.
+			if ( get_transient( 'ace_peeringdb_backoff' ) ) {
+				break;
+			}
+
 			$asn = DnsIntel::parse_asn( $raw_asn );
 
 			if ( null === $asn || false !== get_transient( 'ace_asn_type_' . $asn ) ) {
@@ -354,7 +360,11 @@ final class Plugin {
 			}
 		}
 
-		update_option( 'ace_company_classification_backfill_2', '1', false );
+		// Only mark the backwash complete after a full pass; a rate-limited
+		// run keeps the flag unset so the next CLI invocation resumes it.
+		if ( ! get_transient( 'ace_peeringdb_backoff' ) ) {
+			update_option( 'ace_company_classification_backfill_2', '1', false );
+		}
 	}
 
 	/**
