@@ -27,6 +27,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepositor
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Enrichment\AsnIntel;
 use ACE\AdaptiveCustomerEngagement\Enrichment\DnsIntel;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\ProviderRegistry;
@@ -127,6 +128,7 @@ final class Plugin {
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 		$this->maybe_migrate_voice_provider();
 		$this->maybe_backfill_company_classification();
+		$this->maybe_backfill_company_classification_v2();
 
 		$menu->register();
 		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
@@ -246,6 +248,113 @@ final class Plugin {
 		}
 
 		update_option( 'ace_company_classification_backfill', '1', false );
+	}
+
+	/**
+	 * Second classification backwash: re-type enrichment-sourced companies
+	 * with PeeringDB ASN intelligence and align their sessions. Runs once,
+	 * and only under WP-CLI — the PeeringDB warm-up is deliberately slow
+	 * and must never happen inside a web request.
+	 *
+	 * @return void
+	 */
+	private function maybe_backfill_company_classification_v2(): void {
+		if ( ! defined( 'WP_CLI' ) || '1' === (string) get_option( 'ace_company_classification_backfill_2', '' ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$companies = Schema::table_name( 'companies' );
+		$sessions  = Schema::table_name( 'sessions' );
+
+		// Warm the PeeringDB transient cache politely: fresh fetches only.
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from Schema.
+		$asns = $wpdb->get_col( "SELECT DISTINCT asn FROM {$sessions} WHERE asn IS NOT NULL AND asn <> ''" );
+
+		foreach ( (array) $asns as $raw_asn ) {
+			$asn = DnsIntel::parse_asn( $raw_asn );
+
+			if ( null === $asn || false !== get_transient( 'ace_asn_type_' . $asn ) ) {
+				continue;
+			}
+
+			AsnIntel::network_type( $asn );
+			usleep( 1200000 );
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from Schema.
+				"SELECT id, name, domain, type, confidence FROM {$companies} WHERE source_provider IN ( %s, %s, %s )",
+				'keyless',
+				'ipregistry',
+				'ipinfo'
+			),
+			ARRAY_A
+		);
+
+		foreach ( (array) $rows as $row ) {
+			$id       = (int) $row['id'];
+			$raw_asn  = $wpdb->get_var( $wpdb->prepare( "SELECT asn FROM {$sessions} WHERE company_id = %d AND asn IS NOT NULL AND asn <> '' GROUP BY asn ORDER BY COUNT(*) DESC LIMIT 1", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$asn      = DnsIntel::parse_asn( $raw_asn );
+			$asn_type = AsnIntel::network_type( $asn );
+			$hosting  = DnsIntel::is_hosting_asn( $asn ) || 'hosting' === $asn_type;
+
+			$kind = ( 'isp' === strtolower( (string) $row['type'] ) )
+				? 'isp'
+				: DnsIntel::network_kind( (string) $row['name'], (string) $row['domain'] );
+
+			if ( 'proxy' !== $kind ) {
+				if ( 'isp' === $asn_type ) {
+					$kind = 'isp';
+				} elseif ( null !== $asn_type && 'hosting' !== $asn_type ) {
+					$kind = null;
+				}
+			}
+
+			if ( null !== $kind || $hosting ) {
+				$label  = $kind ?: 'hosting';
+				$update = array( 'type' => $label );
+
+				if ( 'likely' === (string) $row['confidence'] ) {
+					$update['confidence'] = 'weak';
+				}
+
+				$wpdb->update( $companies, $update, array( 'id' => $id ) );
+				$wpdb->update(
+					$sessions,
+					array( 'company_confidence' => 'weak' ),
+					array(
+						'company_id'         => $id,
+						'company_confidence' => 'likely',
+					)
+				);
+				continue;
+			}
+
+			if ( in_array( $asn_type, array( 'business', 'education', 'government', 'organisation' ), true )
+				&& '' !== (string) $row['name']
+				&& 'weak' === (string) $row['confidence'] ) {
+				$update = array( 'confidence' => 'likely' );
+
+				if ( '' === (string) $row['type'] ) {
+					$update['type'] = $asn_type;
+				}
+
+				$wpdb->update( $companies, $update, array( 'id' => $id ) );
+				$wpdb->update(
+					$sessions,
+					array( 'company_confidence' => 'likely' ),
+					array(
+						'company_id'         => $id,
+						'company_confidence' => 'weak',
+					)
+				);
+			}
+		}
+
+		update_option( 'ace_company_classification_backfill_2', '1', false );
 	}
 
 	/**
