@@ -751,6 +751,7 @@ final class AdminController {
 					'download_events'        => $this->events->count_by_type( 'download', $filters ),
 					'form_submissions'       => $this->events->count_by_type( 'form_submit', $filters ),
 					'likely_business_visits' => $this->sessions->count_likely_business( $filters ),
+					'identified_businesses'  => $this->companies->count_companies( array_merge( $filters, array( 'confidence' => 'business' ) ) ),
 					'stored_calls'           => $this->calls->count_calls( $call_filters ),
 					'matched_calls'          => $this->calls->count_matched_filtered( $call_filters ),
 					'chat_conversations'     => $this->chat_conversations->count_conversations(),
@@ -883,7 +884,17 @@ final class AdminController {
 				'items'   => array_map( array( $this, 'decorate_company_summary' ), $this->companies->get_companies( $per_page, $filters, ( $page - 1 ) * $per_page ) ),
 				'filters' => array(
 					'providers'    => $this->companies->get_sources(),
-					'confidences'  => array( 'unknown', 'weak', 'likely', 'confirmed', 'ignore' ),
+					'confidences'  => array(
+						array(
+							'label' => __( 'Businesses (likely + confirmed)', 'adaptive-customer-engagement' ),
+							'value' => 'business',
+						),
+						'confirmed',
+						'likely',
+						'weak',
+						'unknown',
+						'ignore',
+					),
 				),
 				'segments' => Settings::get_reporting_segments( 'companies' ),
 				'pagination' => array(

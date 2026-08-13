@@ -19,7 +19,7 @@ const SESSION_FILTER_DEFAULTS = {
 };
 const COMPANY_FILTER_DEFAULTS = {
 	search: '',
-	confidence: '',
+	confidence: 'business',
 	provider: '',
 	date_from: '',
 	date_to: '',
@@ -1075,6 +1075,7 @@ function DashboardView({ active }) {
 	const cards = [
 		['Sessions', data.metrics.sessions],
 		['Returning sessions', data.metrics.returning_sessions],
+		['Businesses identified', data.metrics.identified_businesses],
 		['Likely business visits', data.metrics.likely_business_visits],
 		['Click-to-call events', data.metrics.click_to_call_events],
 		['Download events', data.metrics.download_events],

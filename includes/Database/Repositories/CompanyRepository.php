@@ -324,8 +324,14 @@ final class CompanyRepository {
 		$params = array();
 
 		if ( ! empty( $filters['confidence'] ) ) {
-			$where[]  = 'confidence = %s';
-			$params[] = $filters['confidence'];
+			// The virtual 'business' value groups the two levels that mean
+			// "a real organisation": confirmed identity or a likely match.
+			if ( 'business' === $filters['confidence'] ) {
+				$where[] = "confidence IN ( 'likely', 'confirmed' )";
+			} else {
+				$where[]  = 'confidence = %s';
+				$params[] = $filters['confidence'];
+			}
 		}
 
 		if ( ! empty( $filters['provider'] ) ) {
