@@ -1119,6 +1119,7 @@ function DashboardView({ active }) {
 	return createElement(
 		Fragment,
 		null,
+		( config.showSampleTools || data.sample_data?.is_seeded ) &&
 		createElement(SampleDataPanel, {
 			status: data.sample_data || {},
 			busy: busySample,

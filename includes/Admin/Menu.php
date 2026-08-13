@@ -125,6 +125,12 @@ final class Menu {
 					'page'         => sanitize_key( (string) str_replace( self::PAGE_SLUG_PREFIX, '', $_GET['page'] ?? self::TOP_LEVEL_SLUG ) ),
 					'logoUrl'      => esc_url_raw( ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL . 'assets/images/ace-media-logo.png' ),
 					'siteIconUrl'  => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
+					/**
+					 * The demo-data seeding card is hidden by default; it
+					 * reappears automatically while sample rows exist (so
+					 * they can be removed) or when this filter opts in.
+					 */
+					'showSampleTools' => (bool) apply_filters( 'ace_show_sample_data_tools', false ),
 				)
 			),
 			'before'
