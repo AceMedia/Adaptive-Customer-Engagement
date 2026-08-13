@@ -9,6 +9,7 @@ namespace ACE\AdaptiveCustomerEngagement\Enrichment;
 
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\EnrichmentCacheRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
@@ -52,20 +53,29 @@ final class EnrichmentService {
 	private $privacy;
 
 	/**
+	 * IP-to-company memory repository.
+	 *
+	 * @var IpCompanyMemoryRepository|null
+	 */
+	private $ip_memory;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param ProviderRegistry          $providers Provider registry.
-	 * @param EnrichmentCacheRepository $cache     Cache repository.
-	 * @param CompanyRepository         $companies Company repository.
-	 * @param SessionRepository         $sessions  Session repository.
-	 * @param Privacy                   $privacy   Privacy helper.
+	 * @param ProviderRegistry               $providers Provider registry.
+	 * @param EnrichmentCacheRepository      $cache     Cache repository.
+	 * @param CompanyRepository              $companies Company repository.
+	 * @param SessionRepository              $sessions  Session repository.
+	 * @param Privacy                        $privacy   Privacy helper.
+	 * @param IpCompanyMemoryRepository|null $ip_memory Locally learned IP-to-company hints.
 	 */
-	public function __construct( ProviderRegistry $providers, EnrichmentCacheRepository $cache, CompanyRepository $companies, SessionRepository $sessions, Privacy $privacy ) {
+	public function __construct( ProviderRegistry $providers, EnrichmentCacheRepository $cache, CompanyRepository $companies, SessionRepository $sessions, Privacy $privacy, ?IpCompanyMemoryRepository $ip_memory = null ) {
 		$this->providers = $providers;
 		$this->cache     = $cache;
 		$this->companies = $companies;
 		$this->sessions  = $sessions;
 		$this->privacy   = $privacy;
+		$this->ip_memory = $ip_memory;
 	}
 
 	/**
@@ -79,7 +89,20 @@ final class EnrichmentService {
 	public function enrich_session( int $session_id, string $ip, bool $is_bot = false ): ?array {
 		$session = $this->sessions->get_session_detail( $session_id );
 
-		if ( ! $session || ! $this->should_enrich( $ip, $is_bot, $session ) ) {
+		if ( ! $session ) {
+			return null;
+		}
+
+		// Deterministic local knowledge (form submissions, orders) beats any
+		// provider lookup: a returning visitor from a known IP is relabelled
+		// with the company we have already confirmed.
+		$recalled = $this->recall_from_memory( $session_id, $ip, $is_bot, $session );
+
+		if ( null !== $recalled ) {
+			return $recalled;
+		}
+
+		if ( ! $this->should_enrich( $ip, $is_bot, $session ) ) {
 			return null;
 		}
 
@@ -122,6 +145,53 @@ final class EnrichmentService {
 		$result = $this->lookup( $ip );
 
 		return $result ? $this->format_result( $result, 0 ) : null;
+	}
+
+	/**
+	 * Assign a company remembered against this IP from a previous form
+	 * submission, order, or chat declaration.
+	 *
+	 * @param int                  $session_id Session ID.
+	 * @param string               $ip         IP address.
+	 * @param bool                 $is_bot     Bot flag.
+	 * @param array<string, mixed> $session    Session row.
+	 * @return array<string, mixed>|null Assignment summary, or null when no memory applies.
+	 */
+	private function recall_from_memory( int $session_id, string $ip, bool $is_bot, array $session ): ?array {
+		if ( null === $this->ip_memory || $is_bot || ! empty( $session['company_id'] ) ) {
+			return null;
+		}
+
+		if ( 'confirmed' === (string) ( $session['company_confidence'] ?? '' ) ) {
+			return null;
+		}
+
+		$ip_hash = $this->privacy->hash_ip( $ip );
+
+		if ( '' === $ip_hash ) {
+			return null;
+		}
+
+		$hint       = $this->ip_memory->find_by_ip_hash( $ip_hash );
+		$company_id = is_array( $hint ) ? (int) ( $hint['company_id'] ?? 0 ) : 0;
+
+		if ( $company_id <= 0 ) {
+			return null;
+		}
+
+		$confidence = sanitize_key( (string) ( $hint['confidence'] ?? '' ) ) ?: 'likely';
+
+		$this->sessions->assign_company( $session_id, $company_id, $confidence );
+		$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+
+		return array(
+			'provider'       => 'ip_memory',
+			'company_id'     => $company_id,
+			'company_name'   => (string) ( $hint['company_name'] ?? '' ),
+			'company_domain' => (string) ( $hint['company_domain'] ?? '' ),
+			'confidence'     => $confidence,
+			'source'         => (string) ( $hint['source'] ?? '' ),
+		);
 	}
 
 	/**
@@ -223,6 +293,36 @@ final class EnrichmentService {
 
 			if ( $ptr_domain && strtolower( $result->company_domain ) === $ptr_domain ) {
 				$result->confidence = 'likely';
+			}
+		}
+
+		// RDAP registrant contacts sometimes hold a private individual's
+		// name rather than an organisation; never store those as companies.
+		if ( 'keyless' === $result->provider && $result->company_name && DnsIntel::looks_like_person( $result->company_name ) ) {
+			$result->company_name              = null;
+			$result->raw['scrubbed_person']    = true;
+
+			if ( 'likely' === $result->confidence ) {
+				$result->confidence = $result->isp ? 'weak' : 'unknown';
+			}
+		}
+
+		// The org that owns an IP range is usually the network operator, not
+		// the business browsing through it: type ISPs/carriers and security
+		// gateways and keep them out of the likely-business bucket.
+		$kind = ( 'isp' === strtolower( (string) $result->company_type ) )
+			? 'isp'
+			: DnsIntel::network_kind( $result->company_name, $result->isp, $result->company_domain );
+
+		if ( null !== $kind ) {
+			$result->raw['network_kind'] = $kind;
+
+			if ( null === $result->company_type || '' === $result->company_type ) {
+				$result->company_type = $kind;
+			}
+
+			if ( 'likely' === $result->confidence ) {
+				$result->confidence = 'weak';
 			}
 		}
 

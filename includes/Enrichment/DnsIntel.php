@@ -184,6 +184,31 @@ final class DnsIntel {
 	}
 
 	/**
+	 * Name fragments that mark an organisation as an ISP/carrier — the
+	 * network operator that owns the IP range, not the business browsing
+	 * through it. Word-bounded except fibre/fiber, which also match
+	 * prefixed brand names (Fibrenest).
+	 *
+	 * @var string
+	 */
+	private const ISP_NAME_PATTERN = '/\b(broadband|fibre\w*|fiber\w*|telecoms?|telecommunications?|telcom|telco|telekom|telefonica|telenor|telenet|telia|radiotelephone|cable|cellular|wireless|mobile|internet|isp|comcast|verizon|at&t|sfr|vodafone|virgin media|talktalk|plusnet|hyperoptic|gigaclear|kcom|brsk|hutchison|starlink|jio|sky uk|[345]g)\b/i';
+
+	/**
+	 * Secure-web-gateway vendors: traffic egresses through their cloud, so
+	 * the visitor IS a business — just not this one.
+	 *
+	 * @var string
+	 */
+	private const GATEWAY_NAME_PATTERN = '/\b(zscaler|iboss|netskope|forcepoint|menlo security|cisco umbrella|palo alto networks|cato networks)\b/i';
+
+	/**
+	 * Tokens that mark a name as an organisation rather than a person.
+	 *
+	 * @var string
+	 */
+	private const ORG_TOKEN_PATTERN = '/\b(ltd|limited|llc|inc|plc|gmbh|bv|ab|oy|sa|sarl|srl|spa|ag|kg|llp|pvt|pty|corp|corporation|company|co|group|holdings?|enterprises?|associates?|partners?|international|global|industries|partner\w*|solutions?|services?|systems?|technolog\w*|digital|media|network\w*|fibre\w*|fiber\w*|telecom\w*|internet|hosting|cloud|data|consult\w*|engineering|software|agency|studio|labs?|council|university|college|school|nhs|trust|association|foundation|charity)\b/i';
+
+	/**
 	 * Determine whether an ASN belongs to a hosting/cloud provider.
 	 *
 	 * @param int|null $asn ASN.
@@ -191,6 +216,53 @@ final class DnsIntel {
 	 */
 	public static function is_hosting_asn( ?int $asn ): bool {
 		return null !== $asn && isset( self::HOSTING_ASNS[ $asn ] );
+	}
+
+	/**
+	 * Classify the network operator behind an enrichment result.
+	 *
+	 * @param string|null ...$names Any of company name, AS/ISP name, company
+	 *                              domain, provider company type.
+	 * @return string|null 'isp', 'proxy', or null when the name looks like a
+	 *                     genuine end-user organisation.
+	 */
+	public static function network_kind( ?string ...$names ): ?string {
+		$haystack = strtolower( trim( implode( ' ', array_filter( $names ) ) ) );
+
+		if ( '' === $haystack ) {
+			return null;
+		}
+
+		if ( preg_match( self::GATEWAY_NAME_PATTERN, $haystack ) ) {
+			return 'proxy';
+		}
+
+		if ( preg_match( self::ISP_NAME_PATTERN, $haystack ) ) {
+			return 'isp';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Detect names that look like a private individual rather than an
+	 * organisation (RDAP registrant contacts leak personal names). Kept
+	 * conservative: two or three capitalised words with no digits and no
+	 * recognisable organisation token.
+	 *
+	 * @param string|null $name Candidate name.
+	 * @return bool
+	 */
+	public static function looks_like_person( ?string $name ): bool {
+		if ( null === $name || '' === trim( $name ) || strlen( $name ) > 40 ) {
+			return false;
+		}
+
+		if ( preg_match( '/[\d&@,\.]/', $name ) || preg_match( self::ORG_TOKEN_PATTERN, $name ) ) {
+			return false;
+		}
+
+		return (bool) preg_match( '/^\p{Lu}[\p{L}\'’-]+(?: \p{Lu}[\p{L}\'’-]+){1,2}$/u', trim( $name ) );
 	}
 
 	/**

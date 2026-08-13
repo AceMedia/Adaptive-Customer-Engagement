@@ -27,6 +27,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepositor
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Enrichment\DnsIntel;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\ProviderRegistry;
 use ACE\AdaptiveCustomerEngagement\REST\AdminController;
@@ -40,6 +41,7 @@ use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
 use ACE\AdaptiveCustomerEngagement\Tracking\FormCaptureService;
 use ACE\AdaptiveCustomerEngagement\Tracking\SessionManager;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooCommerceContext;
+use ACE\AdaptiveCustomerEngagement\Tracking\WooOrderCaptureService;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -89,7 +91,8 @@ final class Plugin {
 			new EnrichmentCacheRepository(),
 			$company_repository,
 			$session_repository,
-			$privacy
+			$privacy,
+			$ip_company_memory
 		);
 		$menu               = new Menu();
 		$sample_data        = new SampleDataSeeder();
@@ -120,8 +123,10 @@ final class Plugin {
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
 		( new FormCaptureService( $form_submissions, $session_repository, $company_repository, $ip_company_memory ) )->register();
+		( new WooOrderCaptureService( $session_repository, $company_repository, $ip_company_memory, $privacy ) )->register();
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 		$this->maybe_migrate_voice_provider();
+		$this->maybe_backfill_company_classification();
 
 		$menu->register();
 		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
@@ -158,6 +163,89 @@ final class Plugin {
 		}
 
 		update_option( 'ace_voice_provider_auto', '1', false );
+	}
+
+	/**
+	 * One-time backfill: apply the network-operator classification and the
+	 * personal-name scrub to companies created before those rules existed,
+	 * so historical reporting matches what new sessions now record.
+	 *
+	 * ISPs/carriers and security gateways are typed and downgraded out of
+	 * the likely-business bucket (their sessions follow); companies that
+	 * were really RDAP registrant persons are deleted and their sessions
+	 * detached.
+	 *
+	 * @return void
+	 */
+	private function maybe_backfill_company_classification(): void {
+		if ( '1' === (string) get_option( 'ace_company_classification_backfill', '' ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$companies = Schema::table_name( 'companies' );
+		$sessions  = Schema::table_name( 'sessions' );
+		$rows      = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names come from Schema, not user input.
+				"SELECT id, name, domain, type, confidence, source_provider FROM {$companies} WHERE source_provider IN ( %s, %s, %s )",
+				'keyless',
+				'ipregistry',
+				'ipinfo'
+			),
+			ARRAY_A
+		);
+
+		foreach ( (array) $rows as $row ) {
+			$id = (int) $row['id'];
+
+			if ( 'keyless' === (string) $row['source_provider'] && DnsIntel::looks_like_person( (string) $row['name'] ) ) {
+				$wpdb->delete( $companies, array( 'id' => $id ) );
+				$wpdb->update(
+					$sessions,
+					array(
+						'company_id'         => null,
+						'company_confidence' => 'unknown',
+					),
+					array( 'company_id' => $id )
+				);
+				continue;
+			}
+
+			$kind = ( 'isp' === strtolower( (string) $row['type'] ) )
+				? 'isp'
+				: DnsIntel::network_kind( (string) $row['name'], (string) $row['domain'] );
+
+			if ( null === $kind ) {
+				continue;
+			}
+
+			$update = array();
+
+			if ( '' === (string) $row['type'] ) {
+				$update['type'] = $kind;
+			}
+
+			if ( 'likely' === (string) $row['confidence'] ) {
+				$update['confidence'] = 'weak';
+			}
+
+			if ( ! empty( $update ) ) {
+				$wpdb->update( $companies, $update, array( 'id' => $id ) );
+			}
+
+			$wpdb->update(
+				$sessions,
+				array( 'company_confidence' => 'weak' ),
+				array(
+					'company_id'         => $id,
+					'company_confidence' => 'likely',
+				)
+			);
+		}
+
+		update_option( 'ace_company_classification_backfill', '1', false );
 	}
 
 	/**

@@ -26,7 +26,7 @@ final class FormCaptureService {
 	 *
 	 * @var string[]
 	 */
-	private const GENERIC_EMAIL_DOMAINS = array(
+	public const GENERIC_EMAIL_DOMAINS = array(
 		'gmail.com',
 		'googlemail.com',
 		'outlook.com',
