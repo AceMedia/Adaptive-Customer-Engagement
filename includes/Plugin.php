@@ -129,7 +129,15 @@ final class Plugin {
 		$this->maybe_migrate_voice_provider();
 		$this->maybe_backfill_company_classification();
 		$this->maybe_backfill_company_classification_v2();
-		$this->maybe_backfill_order_identity();
+		// Deferred: WooCommerce loads after this plugin, so wc_get_orders()
+		// does not exist yet at include time.
+		add_action(
+			'plugins_loaded',
+			function (): void {
+				$this->maybe_backfill_order_identity();
+			},
+			20
+		);
 
 		$menu->register();
 		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
