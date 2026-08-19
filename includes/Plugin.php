@@ -137,6 +137,7 @@ final class Plugin {
 			function () use ( $enrichment_service ): void {
 				$this->maybe_backfill_order_identity();
 				$this->maybe_backfill_provider_reenrichment( $enrichment_service );
+				$this->maybe_backfill_provider_reenrichment_likely( $enrichment_service );
 			},
 			20
 		);
@@ -558,6 +559,75 @@ final class Plugin {
 		// otherwise the next CLI invocation picks up the remainder.
 		if ( $lookups < $budget ) {
 			update_option( 'ace_provider_reenrich_backfill', '1', false );
+		}
+	}
+
+	/**
+	 * Second re-enrichment pass: sessions the keyless waterfall rated
+	 * LIKELY get a second opinion from the paid provider, which types
+	 * hosting/carrier ranges keyless cannot tell from end-user businesses.
+	 * Same budget and resume semantics as the first pass.
+	 *
+	 * @param EnrichmentService $enrichment Enrichment service.
+	 * @return void
+	 */
+	private function maybe_backfill_provider_reenrichment_likely( EnrichmentService $enrichment ): void {
+		if ( ! defined( 'WP_CLI' ) || '1' === (string) get_option( 'ace_provider_reenrich_backfill_likely', '' ) ) {
+			return;
+		}
+
+		$settings = Settings::get();
+		$provider = sanitize_key( (string) ( $settings['enrichment']['provider'] ?? 'none' ) );
+
+		if ( in_array( $provider, array( 'none', 'keyless' ), true ) || '' === (string) ( $settings['enrichment']['api_key'] ?? '' ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$sessions_table  = Schema::table_name( 'sessions' );
+		$companies_table = Schema::table_name( 'companies' );
+		$budget          = max( 1, (int) apply_filters( 'ace_reenrich_lookup_budget', 2500 ) );
+		$rows            = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table names from Schema.
+				"SELECT s.id, s.ip_raw FROM {$sessions_table} s
+				 INNER JOIN {$companies_table} c ON c.id = s.company_id
+				 WHERE s.ip_raw IS NOT NULL AND s.ip_raw <> ''
+				   AND s.is_bot = 0
+				   AND s.company_confidence = 'likely'
+				   AND c.source_provider = 'keyless'
+				 ORDER BY s.first_seen DESC
+				 LIMIT %d",
+				$budget * 4
+			),
+			ARRAY_A
+		);
+
+		$seen_ips = array();
+		$lookups  = 0;
+
+		foreach ( (array) $rows as $row ) {
+			$ip = (string) $row['ip_raw'];
+
+			if ( '' === $ip || false === filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+				continue;
+			}
+
+			if ( ! isset( $seen_ips[ $ip ] ) ) {
+				if ( $lookups >= $budget ) {
+					break;
+				}
+
+				$seen_ips[ $ip ] = true;
+				$lookups++;
+			}
+
+			$enrichment->reenrich_session( (int) $row['id'], $ip );
+		}
+
+		if ( $lookups < $budget ) {
+			update_option( 'ace_provider_reenrich_backfill_likely', '1', false );
 		}
 	}
 
