@@ -136,6 +136,70 @@ final class EnrichmentService {
 	}
 
 	/**
+	 * Re-enrich a session whose earlier result was weak or unknown, using a
+	 * stronger provider than the one that produced it. Bypasses the
+	 * "already has a company" gate but keeps bot/private-IP rules and the
+	 * memory-recall precedence. Never downgrades confirmed sessions.
+	 *
+	 * @param int    $session_id Session ID.
+	 * @param string $ip         IP address.
+	 * @return array<string, mixed>|null
+	 */
+	public function reenrich_session( int $session_id, string $ip ): ?array {
+		$session = $this->sessions->get_session_detail( $session_id );
+
+		if ( ! $session || 'confirmed' === (string) ( $session['company_confidence'] ?? '' ) ) {
+			return null;
+		}
+
+		$recalled = $this->recall_from_memory( $session_id, $ip, false, array_merge( $session, array( 'company_id' => null ) ) );
+
+		if ( null !== $recalled ) {
+			return $recalled;
+		}
+
+		$settings = Settings::get();
+		$provider = $this->providers->get_active_provider();
+
+		if ( ! $provider->is_configured() || 'none' === $provider->get_name() ) {
+			return null;
+		}
+
+		if ( $this->privacy->is_private_ip( $ip ) && empty( $settings['enrichment']['enrich_private_ips'] ) ) {
+			return null;
+		}
+
+		$result = $this->lookup( $ip );
+
+		if ( ! $result || isset( $result->raw['error'] ) ) {
+			return null;
+		}
+
+		$company    = $this->companies->create_or_touch_from_result( $result );
+		$company_id = is_array( $company ) ? (int) $company['id'] : 0;
+		$previous   = (int) ( $session['company_id'] ?? 0 );
+
+		$this->sessions->update_enrichment(
+			$session_id,
+			array(
+				'country_code'       => $result->country_code,
+				'region'             => $result->region,
+				'city'               => $result->city,
+				'asn'                => $result->asn,
+				'isp'                => $result->isp,
+				'company_id'         => $company_id ?: null,
+				'company_confidence' => $result->confidence,
+			)
+		);
+
+		if ( $company_id > 0 && $company_id !== $previous ) {
+			$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+		}
+
+		return $this->format_result( $result, $company_id );
+	}
+
+	/**
 	 * Run an enrichment test lookup.
 	 *
 	 * @param string $ip IP address.

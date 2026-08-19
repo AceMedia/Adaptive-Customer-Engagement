@@ -134,8 +134,9 @@ final class Plugin {
 		// wc_get_orders() fatals any earlier.
 		add_action(
 			'init',
-			function (): void {
+			function () use ( $enrichment_service ): void {
 				$this->maybe_backfill_order_identity();
+				$this->maybe_backfill_provider_reenrichment( $enrichment_service );
 			},
 			20
 		);
@@ -485,6 +486,79 @@ final class Plugin {
 		}
 
 		update_option( 'ace_order_identity_backfill', '1', false );
+	}
+
+	/**
+	 * One-off provider re-enrichment: sessions that were enriched by the
+	 * keyless waterfall (or not at all) and still rate weak/unknown are
+	 * re-run through the active paid provider, where the stored raw IP is
+	 * still within retention. Newest sessions first; resumable in budgeted
+	 * chunks so one CLI invocation never runs away with the credit balance.
+	 *
+	 * Budget per invocation is filterable: `ace_reenrich_lookup_budget`.
+	 *
+	 * @param EnrichmentService $enrichment Enrichment service.
+	 * @return void
+	 */
+	private function maybe_backfill_provider_reenrichment( EnrichmentService $enrichment ): void {
+		if ( ! defined( 'WP_CLI' ) || '1' === (string) get_option( 'ace_provider_reenrich_backfill', '' ) ) {
+			return;
+		}
+
+		$settings = Settings::get();
+		$provider = sanitize_key( (string) ( $settings['enrichment']['provider'] ?? 'none' ) );
+
+		if ( in_array( $provider, array( 'none', 'keyless' ), true ) || '' === (string) ( $settings['enrichment']['api_key'] ?? '' ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$sessions_table = Schema::table_name( 'sessions' );
+		$budget         = max( 1, (int) apply_filters( 'ace_reenrich_lookup_budget', 2500 ) );
+		$rows           = $wpdb->get_results(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from Schema.
+				"SELECT id, ip_raw FROM {$sessions_table}
+				 WHERE ip_raw IS NOT NULL AND ip_raw <> ''
+				   AND is_bot = 0
+				   AND company_confidence IN ( 'unknown', 'weak' )
+				 ORDER BY first_seen DESC
+				 LIMIT %d",
+				$budget * 4
+			),
+			ARRAY_A
+		);
+
+		$seen_ips = array();
+		$lookups  = 0;
+
+		foreach ( (array) $rows as $row ) {
+			$ip = (string) $row['ip_raw'];
+
+			if ( '' === $ip || false === filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+				continue;
+			}
+
+			// Each distinct IP costs at most one provider credit; repeat
+			// sessions from the same IP are served from the enrichment cache.
+			if ( ! isset( $seen_ips[ $ip ] ) ) {
+				if ( $lookups >= $budget ) {
+					break;
+				}
+
+				$seen_ips[ $ip ] = true;
+				$lookups++;
+			}
+
+			$enrichment->reenrich_session( (int) $row['id'], $ip );
+		}
+
+		// Complete only when the candidate set was exhausted inside budget;
+		// otherwise the next CLI invocation picks up the remainder.
+		if ( $lookups < $budget ) {
+			update_option( 'ace_provider_reenrich_backfill', '1', false );
+		}
 	}
 
 	/**

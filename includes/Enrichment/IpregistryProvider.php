@@ -87,29 +87,31 @@ final class IpregistryProvider implements ProviderInterface {
 	 * @return string
 	 */
 	private function map_confidence( EnrichmentResult $result ): string {
-		$company_type = strtolower( (string) $result->company_type );
-		$org_name     = strtolower( (string) $result->company_name );
-		$weak_names   = array( 'amazon', 'google', 'microsoft', 'cloudflare', 'virgin media', 'bt', 'sky' );
+		$company_type    = strtolower( (string) $result->company_type );
+		$org_name        = strtolower( (string) $result->company_name );
+		$connection_type = strtolower( (string) ( $result->raw['connection']['type'] ?? '' ) );
 
 		if ( $result->is_proxy || $result->is_vpn ) {
 			return 'ignore';
 		}
 
-		if ( $result->company_name && $result->company_domain && ! $result->is_hosting ) {
-			if ( in_array( $company_type, array( 'business', 'government', 'education', 'organization', 'organisation' ), true ) ) {
-				return 'likely';
-			}
+		// ipregistry labels carrier address pools literally ("Ip Pools",
+		// "Dynamic IP Pool"); those are consumers, never a business.
+		if ( 'isp' === $company_type || 'hosting' === $company_type || true === $result->is_hosting
+			|| preg_match( '/\bip pools?\b|\bdynamic\b|\bdhcp\b|\bresidential\b/i', $org_name ) ) {
+			return 'weak';
+		}
 
-			foreach ( $weak_names as $weak_name ) {
-				if ( false !== strpos( $org_name, $weak_name ) ) {
-					return 'weak';
-				}
-			}
-
+		if ( $result->company_name && in_array( $company_type, array( 'business', 'government', 'education', 'organization', 'organisation' ), true ) ) {
 			return 'likely';
 		}
 
-		if ( $result->isp ) {
+		// Company typing absent: trust a named org on a non-ISP connection.
+		if ( $result->company_name && $result->company_domain && '' !== $connection_type && ! in_array( $connection_type, array( 'isp', 'hosting', 'inactive' ), true ) ) {
+			return 'likely';
+		}
+
+		if ( $result->isp || $result->company_name ) {
 			return 'weak';
 		}
 
