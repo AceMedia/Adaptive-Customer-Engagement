@@ -468,7 +468,31 @@ import './style.scss';
 		firstRun = false;
 	};
 
+	// A hidden tab does not need a live traffic light. Every poll is a full WordPress boot on the
+	// server (~0.5 s), and a handful of admin tabs left open in the background were making ~20 a
+	// minute between them, all day. Hidden tabs wait; the moment one is shown again it polls at
+	// once, so nothing is missed that a visible tab would have caught.
+	let pollTimer = null;
+	let waitingForVisible = false;
+
+	const schedule = () => {
+		if (pollTimer) window.clearTimeout(pollTimer);
+		pollTimer = window.setTimeout(poll, pollInterval);
+	};
+
+	document.addEventListener('visibilitychange', () => {
+		if (!document.hidden && waitingForVisible) {
+			waitingForVisible = false;
+			poll();
+		}
+	});
+
 	const poll = () => {
+		pollTimer = null;
+		if (document.hidden) {
+			waitingForVisible = true;
+			return;
+		}
 		fetch(config.endpoint, {
 			method: 'GET',
 			credentials: 'same-origin',
@@ -483,9 +507,7 @@ import './style.scss';
 			.catch(() => {
 				// Network hiccup — try again on the next tick.
 			})
-			.finally(() => {
-				window.setTimeout(poll, pollInterval);
-			});
+			.finally(schedule);
 	};
 
 	const start = () => {
