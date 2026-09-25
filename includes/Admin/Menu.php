@@ -16,6 +16,12 @@ final class Menu {
 	private const PAGE_SLUG_PREFIX = 'adaptive-customer-engagement-';
 
 	/**
+	 * Pages that change configuration, kept to administrators. Everything else is
+	 * reporting and chat, which shop managers can see.
+	 */
+	private const ADMIN_ONLY_PAGES = array( 'numbers', 'enrichment', 'amazon-connect', 'ai-agent', 'privacy', 'settings' );
+
+	/**
 	 * Registered page hooks.
 	 *
 	 * @var array<string, string>
@@ -58,7 +64,7 @@ final class Menu {
 		$this->hooks['dashboard'] = add_menu_page(
 			__( 'Adaptive Engagement', 'adaptive-customer-engagement' ),
 			__( 'Adaptive Engagement', 'adaptive-customer-engagement' ),
-			Capabilities::MANAGE,
+			current_user_can( Capabilities::MANAGE ) ? Capabilities::MANAGE : Capabilities::VIEW,
 			$top_slug,
 			function (): void {
 				$this->render_page( 'dashboard' );
@@ -73,7 +79,7 @@ final class Menu {
 				$top_slug,
 				$label,
 				$label,
-				Capabilities::MANAGE,
+				in_array( $page, self::ADMIN_ONLY_PAGES, true ) || current_user_can( Capabilities::MANAGE ) ? Capabilities::MANAGE : Capabilities::VIEW,
 				$slug,
 				function () use ( $page ): void {
 					$this->render_page( $page );
@@ -131,6 +137,7 @@ final class Menu {
 					 * they can be removed) or when this filter opts in.
 					 */
 					'showSampleTools' => (bool) apply_filters( 'ace_show_sample_data_tools', false ),
+					'hiddenPages'     => current_user_can( Capabilities::MANAGE ) ? array() : self::ADMIN_ONLY_PAGES,
 				)
 			),
 			'before'

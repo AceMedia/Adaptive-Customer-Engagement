@@ -143,6 +143,7 @@ final class Plugin {
 		);
 
 		$menu->register();
+		add_action( 'admin_init', array( \ACE\AdaptiveCustomerEngagement\Security\Capabilities::class, 'add_shop_manager' ) );
 		( new \ACE\AdaptiveCustomerEngagement\Admin\LiveMonitor() )->register();
 	}
 

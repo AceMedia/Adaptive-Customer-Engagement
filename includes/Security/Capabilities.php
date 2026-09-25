@@ -31,6 +31,23 @@ final class Capabilities {
 		foreach ( self::all() as $capability ) {
 			$role->add_cap( $capability );
 		}
+
+		self::add_shop_manager();
+	}
+
+	/**
+	 * Let shop managers see the reporting and chat screens (not settings).
+	 * Runs on admin_init as well as activation, so sites where the plugin was
+	 * already active pick it up without a reactivation.
+	 *
+	 * @return void
+	 */
+	public static function add_shop_manager(): void {
+		$role = get_role( 'shop_manager' );
+
+		if ( $role && ! $role->has_cap( self::VIEW ) ) {
+			$role->add_cap( self::VIEW );
+		}
 	}
 
 	/**
@@ -47,6 +64,12 @@ final class Capabilities {
 
 		foreach ( self::all() as $capability ) {
 			$role->remove_cap( $capability );
+		}
+
+		$shop_manager = get_role( 'shop_manager' );
+
+		if ( $shop_manager ) {
+			$shop_manager->remove_cap( self::VIEW );
 		}
 	}
 

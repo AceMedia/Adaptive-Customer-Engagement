@@ -182,7 +182,7 @@ final class AdminController {
 			'/admin/dashboard',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'dashboard' ),
 			)
 		);
@@ -192,7 +192,7 @@ final class AdminController {
 			'/admin/form-submissions',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'form_submissions' ),
 			)
 		);
@@ -202,7 +202,7 @@ final class AdminController {
 			'/admin/sessions',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'sessions' ),
 			)
 		);
@@ -212,7 +212,7 @@ final class AdminController {
 			'/admin/sessions/(?P<id>\d+)',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'session_detail' ),
 			)
 		);
@@ -239,7 +239,7 @@ final class AdminController {
 			'/admin/companies',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'companies' ),
 			)
 		);
@@ -249,7 +249,7 @@ final class AdminController {
 			'/admin/commerce',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'commerce' ),
 			)
 		);
@@ -259,7 +259,7 @@ final class AdminController {
 			'/admin/companies/(?P<id>\d+)',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'company_detail' ),
 			)
 		);
@@ -269,7 +269,7 @@ final class AdminController {
 			'/admin/calls',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'calls' ),
 			)
 		);
@@ -279,7 +279,7 @@ final class AdminController {
 			'/admin/calls/(?P<id>\d+)',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'call_detail' ),
 			)
 		);
@@ -289,7 +289,7 @@ final class AdminController {
 			'/admin/chats',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chats' ),
 			)
 		);
@@ -299,7 +299,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_detail' ),
 			)
 		);
@@ -309,7 +309,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)/status',
 			array(
 				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_status' ),
 			)
 		);
@@ -319,7 +319,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)/reply',
 			array(
 				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_reply' ),
 			)
 		);
@@ -329,7 +329,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)/workflow',
 			array(
 				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_workflow' ),
 			)
 		);
@@ -339,7 +339,7 @@ final class AdminController {
 			'/admin/chats/availability',
 			array(
 				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_availability' ),
 			)
 		);
@@ -349,7 +349,7 @@ final class AdminController {
 			'/admin/chats/alerts',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_alerts' ),
 			)
 		);
@@ -359,7 +359,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)/suggestions',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_suggestions' ),
 			)
 		);
@@ -369,7 +369,7 @@ final class AdminController {
 			'/admin/chats/(?P<id>\d+)/typing',
 			array(
 				'methods'             => 'POST',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'chat_typing' ),
 			)
 		);
@@ -644,7 +644,7 @@ final class AdminController {
 			'/admin/monitor',
 			array(
 				'methods'             => 'GET',
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_view' ),
 				'callback'            => array( $this, 'live_monitor' ),
 			)
 		);
@@ -718,6 +718,15 @@ final class AdminController {
 	 */
 	public function can_manage(): bool {
 		return current_user_can( Capabilities::MANAGE );
+	}
+
+	/**
+	 * Capability check for the reporting and chat screens shop managers can use.
+	 *
+	 * @return bool
+	 */
+	public function can_view(): bool {
+		return current_user_can( Capabilities::VIEW ) || current_user_can( Capabilities::MANAGE );
 	}
 
 	/**
@@ -1456,7 +1465,7 @@ final class AdminController {
 		$users   = get_users(
 			array(
 				'fields'     => array( 'ID', 'display_name', 'user_email' ),
-				'capability' => Capabilities::MANAGE,
+				'capability' => Capabilities::VIEW,
 				'orderby'    => 'display_name',
 				'order'      => 'ASC',
 			)

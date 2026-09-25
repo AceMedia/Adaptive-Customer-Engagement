@@ -33,7 +33,7 @@ final class LiveMonitor {
 	 * @return bool
 	 */
 	private function is_enabled(): bool {
-		if ( ! is_user_logged_in() || ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! is_user_logged_in() || ( ! current_user_can( Capabilities::VIEW ) && ! current_user_can( Capabilities::MANAGE ) ) ) {
 			return false;
 		}
 

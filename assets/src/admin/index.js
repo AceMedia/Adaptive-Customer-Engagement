@@ -523,7 +523,9 @@ function AdminSidebarNavigation({ page }) {
 	return createElement(
 		'nav',
 		{ className: 'ace-admin-nav', 'aria-label': __('Adaptive Customer Engagement navigation', 'adaptive-customer-engagement') },
-		NAV_GROUPS.map((group, index) =>
+		NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => !(config.hiddenPages || []).includes(item)) }))
+			.filter((group) => group.items.length)
+			.map((group, index) =>
 			createElement(
 				Fragment,
 				{ key: group.label },
