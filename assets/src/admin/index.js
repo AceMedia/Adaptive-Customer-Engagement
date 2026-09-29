@@ -1456,7 +1456,23 @@ function FormSubmissionsTable({ items, onSessionView, onCompanyView }) {
 				createElement(
 					'tr',
 					{ key: item.id },
-					createElement('td', null, item.created_at),
+					createElement('td', null,
+						item.created_at,
+						item.form_id && createElement('details', null,
+							createElement('summary', null, item.form_key || __('Submission details', 'adaptive-customer-engagement')),
+							createElement('dl', null,
+								...Object.entries(item.fields || {}).flatMap(([key, value]) => [
+									createElement('dt', { key: `${key}-label` }, key),
+									createElement('dd', { key }, Array.isArray(value) ? value.join(', ') : String(value ?? '')),
+								])
+							),
+							item.details?.source !== 'cfdb7' && createElement('p', null, `${__('Notification', 'adaptive-customer-engagement')}: ${item.details?.notification?.sent ? __('Accepted by wp_mail', 'adaptive-customer-engagement') : __('Not sent', 'adaptive-customer-engagement')}`),
+							item.details?.notification && createElement('p', null, item.details.notification.subject),
+							item.details?.notification && createElement('pre', { style: { whiteSpace: 'pre-wrap' } }, item.details.notification.body),
+							item.details?.confirmation && createElement('p', null, `${__('Confirmation', 'adaptive-customer-engagement')}: ${item.details.confirmation.sent ? __('Accepted by wp_mail', 'adaptive-customer-engagement') : __('Not sent', 'adaptive-customer-engagement')}`),
+							...(item.details?.files || []).map((file) => createElement('p', { key: file.id }, createElement('a', { href: `${config.root}ace-forms/v1/entries/${item.id}/files/${file.id}?_wpnonce=${config.nonce}` }, file.name)))
+						)
+					),
 					createElement('td', null, item.contact_name || '—'),
 					createElement('td', null, item.contact_email ? createElement('a', { href: `mailto:${item.contact_email}` }, item.contact_email) : '—'),
 					createElement('td', null, item.contact_phone || '—'),
@@ -1496,7 +1512,7 @@ function FormSubmissionsTable({ items, onSessionView, onCompanyView }) {
 							: '—'
 					),
 					createElement('td', null, item.page_url ? createElement('a', { href: item.page_url, target: '_blank', rel: 'noreferrer' }, new URL(item.page_url, window.location.origin).pathname) : '—'),
-					createElement('td', null, Number(item.mail_sent) ? __('Yes', 'adaptive-customer-engagement') : __('No', 'adaptive-customer-engagement'))
+					createElement('td', null, item.details?.source === 'cfdb7' ? __('Unknown', 'adaptive-customer-engagement') : Number(item.mail_sent) ? __('Yes', 'adaptive-customer-engagement') : __('No', 'adaptive-customer-engagement'))
 				)
 			)
 		)

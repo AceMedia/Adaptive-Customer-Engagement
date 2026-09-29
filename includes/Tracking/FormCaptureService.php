@@ -97,6 +97,41 @@ final class FormCaptureService {
 	 */
 	public function register(): void {
 		add_action( 'ace_form_submitted', array( $this, 'capture' ), 10, 4 );
+		add_filter( 'ace_forms_storage_provider', array( $this, 'storage_provider' ) );
+		add_filter( 'ace_forms_store_submission', array( $this, 'store_submission' ), PHP_INT_MAX, 6 );
+		add_filter( 'ace_forms_update_submission', array( $this, 'update_submission' ), 10, 4 );
+		add_filter( 'ace_forms_get_file_record', array( $this, 'get_file_record' ), 10, 3 );
+	}
+
+	/** Declare Customer Engagement as the active capture store. */
+	public function storage_provider( $provider ): string {
+		return 'customer-engagement';
+	}
+
+	/** Accept a completed ACE Forms submission and return its CE row ID. */
+	public function store_submission( $stored_id, $fields, $config, $request, $sent, $details ): int {
+		if ( (int) $stored_id > 0 ) {
+			return (int) $stored_id;
+		}
+		$config = is_array( $config ) ? $config : array();
+		$config['storage_provider'] = 'customer-engagement';
+		return $this->capture( $fields, $config, $request, $sent, is_array( $details ) ? $details : array() );
+	}
+
+	/** Persist the notification and confirmation outcomes after delivery. */
+	public function update_submission( $updated, $submission_id, $details, $sent ): bool {
+		return $this->submissions->update_delivery( (int) $submission_id, is_array( $details ) ? $details : array(), (bool) $sent );
+	}
+
+	/** Resolve a private file from the engagement record for ACE's download route. */
+	public function get_file_record( $record, $submission_id, $file_id ) {
+		$row = $this->submissions->get( (int) $submission_id );
+		foreach ( (array) ( $row['details']['files'] ?? array() ) as $file ) {
+			if ( is_array( $file ) && ( $file['id'] ?? '' ) === $file_id ) {
+				return $file;
+			}
+		}
+		return $record;
 	}
 
 	/**
@@ -106,14 +141,20 @@ final class FormCaptureService {
 	 * @param mixed $config  Verified form configuration.
 	 * @param mixed $request The submission REST request.
 	 * @param mixed $sent    Whether the notification email was sent.
-	 * @return void
+	 * @return int Stored submission ID, or 0 on failure.
 	 */
-	public function capture( $fields, $config = array(), $request = null, $sent = true ): void {
+	public function capture( $fields, $config = array(), $request = null, $sent = true, $details = array() ): int {
 		if ( ! is_array( $fields ) || empty( $fields ) ) {
-			return;
+			return 0;
 		}
 
 		$config  = is_array( $config ) ? $config : array();
+		if ( ! empty( $config['storage_provider'] ) && 'customer-engagement' !== $config['storage_provider'] ) {
+			return 0;
+		}
+		if ( ! empty( $config['already_stored'] ) ) {
+			return (int) $config['entryId'];
+		}
 		$contact = $this->extract_contact( $fields );
 		$session = $this->resolve_session();
 
@@ -133,10 +174,15 @@ final class FormCaptureService {
 				'contact_phone'   => $contact['phone'],
 				'contact_company' => $contact['company'],
 				'fields'          => $fields,
+				'form_id'         => sanitize_text_field( (string) ( $config['formId'] ?? '' ) ),
+				'details'         => is_array( $details ) ? $details : array(),
 				'mail_sent'       => (bool) $sent,
 			)
 		);
 
+		if ( $submission_id < 1 ) {
+			return 0;
+		}
 		$company = $this->resolve_company( $contact );
 
 		if ( is_array( $company ) && ! empty( $company['id'] ) ) {
@@ -169,6 +215,7 @@ final class FormCaptureService {
 				)
 			);
 		}
+		return $submission_id;
 	}
 
 	/**

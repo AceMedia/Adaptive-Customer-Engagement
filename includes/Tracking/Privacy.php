@@ -13,6 +13,82 @@ use ACE\AdaptiveCustomerEngagement\Settings;
 defined( 'ABSPATH' ) || exit;
 
 final class Privacy {
+	/** Register captured forms with WordPress personal-data export. */
+	public function register_form_exporter( array $exporters ): array {
+		$exporters['ace-engagement-forms'] = array(
+			'exporter_friendly_name' => __( 'Customer Engagement form submissions', 'adaptive-customer-engagement' ),
+			'callback' => array( $this, 'export_forms' ),
+		);
+		return $exporters;
+	}
+
+	/** Register captured forms with WordPress personal-data erasure. */
+	public function register_form_eraser( array $erasers ): array {
+		$erasers['ace-engagement-forms'] = array(
+			'eraser_friendly_name' => __( 'Customer Engagement form submissions', 'adaptive-customer-engagement' ),
+			'callback' => array( $this, 'erase_forms' ),
+		);
+		return $erasers;
+	}
+
+	/** Export form captures matching the supplied email address. */
+	public function export_forms( string $email, int $page = 1 ): array {
+		global $wpdb;
+		$table = Schema::table_name( 'form_submissions' );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT id,form_key,fields,details,created_at FROM {$table} WHERE contact_email=%s ORDER BY id LIMIT 100 OFFSET %d", sanitize_email( $email ), ( max( 1, $page ) - 1 ) * 100 ), ARRAY_A );
+		$data = array();
+		foreach ( (array) $rows as $row ) {
+			$items = array(
+				array( 'name' => __( 'Received', 'adaptive-customer-engagement' ), 'value' => $row['created_at'] ),
+				array( 'name' => __( 'Form', 'adaptive-customer-engagement' ), 'value' => $row['form_key'] ),
+			);
+			foreach ( (array) json_decode( (string) $row['fields'], true ) as $key => $value ) {
+				$items[] = array( 'name' => (string) $key, 'value' => is_scalar( $value ) ? (string) $value : wp_json_encode( $value ) );
+			}
+			$details = json_decode( (string) ( $row['details'] ?? '' ), true );
+			foreach ( array( 'notification', 'confirmation' ) as $kind ) {
+				if ( ! empty( $details[ $kind ]['body'] ) ) {
+					$items[] = array( 'name' => ucfirst( $kind ), 'value' => (string) $details[ $kind ]['body'] );
+				}
+			}
+			foreach ( (array) ( $details['files'] ?? array() ) as $file ) {
+				$items[] = array( 'name' => __( 'Uploaded file', 'adaptive-customer-engagement' ), 'value' => (string) ( $file['name'] ?? '' ) );
+			}
+			$data[] = array( 'group_id' => 'ace-engagement-forms', 'group_label' => __( 'Customer Engagement form submissions', 'adaptive-customer-engagement' ), 'item_id' => 'ace-engagement-form-' . $row['id'], 'data' => $items );
+		}
+		return array( 'data' => $data, 'done' => count( (array) $rows ) < 100 );
+	}
+
+	/** Erase captures and their private uploads for an email address. */
+	public function erase_forms( string $email, int $page = 1 ): array {
+		global $wpdb;
+		$table = Schema::table_name( 'form_submissions' );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT id,details FROM {$table} WHERE contact_email=%s ORDER BY id LIMIT 100", sanitize_email( $email ) ), ARRAY_A );
+		$root = realpath( trailingslashit( wp_upload_dir()['basedir'] ) . 'ace-forms' );
+		$removed = false;
+		$retained = false;
+		foreach ( (array) $rows as $row ) {
+			$details = json_decode( (string) ( $row['details'] ?? '' ), true );
+			$failed = false;
+			foreach ( (array) ( $details['files'] ?? array() ) as $file ) {
+				$path = is_array( $file ) ? realpath( (string) ( $file['path'] ?? '' ) ) : false;
+				if ( $path && ( ! $root || 0 !== strpos( $path, $root . DIRECTORY_SEPARATOR ) ) ) {
+					$failed = true;
+					continue;
+				}
+				if ( $path ) {
+					wp_delete_file( $path );
+					$failed = $failed || is_file( $path );
+				}
+			}
+			if ( $failed ) {
+				$retained = true;
+				continue;
+			}
+			$removed = (bool) $wpdb->delete( $table, array( 'id' => (int) $row['id'] ) ) || $removed;
+		}
+		return array( 'items_removed' => $removed, 'items_retained' => $retained, 'messages' => $retained ? array( __( 'One or more private files could not be removed.', 'adaptive-customer-engagement' ) ) : array(), 'done' => count( (array) $rows ) < 100 );
+	}
 	/**
 	 * Get a client IP.
 	 *
@@ -182,10 +258,50 @@ final class Privacy {
 			'sessions_deleted'   => $this->delete_in_batches( "DELETE FROM {$sessions_table} WHERE last_seen < %s", $session_cutoff ),
 			'bot_sessions_deleted' => $this->delete_in_batches( "DELETE FROM {$sessions_table} WHERE ( is_bot = 1 OR ignored = 1 ) AND last_seen < %s", $bot_cutoff ),
 			'enrichment_deleted' => $this->delete_in_batches( "DELETE FROM {$enrichment_table} WHERE expires_at < %s", $now ),
-			'form_submissions_deleted' => $this->delete_in_batches( "DELETE FROM {$forms_table} WHERE created_at < %s", $form_cutoff ),
+			'form_submissions_deleted' => $this->purge_expired_forms( $forms_table, $form_cutoff ),
 		);
 
 		return $deleted;
+	}
+
+	/** Remove expired captures and their private uploads in bounded batches. */
+	private function purge_expired_forms( string $table, string $cutoff ): int {
+		global $wpdb;
+		$total = 0;
+		$upload_root = realpath( trailingslashit( wp_upload_dir()['basedir'] ) . 'ace-forms' );
+		for ( $batch = 0; $batch < 125; ++$batch ) {
+			$rows = $wpdb->get_results( $wpdb->prepare( "SELECT id,details FROM {$table} WHERE created_at < %s ORDER BY id LIMIT %d", $cutoff, 2000 ), ARRAY_A );
+			if ( ! $rows ) {
+				break;
+			}
+			$ids = array();
+			foreach ( $rows as $row ) {
+				$details = json_decode( (string) ( $row['details'] ?? '' ), true );
+				$failed = false;
+				foreach ( (array) ( $details['files'] ?? array() ) as $file ) {
+					$path = is_array( $file ) ? realpath( (string) ( $file['path'] ?? '' ) ) : false;
+					if ( $path && ( ! $upload_root || 0 !== strpos( $path, $upload_root . DIRECTORY_SEPARATOR ) ) ) {
+						$failed = true;
+						continue;
+					}
+					if ( $path ) {
+						wp_delete_file( $path );
+						$failed = $failed || is_file( $path );
+					}
+				}
+				if ( ! $failed ) {
+					$ids[] = (int) $row['id'];
+				}
+			}
+			if ( ! $ids ) {
+				break;
+			}
+			$total += (int) $wpdb->query( "DELETE FROM {$table} WHERE id IN (" . implode( ',', $ids ) . ')' );
+			if ( count( $rows ) < 2000 ) {
+				break;
+			}
+		}
+		return $total;
 	}
 
 	/**

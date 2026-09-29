@@ -33,8 +33,11 @@ final class FormSubmissionRepository {
 				'contact_phone'   => $data['contact_phone'] ?? null,
 				'contact_company' => $data['contact_company'] ?? null,
 				'fields'          => wp_json_encode( $data['fields'] ?? array() ),
+				'form_id'         => $data['form_id'] ?? null,
+				'source_entry_id' => $data['source_entry_id'] ?? null,
+				'details'         => wp_json_encode( $data['details'] ?? array() ),
 				'mail_sent'       => ! empty( $data['mail_sent'] ) ? 1 : 0,
-				'created_at'      => current_time( 'mysql', true ),
+				'created_at'      => $data['created_at'] ?? current_time( 'mysql', true ),
 			)
 		);
 
@@ -54,6 +57,16 @@ final class FormSubmissionRepository {
 		$wpdb->update(
 			Schema::table_name( 'form_submissions' ),
 			array( 'company_id' => $company_id ),
+			array( 'id' => $submission_id )
+		);
+	}
+
+	/** Save delivery outcomes on a previously captured submission. */
+	public function update_delivery( int $submission_id, array $details, bool $sent ): bool {
+		global $wpdb;
+		return false !== $wpdb->update(
+			Schema::table_name( 'form_submissions' ),
+			array( 'details' => wp_json_encode( $details ), 'mail_sent' => $sent ? 1 : 0 ),
 			array( 'id' => $submission_id )
 		);
 	}
@@ -88,6 +101,8 @@ final class FormSubmissionRepository {
 			static function ( array $row ): array {
 				$fields        = json_decode( (string) ( $row['fields'] ?? '' ), true );
 				$row['fields'] = is_array( $fields ) ? $fields : array();
+				$details        = json_decode( (string) ( $row['details'] ?? '' ), true );
+				$row['details'] = is_array( $details ) ? $details : array();
 
 				return $row;
 			},
@@ -124,5 +139,17 @@ final class FormSubmissionRepository {
 		);
 
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	/** Return one submission for an authenticated download. */
+	public function get( int $id ): ?array {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . Schema::table_name( 'form_submissions' ) . ' WHERE id = %d', $id ), ARRAY_A );
+		if ( ! is_array( $row ) ) {
+			return null;
+		}
+		$details = json_decode( (string) ( $row['details'] ?? '' ), true );
+		$row['details'] = is_array( $details ) ? $details : array();
+		return $row;
 	}
 }

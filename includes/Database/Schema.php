@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.10';
+	public const SCHEMA_VERSION        = '0.1.12';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -296,12 +296,17 @@ final class Schema {
 			contact_phone VARCHAR(50) NULL,
 			contact_company VARCHAR(255) NULL,
 			fields LONGTEXT NULL,
+			form_id VARCHAR(36) NULL,
+			source_entry_id BIGINT UNSIGNED NULL,
+			details LONGTEXT NULL,
 			mail_sent TINYINT(1) NOT NULL DEFAULT 1,
 			created_at DATETIME NOT NULL,
 			PRIMARY KEY  (id),
 			KEY session_id (session_id),
 			KEY company_id (company_id),
 			KEY contact_email (contact_email),
+			KEY form_id (form_id),
+			UNIQUE KEY source_entry_id (source_entry_id),
 			KEY created_at (created_at)
 		) {$collate};";
 

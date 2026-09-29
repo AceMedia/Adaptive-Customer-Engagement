@@ -27,6 +27,7 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepositor
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
+use ACE\AdaptiveCustomerEngagement\Migration\AceEntriesImporter;
 use ACE\AdaptiveCustomerEngagement\Enrichment\AsnIntel;
 use ACE\AdaptiveCustomerEngagement\Enrichment\DnsIntel;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
@@ -123,7 +124,12 @@ final class Plugin {
 		add_action( 'admin_post_ace_export_commerce', array( $admin, 'export_commerce' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'ace_purge_expired_raw_data', array( $privacy, 'purge_expired_raw_data' ) );
+		add_filter( 'wp_privacy_personal_data_exporters', array( $privacy, 'register_form_exporter' ) );
+		add_filter( 'wp_privacy_personal_data_erasers', array( $privacy, 'register_form_eraser' ) );
 		( new FormCaptureService( $form_submissions, $session_repository, $company_repository, $ip_company_memory ) )->register();
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			\WP_CLI::add_command( 'ace-engagement import-ace-entries', array( AceEntriesImporter::class, 'cli' ) );
+		}
 		( new WooOrderCaptureService( $session_repository, $company_repository, $ip_company_memory, $privacy ) )->register();
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 		$this->maybe_migrate_voice_provider();
