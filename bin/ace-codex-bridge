@@ -22,9 +22,10 @@
 #   ask           stdin {"model":…,"effort":…,"messages":[{"role":…,"content":…}]} → {"message":…,"usage":…,"model":…}
 # Every reply is one JSON document on stdout. Failures print {"error":"…"} and exit 1.
 set -uo pipefail
+ROOT="${ACE_CODEX_ROOT:-${HOME:-/nonexistent}/.ace-codex}"
+export HOME="${HOME:-$ROOT}" # PHP-FPM workers may have no HOME; Codex still wants one.
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
-ROOT="${ACE_CODEX_ROOT:-$HOME/.ace-codex}"
 TIMEOUT="${ACE_CODEX_TIMEOUT:-150}"
 DEFAULT_MODEL="${ACE_CODEX_MODEL:-gpt-6-luna}"
 CODE_TTL=900 # OpenAI device codes expire after 15 minutes.
