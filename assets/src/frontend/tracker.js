@@ -1398,7 +1398,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			meta.push(price);
 		}
 
-		if (variationCount > 0) {
+		if (source?.commerce?.is_composite) {
+			const parts = Number(source?.commerce?.component_count || 0);
+			meta.push(parts > 0 ? `${parts} part${parts === 1 ? '' : 's'} to configure` : 'Configurable');
+		} else if (variationCount > 0) {
 			meta.push(`${variationCount} option${variationCount === 1 ? '' : 's'}`);
 		}
 
@@ -1629,6 +1632,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		}
 
 		if (source?.source_type === 'product') {
+			if (source?.commerce?.is_composite) {
+				return 'Configure';
+			}
 			return source?.commerce?.variation_count > 0 ? 'View options' : 'View product';
 		}
 

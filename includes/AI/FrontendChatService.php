@@ -1729,6 +1729,8 @@ final class FrontendChatService {
 							'variation_count' => absint( $source['commerce']['variation_count'] ?? 0 ),
 							'product_id'      => absint( $source['commerce']['product_id'] ?? 0 ),
 							'is_variable'     => ! empty( $source['commerce']['is_variable'] ),
+							'is_composite'    => ! empty( $source['commerce']['is_composite'] ),
+							'component_count' => is_array( $source['commerce']['components'] ?? null ) ? count( $source['commerce']['components'] ) : 0,
 							'can_add_to_cart' => ! empty( $source['commerce']['can_add_to_cart'] ),
 							'add_to_cart_url' => esc_url_raw( (string) ( $source['commerce']['add_to_cart_url'] ?? '' ) ),
 							'view_url'        => esc_url_raw( (string) ( $source['commerce']['view_url'] ?? $source['url'] ?? '' ) ),
