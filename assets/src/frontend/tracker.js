@@ -507,6 +507,31 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const send = document.createElement('button');
 	const micButton = document.createElement('button');
 	const voiceToggle = document.createElement('button');
+	// Inline stroke icons for the header toolbar and composer (no icon font needed).
+	const ICONS = {
+		details: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c.6-1.6 1.7-2.4 3-2.4s2.4.8 3 2.4M14 10h4M14 13h4"/>',
+		voiceOn: '<path d="M4 10v4h3l4 3V7l-4 3H4z"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10"/>',
+		voiceOff: '<path d="M4 10v4h3l4 3V7l-4 3H4z"/><path d="M16 9l5 5M21 9l-5 5"/>',
+		expand: '<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>',
+		collapse: '<path d="M20 10h-6V4M14 10l7-7M4 14h6v6M10 14l-7 7"/>',
+		end: '<path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/>',
+		mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',
+		close: '<path d="M6 6l12 12M18 6L6 18"/>',
+	};
+	const renderTool = (button, icon, label = '') => {
+		button.textContent = '';
+		const iconNode = document.createElement('span');
+		iconNode.className = 'ace-ai-chat-tool-icon';
+		iconNode.setAttribute('aria-hidden', 'true');
+		iconNode.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${ICONS[icon] || ''}</svg>`;
+		button.appendChild(iconNode);
+		if (label) {
+			const labelNode = document.createElement('span');
+			labelNode.className = 'ace-ai-chat-tool-label';
+			labelNode.textContent = label;
+			button.appendChild(labelNode);
+		}
+	};
 	const state = {
 		open: false,
 		docked: false,
@@ -577,34 +602,50 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	dockToggle.type = 'button';
 	dockToggle.setAttribute('aria-label', 'Expand chat to a side panel');
 	dockToggle.setAttribute('aria-pressed', 'false');
-	dockToggle.textContent = '⤢';
+	dockToggle.className = 'ace-ai-chat-tool';
+	renderTool(dockToggle, 'expand', 'Expand');
 
 	header.id = 'ace-ai-chat-header';
+	const headerTop = document.createElement('div');
+	headerTop.id = 'ace-ai-chat-header-top';
 	title.textContent = chatConfig.title || chatConfig.botName || 'Site assistant';
 	status.id = 'ace-ai-chat-status';
 	status.dataset.online = 'false';
 	status.textContent = 'Checking team availability…';
+	titleWrap.className = 'ace-ai-chat-header-title';
 	titleWrap.appendChild(title);
 	titleWrap.appendChild(status);
+	if (chatConfig.botAvatarUrl) {
+		const headerAvatar = document.createElement('img');
+		headerAvatar.className = 'ace-ai-chat-header-avatar';
+		headerAvatar.src = String(chatConfig.botAvatarUrl);
+		headerAvatar.alt = '';
+		headerAvatar.loading = 'lazy';
+		headerTop.appendChild(headerAvatar);
+	}
 
 	close.id = 'ace-ai-chat-close';
 	close.type = 'button';
 	close.setAttribute('aria-label', 'Close chat');
-	close.textContent = '×';
+	renderTool(close, 'close');
 	contactToggle.id = 'ace-ai-chat-contact-toggle';
 	contactToggle.type = 'button';
-	contactToggle.textContent = 'Leave your details';
+	contactToggle.className = 'ace-ai-chat-tool';
+	contactToggle.setAttribute('aria-label', 'Leave your details for a call back');
+	renderTool(contactToggle, 'details', 'Call back');
 	contactToggle.hidden = true;
 	endChat.id = 'ace-ai-chat-end';
 	endChat.type = 'button';
-	endChat.textContent = 'End chat';
+	endChat.className = 'ace-ai-chat-tool';
+	endChat.setAttribute('aria-label', 'End this chat');
+	renderTool(endChat, 'end', 'End chat');
 	headerActions.id = 'ace-ai-chat-header-actions';
 	voiceToggle.id = 'ace-ai-chat-voice-toggle';
 	voiceToggle.type = 'button';
-	voiceToggle.className = 'ace-ai-chat-voice-toggle';
+	voiceToggle.className = 'ace-ai-chat-tool ace-ai-chat-voice-toggle';
 	voiceToggle.setAttribute('aria-label', 'Toggle spoken replies');
 	voiceToggle.setAttribute('aria-pressed', 'false');
-	voiceToggle.textContent = '🔇';
+	renderTool(voiceToggle, 'voiceOff', 'Voice');
 	headerActions.appendChild(contactToggle);
 	if (voiceRepliesEnabled) {
 		headerActions.appendChild(voiceToggle);
@@ -613,9 +654,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		headerActions.appendChild(dockToggle);
 	}
 	headerActions.appendChild(endChat);
-	headerActions.appendChild(close);
 
-	header.appendChild(titleWrap);
+	headerTop.appendChild(titleWrap);
+	headerTop.appendChild(close);
+	header.appendChild(headerTop);
 	header.appendChild(headerActions);
 
 	messagesNode.id = 'ace-ai-chat-messages';
@@ -660,7 +702,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	micButton.className = 'ace-ai-chat-mic';
 	micButton.setAttribute('aria-label', 'Speak your message');
 	micButton.setAttribute('aria-pressed', 'false');
-	micButton.textContent = '🎤';
+	renderTool(micButton, 'mic');
 
 	if (voiceInputConfigured && !voiceInputEnabled) {
 		// Site has voice input on, but this browser has no Speech Recognition API.
@@ -925,7 +967,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		status.dataset.online = state.availabilityOnline ? 'true' : 'false';
 		status.textContent = state.availabilityOnline
 			? `Team online now${state.availabilityWatcherCount > 1 ? ` (${state.availabilityWatcherCount})` : ''}`
-			: 'No agent watching chats just now';
+			: `Team offline · ${chatConfig.botName || chatConfig.title || 'the assistant'} can help now`;
 		contactToggle.hidden = state.availabilityOnline || state.conversationStatus === 'ended' || state.followUpRequested;
 		contactSubmit.disabled = state.pending || state.availabilityOnline || state.conversationStatus === 'ended';
 		if (state.availabilityOnline || state.conversationStatus === 'ended' || state.followUpRequested) {
@@ -1859,7 +1901,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		if (voiceRepliesEnabled) {
 			voiceToggle.classList.toggle('is-on', state.voiceSpeakerOn);
 			voiceToggle.classList.toggle('is-speaking', state.voiceSpeaking);
-			voiceToggle.textContent = state.voiceSpeakerOn ? '🔊' : '🔇';
+			renderTool(voiceToggle, state.voiceSpeakerOn ? 'voiceOn' : 'voiceOff', 'Voice');
 			voiceToggle.setAttribute('aria-pressed', state.voiceSpeakerOn ? 'true' : 'false');
 		}
 	};
@@ -2639,7 +2681,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		document.body.classList.toggle(`ace-ai-chat-docked--${chatPlacement}`, state.docked);
 		panel.classList.toggle('is-docked', state.docked);
 		dockToggle.setAttribute('aria-pressed', state.docked ? 'true' : 'false');
-		dockToggle.textContent = state.docked ? '⤡' : '⤢';
+		renderTool(dockToggle, state.docked ? 'collapse' : 'expand', state.docked ? 'Collapse' : 'Expand');
 		dockToggle.setAttribute('aria-label', state.docked ? 'Collapse chat to the corner' : 'Expand chat to a side panel');
 	};
 
