@@ -414,6 +414,51 @@ final class TrackingController {
 	 * @param WP_REST_Request $request Request.
 	 * @return WP_REST_Response|WP_Error
 	 */
+	/**
+	 * Temporarily remove query filters from catalogue-visibility plugins (anything whose class name says "hide").
+	 *
+	 * @return array<int, array{0: string, 1: callable, 2: int, 3: int}> Removed hooks, for restore_catalogue_visibility_filters().
+	 */
+	private function suspend_catalogue_visibility_filters(): array {
+		global $wp_filter;
+		$patterns = (array) apply_filters( 'ace_ai_cart_visibility_filter_classes', array( '/hide/i' ) );
+		$removed  = array();
+		foreach ( array( 'posts_clauses', 'posts_search', 'posts_where', 'pre_get_posts', 'woocommerce_product_query', 'get_terms_args' ) as $hook ) {
+			if ( empty( $wp_filter[ $hook ] ) || ! is_object( $wp_filter[ $hook ] ) ) {
+				continue;
+			}
+			foreach ( $wp_filter[ $hook ]->callbacks as $priority => $callbacks ) {
+				foreach ( $callbacks as $callback ) {
+					$function = $callback['function'] ?? null;
+					$object   = is_array( $function ) ? ( $function[0] ?? null ) : null;
+					if ( ! is_object( $object ) ) {
+						continue;
+					}
+					foreach ( $patterns as $pattern ) {
+						if ( is_string( $pattern ) && @preg_match( $pattern, get_class( $object ) ) ) {
+							remove_filter( $hook, $function, $priority );
+							$removed[] = array( $hook, $function, (int) $priority, (int) ( $callback['accepted_args'] ?? 1 ) );
+							break;
+						}
+					}
+				}
+			}
+		}
+		return $removed;
+	}
+
+	/**
+	 * Put back what suspend_catalogue_visibility_filters() removed.
+	 *
+	 * @param array<int, array{0: string, 1: callable, 2: int, 3: int}> $removed Removed hooks.
+	 * @return void
+	 */
+	private function restore_catalogue_visibility_filters( array $removed ): void {
+		foreach ( $removed as $entry ) {
+			add_filter( $entry[0], $entry[1], $entry[2], $entry[3] );
+		}
+	}
+
 	public function ai_cart_add( WP_REST_Request $request ) {
 		$settings = Settings::get();
 		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
@@ -500,6 +545,10 @@ final class TrackingController {
 		}
 
 		WC()->cart->get_cart();
+		// Catalogue-visibility plugins hide component products (bodies, lids, parts) from shoppers, which
+		// also hides them from Composite Products' validation. A configuration chosen in chat must be
+		// checked against the full option list, so those query filters are paused for this request.
+		$suspended = array_filter( array_column( $items, 'components' ) ) ? $this->suspend_catalogue_visibility_filters() : array();
 
 		$added_names = array();
 		$last_name   = '';
@@ -525,12 +574,24 @@ final class TrackingController {
 				}
 			}
 
-			$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
 			$is_composite_add = ! empty( $item['components'] ) && $reference->is_type( 'composite' ) && function_exists( 'WC_CP' ) && is_object( WC_CP()->cart ) && method_exists( WC_CP()->cart, 'add_composite_to_cart' );
-			// A configurable product built in chat: Composite Products validates and adds the whole configuration.
-			$added  = $is_composite_add ? WC_CP()->cart->add_composite_to_cart( $product_id, $quantity, $item['components'] ) : ( $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false );
+			try {
+				if ( $is_composite_add ) {
+					// A configurable product built in chat: Composite Products validates and adds the whole configuration.
+					// The generic validation filter is skipped on purpose: it expects the product-page form fields.
+					$added = WC_CP()->cart->add_composite_to_cart( $product_id, $quantity, $item['components'] );
+				} else {
+					$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
+					$added  = $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false;
+				}
+			} catch ( \Throwable $t ) {
+				$this->restore_catalogue_visibility_filters( $suspended );
+				if ( function_exists( 'wc_clear_notices' ) ) { wc_clear_notices(); }
+				return new WP_Error( 'ace_cart_failed', html_entity_decode( wp_strip_all_tags( $t->getMessage() ) ?: __( 'Sorry, that could not be added to your basket.', 'adaptive-customer-engagement' ), ENT_QUOTES ), array( 'status' => 400 ) );
+			}
 
 			if ( is_wp_error( $added ) ) {
+				$this->restore_catalogue_visibility_filters( $suspended );
 				// Composite Products reports configuration problems as a WP_Error with its notices attached.
 				$cp_notices = (array) ( $added->get_error_data()['notices'] ?? array() );
 				$cp_message = ! empty( $cp_notices ) ? wp_strip_all_tags( (string) ( $cp_notices[0]['notice'] ?? '' ) ) : $added->get_error_message();
@@ -544,6 +605,7 @@ final class TrackingController {
 			}
 		}
 
+		$this->restore_catalogue_visibility_filters( $suspended );
 		if ( empty( $added_names ) ) {
 			$message = '';
 
