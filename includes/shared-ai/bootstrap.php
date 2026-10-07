@@ -1,7 +1,7 @@
 <?php
 /** Shared Ace AI connection service. Bundled identically by independent consumers. */
 defined( 'ABSPATH' ) || exit;
-$GLOBALS['ace_ai_bundles']['1.1.0'][__DIR__] = true;
+$GLOBALS['ace_ai_bundles']['1.2.0'][__DIR__] = true;
 if ( ! function_exists( 'ace_ai_connection_service' ) ) {
 	function ace_ai_connection_service() {
 		return $GLOBALS['ace_ai_connection_service'] ?? null;

@@ -4,7 +4,7 @@ Tags: lead tracking, analytics, attribution, phone tracking, b2b
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.1
+Stable tag: 0.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,10 @@ Yes. The frontend website assistant is now plugin-managed and uses the saved Ope
 Yes. It tracks product and category interest and surfaces repeat-interest reporting across products, categories, sessions, and companies.
 
 == Changelog ==
+
+= 0.1.2 =
+* Sign in with ChatGPT from Ace AI connection settings through a second, isolated Codex instance on the server (device-code login, no helper download or credential file).
+* Route subscription text requests through the Codex bridge, with the account's model catalogue and a per-scope Codex home.
 
 = 0.1.1 =
 * Share one AI connection across Ace plugins, with multisite inheritance, site overrides and an off switch.

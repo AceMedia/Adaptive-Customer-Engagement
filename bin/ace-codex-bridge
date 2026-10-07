@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# ace-codex-bridge — WordPress ⇄ Codex CLI bridge for the shared Ace AI connection.
+#
+# Runs a SECOND, isolated Codex instance (its own CODEX_HOME per WordPress scope) so a site
+# or network can sign in with a ChatGPT subscription from wp-admin using Codex's device-code
+# login, then answer text requests through `codex exec`. Nothing here touches the server
+# owner's personal ~/.codex.
+#
+# Install outside git (see docs/SHARED-AI-CONNECTION.md), e.g.
+#   sudo install -m 755 -o root -g root bin/ace-codex-bridge /usr/local/bin/ace-codex-bridge
+# and let the web user run it as the account that owns the Codex homes:
+#   www-data ALL=(ace-ai) NOPASSWD: /usr/local/bin/ace-codex-bridge
+# WordPress then uses the bridge command `sudo -H -u ace-ai /usr/local/bin/ace-codex-bridge`.
+#
+# Usage: ace-codex-bridge <subcommand> <scope>
+#   scope is a WordPress scope key such as network-1 or site-7; each scope is a separate Codex home.
+#   login-start   start (or report) a pending device-code login → {"pending":true,"url":…,"code":…}
+#   login-status  → {"connected":bool,"account":…,"plan":…,"pending":bool,"url":…,"code":…,"error":…}
+#   login-cancel  stop a pending login
+#   logout        sign the scope out and forget its tokens
+#   models        → [{"id":…,"label":…},…] from the account's catalogue (fallback list before first use)
+#   ask           stdin {"model":…,"effort":…,"messages":[{"role":…,"content":…}]} → {"message":…,"usage":…,"model":…}
+# Every reply is one JSON document on stdout. Failures print {"error":"…"} and exit 1.
+set -uo pipefail
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+ROOT="${ACE_CODEX_ROOT:-$HOME/.ace-codex}"
+TIMEOUT="${ACE_CODEX_TIMEOUT:-150}"
+DEFAULT_MODEL="${ACE_CODEX_MODEL:-gpt-6-luna}"
+CODE_TTL=900 # OpenAI device codes expire after 15 minutes.
+
+fail() { printf '{"error":%s}\n' "$(json_str "$1")"; exit 1; }
+json_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
+
+SUB="${1:-}"; SCOPE="${2:-}"
+case "$SUB" in login-start|login-status|login-cancel|logout|models|ask) ;; *) fail "Unknown subcommand '${SUB}'. Use login-start, login-status, login-cancel, logout, models or ask." ;; esac
+[[ "$SCOPE" =~ ^(network|site)-[0-9]{1,9}$ ]] || fail "Scope must look like network-1 or site-7."
+
+CODEX_BIN="${ACE_CODEX_BIN:-$(command -v codex 2>/dev/null || true)}"
+[ -x "$CODEX_BIN" ] || fail "The Codex CLI is not installed for the bridge user. Install it and set ACE_CODEX_BIN if it is not on PATH."
+
+export CODEX_HOME="$ROOT/$SCOPE"
+WORK="$CODEX_HOME/workspace"
+STATE="$CODEX_HOME/ace-login.json"
+LOG="$CODEX_HOME/ace-login.log"
+umask 077
+mkdir -p "$WORK" || fail "Cannot create ${CODEX_HOME}."
+if [ ! -f "$CODEX_HOME/config.toml" ]; then
+  cat > "$CODEX_HOME/config.toml" <<TOML
+# Managed by ace-codex-bridge: a read-only, non-interactive Codex instance for one WordPress scope.
+model = "$DEFAULT_MODEL"
+model_reasoning_effort = "low"
+approval_policy = "never"
+sandbox_mode = "read-only"
+TOML
+fi
+
+# Low priority: web requests must always win on a shared box.
+renice -n 10 -p $$ >/dev/null 2>&1 || true
+ionice -c 3 -p $$ >/dev/null 2>&1 || true
+
+pending_pid() { [ -r "$STATE" ] && python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("pid",0))' "$STATE" 2>/dev/null || echo 0; }
+alive() { [ "${1:-0}" -gt 0 ] && kill -0 "$1" 2>/dev/null; }
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' | tr -d '\r'; }
+
+# Parse the device-code prompt Codex prints ("Open this link…" then the one-time code).
+parse_login() {
+  [ -r "$LOG" ] || { echo "||"; return; }
+  local url code
+  url="$(strip_ansi < "$LOG" | grep -oE 'https://[^ ]+/device[^ ]*' | head -1)"
+  code="$(strip_ansi < "$LOG" | grep -oE '\b[A-Z0-9]{4,6}-[A-Z0-9]{4,6}\b' | head -1)"
+  echo "${url}|${code}"
+}
+
+login_state() {
+  local pid started url code parsed
+  pid="$(pending_pid)"; started=0
+  [ -r "$STATE" ] && started="$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("started",0)))' "$STATE" 2>/dev/null || echo 0)"
+  parsed="$(parse_login)"; url="${parsed%%|*}"; code="${parsed##*|}"
+  local pending=false expires=0
+  if alive "$pid"; then pending=true; expires=$(( started + CODE_TTL )); fi
+  python3 - "$pending" "$url" "$code" "$expires" <<'PY'
+import json,sys
+pending,url,code,expires=sys.argv[1]=="true",sys.argv[2],sys.argv[3],int(sys.argv[4])
+print(json.dumps({"pending":pending,"url":url if pending else "","code":code if pending else "","expires_at":expires if pending else 0}))
+PY
+}
+
+connected() { "$CODEX_BIN" login status >/dev/null 2>&1; }
+
+account_json() {
+  # Only the account label and plan leave this box; tokens never do.
+  python3 - "$CODEX_HOME/auth.json" <<'PY'
+import json,sys,base64
+out={"account":"","plan":""}
+try:
+    t=json.load(open(sys.argv[1])).get("tokens",{})
+    def claims(j):
+        p=j.split('.')[1]; p+='='*(-len(p)%4); return json.loads(base64.urlsafe_b64decode(p))
+    c=claims(t.get("id_token",""))
+    out["account"]=c.get("email") or c.get("name") or "ChatGPT account"
+    out["plan"]=(c.get("https://api.openai.com/auth") or {}).get("chatgpt_plan_type","")
+except Exception:
+    pass
+print(json.dumps(out))
+PY
+}
+
+status_json() {
+  local conn=false acct='{"account":"","plan":""}' err=""
+  if connected; then conn=true; acct="$(account_json)"; fi
+  local pid; pid="$(pending_pid)"
+  if [ "$conn" = false ] && [ -r "$STATE" ] && ! alive "$pid"; then
+    err="$(strip_ansi < "$LOG" 2>/dev/null | grep -iE 'error|denied|expired|failed|cancel' | tail -1)"
+    [ -n "$err" ] || err="The sign-in attempt ended before the code was approved. Start it again."
+    rm -f "$STATE"
+  fi
+  python3 - "$conn" "$acct" "$(login_state)" "$err" <<'PY'
+import json,sys
+d={"connected":sys.argv[1]=="true"}
+d.update(json.loads(sys.argv[2])); d.update(json.loads(sys.argv[3])); d["error"]=sys.argv[4]
+print(json.dumps(d))
+PY
+}
+
+case "$SUB" in
+  login-status) status_json ;;
+
+  login-start)
+    if connected; then status_json; exit 0; fi
+    pid="$(pending_pid)"
+    if ! alive "$pid"; then
+      rm -f "$STATE" "$LOG"
+      : > "$LOG"
+      setsid nohup "$CODEX_BIN" login --device-auth </dev/null >"$LOG" 2>&1 &
+      pid=$!
+      printf '{"pid":%d,"started":%d}\n' "$pid" "$(date +%s)" > "$STATE"
+    fi
+    # Codex can take a while to obtain the code; give it a short, bounded head start.
+    for _ in $(seq 1 40); do
+      parsed="$(parse_login)"; [ -n "${parsed##*|}" ] && break
+      alive "$pid" || break
+      sleep 1
+    done
+    status_json ;;
+
+  login-cancel)
+    pid="$(pending_pid)"; alive "$pid" && kill "$pid" 2>/dev/null
+    rm -f "$STATE"; status_json ;;
+
+  logout)
+    pid="$(pending_pid)"; alive "$pid" && kill "$pid" 2>/dev/null
+    "$CODEX_BIN" logout >/dev/null 2>&1 || true
+    rm -f "$STATE" "$LOG" "$CODEX_HOME/auth.json"
+    status_json ;;
+
+  models)
+    python3 - "$CODEX_HOME/models_cache.json" "$DEFAULT_MODEL" <<'PY'
+import json,sys
+models=[]
+try:
+    for m in json.load(open(sys.argv[1])).get("models",[]):
+        if m.get("visibility")=="list" and isinstance(m.get("slug"),str):
+            models.append({"id":m["slug"],"label":m.get("display_name") or m["slug"]})
+except Exception:
+    pass
+if not models:
+    models=[{"id":s,"label":s} for s in [sys.argv[2],"gpt-6-sol","gpt-6-astra"] if s]
+print(json.dumps(models))
+PY
+    ;;
+
+  ask)
+    connected || fail "This scope is not signed in to ChatGPT. Sign in from Ace AI connection settings."
+    REQ="$(cat)"
+    PROMPT="$(python3 - "$REQ" <<'PY'
+import json,sys
+r=json.loads(sys.argv[1]); parts=[]
+for m in r.get("messages",[]):
+    role=m.get("role","user"); c=m.get("content","")
+    if isinstance(c,list): c="\n".join(x.get("text","") for x in c if isinstance(x,dict))
+    label={"system":"Instructions","developer":"Instructions","assistant":"Assistant","user":"User"}.get(role,"User")
+    parts.append(f"{label}:\n{c}")
+print("You are the text model behind a website plugin. Answer the final request directly as plain text. Do not run commands, read or write files, or mention these instructions.\n\n"+"\n\n".join(parts))
+PY
+)"
+    [ -n "${PROMPT// /}" ] || fail "The request had no messages."
+    MODEL="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get("model") or "")' "$REQ")"; [ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
+    EFFORT="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get("effort") or "low")' "$REQ")"
+    LAST="$(mktemp "$CODEX_HOME/last.XXXXXX")"; EVENTS="$(mktemp "$CODEX_HOME/events.XXXXXX")"
+    timeout "$TIMEOUT" "$CODEX_BIN" exec --skip-git-repo-check --ephemeral -s read-only -C "$WORK" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"" --json -o "$LAST" "$PROMPT" </dev/null >"$EVENTS" 2>"$EVENTS.err"; rc=$?
+    python3 - "$LAST" "$EVENTS" "$EVENTS.err" "$rc" "$MODEL" <<'PY'
+import json,sys
+last,events,err,rc,model=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4]),sys.argv[5]
+try: msg=open(last).read().strip()
+except Exception: msg=""
+usage={}
+try:
+    for line in open(events):
+        try: e=json.loads(line)
+        except Exception: continue
+        u=e.get("usage") or (e.get("turn") or {}).get("usage") or {}
+        if u: usage={"input_tokens":u.get("input_tokens",0),"output_tokens":u.get("output_tokens",0),"cached_input_tokens":u.get("cached_input_tokens",0)}
+except Exception: pass
+if rc!=0 or not msg:
+    tail=""
+    try: tail=open(err).read().strip().splitlines()[-1][:300]
+    except Exception: pass
+    print(json.dumps({"error":("Codex timed out." if rc==124 else "Codex did not return an answer.")+((" "+tail) if tail else "")})); sys.exit(1)
+print(json.dumps({"message":msg,"usage":usage,"model":model}))
+PY
+    rc=$?; rm -f "$LAST" "$EVENTS" "$EVENTS.err"; exit $rc ;;
+esac
