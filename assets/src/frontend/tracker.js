@@ -2831,13 +2831,16 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	} else if (state.started && state.conversationUuid && state.conversationStatus !== 'ended') {
 		startSync();
 	}
-	// Contextual hello off the launcher: once per page context per tab, never more than once a minute.
+	// Contextual hello off the launcher: each page context (this product, that category, the
+	// basket…) gets its own hello, repeated at most every half hour per tab, with a short gap so
+	// quick clicks between pages do not stack bubbles.
 	if (!state.open && chatConfig.teaser) {
 		const teaserKey = `ace_ai_chat_teaser:${String(chatConfig.greetingKey || 'page')}`;
 		let shouldTease = true;
 		try {
 			const lastShown = Number(window.sessionStorage?.getItem('ace_ai_chat_teaser_last') || 0);
-			shouldTease = !window.sessionStorage?.getItem(teaserKey) && Date.now() - lastShown > 60000;
+			const lastForKey = Number(window.sessionStorage?.getItem(teaserKey) || 0);
+			shouldTease = Date.now() - lastForKey > 30 * 60000 && Date.now() - lastShown > 6000;
 		} catch (error) {
 			shouldTease = true;
 		}
@@ -2848,7 +2851,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				}
 				showTeaser(chatConfig.teaser, { ttl: 9000 });
 				try {
-					window.sessionStorage?.setItem(teaserKey, '1');
+					window.sessionStorage?.setItem(teaserKey, String(Date.now()));
 					window.sessionStorage?.setItem('ace_ai_chat_teaser_last', String(Date.now()));
 				} catch (error) {
 					// Ignore storage failures in the browser.
