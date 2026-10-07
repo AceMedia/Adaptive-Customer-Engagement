@@ -1,0 +1,27 @@
+import { prepare, callback, identity } from '../bin/ace-chatgpt-login.mjs';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import assert from 'node:assert/strict';
+const host='urn:uuid:11111111-1111-4111-8111-111111111111';
+const pending=prepare(host,12345);
+const url=new URL(pending.url);
+assert.equal(url.searchParams.get('client_id'),'dynamic_agent_client');
+assert.equal(url.searchParams.get('redirect_uri'),'http://127.0.0.1:12345/auth/callback');
+assert.equal(url.searchParams.get('code_challenge_method'),'S256');
+assert.notEqual(prepare(host,12345).state,pending.state);
+assert.throws(()=>callback(pending,new URLSearchParams({state:'wrong',code:'test',client_id:'issued'})));
+assert.throws(()=>callback(pending,new URLSearchParams({state:pending.state,error:'access_denied'})));
+assert.throws(()=>callback(pending,new URLSearchParams({state:pending.state,code:'test'})));
+const exchange=callback(pending,new URLSearchParams({state:pending.state,code:'test',client_id:'issued'}));
+assert.equal(exchange.client_id,'issued');assert.equal(exchange.redirect_uri,pending.redirect);
+const returning=prepare(host,12345,{client_id:'issued',subject:'user'});
+assert(!new URL(returning.url).searchParams.has('agent_name_hint'));
+assert.throws(()=>callback(returning,new URLSearchParams({state:returning.state,code:'test',client_id:'other'})));
+const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+const jwk={...publicKey.export({format:'jwk'}),kid:'fixture',alg:'RS256'};
+const claims={iss:'https://auth.openai.com',aud:'issued',sub:'user',nonce:'nonce',exp:2000,iat:900};
+function jwt(c){const value=Buffer.from(JSON.stringify({alg:'RS256',kid:'fixture'})).toString('base64url')+'.'+Buffer.from(JSON.stringify(c)).toString('base64url');return value+'.'+sign('RSA-SHA256',Buffer.from(value),privateKey).toString('base64url');}
+assert.equal(identity(jwt(claims),'issued','nonce',{keys:[jwk]},'user',1000).sub,'user');
+assert.throws(()=>identity(jwt(claims),'issued','wrong',{keys:[jwk]},'user',1000));
+assert.throws(()=>identity(jwt(claims),'issued','nonce',{keys:[jwk]},'other-user',1000));
+assert.throws(()=>identity(jwt({...claims,exp:999}),'issued','nonce',{keys:[jwk]},'user',1000));
+console.log('15 local OAuth helper checks passed; no browser or account used');

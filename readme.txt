@@ -4,7 +4,7 @@ Tags: lead tracking, analytics, attribution, phone tracking, b2b
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,11 @@ Yes. The frontend website assistant is now plugin-managed and uses the saved Ope
 Yes. It tracks product and category interest and surfaces repeat-interest reporting across products, categories, sessions, and companies.
 
 == Changelog ==
+
+= 0.1.1 =
+* Share one AI connection across Ace plugins, with multisite inheritance, site overrides and an off switch.
+* Add the self-hosted ChatGPT sign-in helper, protected import, account model selection and streaming text requests.
+* Keep token refreshes separate from paid API keys and report connection failures without changing billing.
 
 = 0.1.0 =
 

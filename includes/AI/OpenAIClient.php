@@ -20,6 +20,11 @@ final class OpenAIClient implements ChatCompletionClient {
 	 */
 	public function list_models( string $api_key ) {
 		$api_key = sanitize_text_field( $api_key );
+		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		if ( $shared ) {
+			$api_key = $shared->api_key( 'text', $api_key );
+			if ( is_wp_error( $api_key ) ) { return $api_key; }
+		}
 
 		if ( '' === $api_key ) {
 			return new WP_Error( 'ace_openai_api_key_missing', __( 'Enter an OpenAI API key first.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
@@ -95,6 +100,11 @@ final class OpenAIClient implements ChatCompletionClient {
 	 */
 	public function create_chat_completion( array $messages, array $options = array() ) {
 		$api_key = sanitize_text_field( (string) ( $options['api_key'] ?? '' ) );
+		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		if ( $shared ) {
+			$api_key = $shared->api_key( 'text', $api_key );
+			if ( is_wp_error( $api_key ) ) { return $api_key; }
+		}
 		$model   = sanitize_text_field( (string) ( $options['model'] ?? 'gpt-4.1-mini' ) );
 
 		if ( '' === $api_key ) {
@@ -153,6 +163,11 @@ final class OpenAIClient implements ChatCompletionClient {
 	 */
 	private function request( string $url, array $options = array() ) {
 		$api_key = sanitize_text_field( (string) ( $options['api_key'] ?? '' ) );
+		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		if ( $shared ) {
+			$api_key = $shared->api_key( 'text', $api_key );
+			if ( is_wp_error( $api_key ) ) { return $api_key; }
+		}
 		$method  = strtoupper( sanitize_text_field( (string) ( $options['method'] ?? 'POST' ) ) );
 		$body    = $options['body'] ?? null;
 		$args    = array(

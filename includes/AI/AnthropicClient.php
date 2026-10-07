@@ -231,6 +231,10 @@ final class AnthropicClient implements ChatCompletionClient {
 	 * @return array<string, mixed>|WP_Error
 	 */
 	private function request( string $url, array $options = array() ) {
+		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		if ( $shared && 'unmanaged' !== $shared->status()['status'] ) {
+			return new WP_Error( 'ace_ai_provider_not_selected', 'The shared Ace AI connection controls this site. No alternative provider will be billed.' );
+		}
 		$api_key = sanitize_text_field( (string) ( $options['api_key'] ?? '' ) );
 		$method  = strtoupper( sanitize_text_field( (string) ( $options['method'] ?? 'POST' ) ) );
 		$body    = $options['body'] ?? null;

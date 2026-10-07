@@ -3,7 +3,7 @@
  * Plugin Name:       Adaptive Customer Engagement
  * Plugin URI:        https://acemedia.ninja/
  * Description:       First-party lead tracking, phone routing, and admin insight tooling for WordPress.
- * Version:           0.1.0
+ * Version:           0.1.1
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Shane Rounce
@@ -14,6 +14,8 @@
  */
 
 defined( 'ABSPATH' ) || exit;
+
+require_once __DIR__ . '/includes/shared-ai/bootstrap.php';
 
 if ( ! function_exists( 'ace_adaptive_customer_engagement_make_local_url' ) ) {
 	/**
@@ -45,7 +47,7 @@ if ( ! function_exists( 'ace_adaptive_customer_engagement_make_local_url' ) ) {
 }
 
 define( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_FILE', __FILE__ );
-define( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION', '0.1.0' );
+define( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_VERSION', '0.1.1' );
 define( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ACE_ADAPTIVE_CUSTOMER_ENGAGEMENT_PLUGIN_URL', ace_adaptive_customer_engagement_make_local_url( plugin_dir_url( __FILE__ ) ) );
 

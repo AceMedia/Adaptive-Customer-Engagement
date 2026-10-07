@@ -82,6 +82,12 @@ final class TextToSpeechService {
 			$api_key = sanitize_text_field( (string) ( $ai_agent['openai_api_key'] ?? '' ) );
 		}
 
+
+		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		if ( $shared ) {
+			$api_key = $shared->api_key( 'audio', $api_key );
+			if ( is_wp_error( $api_key ) ) { return $api_key; }
+		}
 		if ( '' === $api_key ) {
 			return new WP_Error( 'ace_tts_key_missing', __( 'Add an OpenAI API key for voice playback.', 'adaptive-customer-engagement' ), array( 'status' => 400 ) );
 		}
