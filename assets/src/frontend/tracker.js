@@ -1368,7 +1368,11 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			return '';
 		}
 
-		const sentences = raw.match(/[^.!?]+[.!?]?/g) || [raw];
+		// Split on sentence punctuation followed by a space, so "£156.00" stays whole.
+		const sentences = raw.split(/(?<=[.!?])\s+/).filter(Boolean);
+		if (!sentences.length) {
+			sentences.push(raw);
+		}
 		const lead = sentences
 			.map((sentence) => sentence.trim())
 			.filter(Boolean)
@@ -2761,6 +2765,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					visitor_uuid: visitorUuid || '',
 					page_url: window.location.href,
 					page_title: document.title || '',
+					page_product_id: Number(pageContext?.post_id || 0),
 				}),
 			}, 'The site assistant could not reply just now.');
 

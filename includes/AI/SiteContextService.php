@@ -2278,6 +2278,17 @@ final class SiteContextService {
 	}
 
 	/**
+	 * A single product or page as a formatted source document (the shape the chat uses for facts and cards).
+	 *
+	 * @param int $post_id Post ID.
+	 * @return array<string, mixed>|null
+	 */
+	public function get_source_document( int $post_id ): ?array {
+		$document = $post_id > 0 ? $this->get_document( $post_id ) : null;
+		return is_array( $document ) && ! empty( $document ) ? $this->format_source_document( $document ) : null;
+	}
+
+	/**
 	 * Compact component list for the front end and the model: titles, whether required, and each option's name, price and choices.
 	 *
 	 * @param array<int, array<string, mixed>> $components Components from get_composite_components().

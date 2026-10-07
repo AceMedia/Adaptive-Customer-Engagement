@@ -264,6 +264,14 @@ final class FrontendChatService {
 				$context[] = "Live site context summary:\n" . sanitize_textarea_field( (string) $answer['answer'] );
 			}
 
+			// The product the visitor is looking at is always in context, whatever words they use for it.
+			$viewing = $this->current_page_document( $payload );
+			if ( is_array( $viewing ) ) {
+				$sources = array_values( array_filter( $sources, static fn( $s ) => (int) ( $s['id'] ?? 0 ) !== (int) $viewing['id'] ) );
+				array_unshift( $sources, $viewing );
+				$context[] = "The visitor is currently on this product's page (\"this one\", \"this bin\" and \"it\" mean this product):\n" . $this->format_sources( array( $viewing ) );
+			}
+
 			if ( ! empty( $sources ) ) {
 				$context[] = "Relevant source documents:\n" . $this->format_sources( $sources );
 			}
@@ -1525,6 +1533,23 @@ final class FrontendChatService {
 	 * @param string               $message Current visitor message.
 	 * @return array<string, mixed>
 	 */
+	/**
+	 * The product page the visitor is on, as a source document, if the request came from one.
+	 *
+	 * @param array<string, mixed> $payload Request payload (page_product_id or page_url).
+	 * @return array<string, mixed>|null
+	 */
+	private function current_page_document( array $payload ): ?array {
+		$post_id = absint( $payload['page_product_id'] ?? 0 );
+		if ( ! $post_id && ! empty( $payload['page_url'] ) && function_exists( 'url_to_postid' ) ) {
+			$post_id = (int) url_to_postid( esc_url_raw( (string) $payload['page_url'] ) );
+		}
+		if ( ! $post_id || 'product' !== get_post_type( $post_id ) || 'publish' !== get_post_status( $post_id ) ) {
+			return null;
+		}
+		return $this->site_context->get_source_document( $post_id );
+	}
+
 	private function build_site_context_request( array $thread, array $payload, string $message ): array {
 		$history            = $this->sanitize_history( $payload['history'] ?? array(), 8 );
 		$recent_user_inputs = array();
