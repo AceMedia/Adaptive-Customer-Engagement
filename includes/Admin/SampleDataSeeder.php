@@ -747,26 +747,26 @@ final class SampleDataSeeder {
 			'waste' => array(
 				'products' => array(
 					array( 'id' => 101, 'slug' => 'smart-street-bin', 'name' => 'Smart Street Bin', 'category_id' => 201, 'category_slug' => 'street-bins', 'category_name' => 'Street Bins', 'brand' => 'Greyfield' ),
-					array( 'id' => 102, 'slug' => 'recycling-container', 'name' => 'Recycling Container', 'category_id' => 202, 'category_slug' => 'recycling', 'category_name' => 'Recycling', 'brand' => 'Future Street' ),
-					array( 'id' => 103, 'slug' => 'compaction-unit', 'name' => 'Compaction Unit', 'category_id' => 203, 'category_slug' => 'compact-bins', 'category_name' => 'Compact Bins', 'brand' => 'Future Street' ),
+					array( 'id' => 102, 'slug' => 'recycling-container', 'name' => 'Recycling Container', 'category_id' => 202, 'category_slug' => 'recycling', 'category_name' => 'Recycling', 'brand' => 'Lumen Street' ),
+					array( 'id' => 103, 'slug' => 'compaction-unit', 'name' => 'Compaction Unit', 'category_id' => 203, 'category_slug' => 'compact-bins', 'category_name' => 'Compact Bins', 'brand' => 'Lumen Street' ),
 				),
 			),
 			'home'  => array(
 				'products' => array(
-					array( 'id' => 111, 'slug' => 'linen-storage-bench', 'name' => 'Linen Storage Bench', 'category_id' => 211, 'category_slug' => 'storage', 'category_name' => 'Storage', 'brand' => 'Curran Home Co.' ),
-					array( 'id' => 112, 'slug' => 'oak-shelving-set', 'name' => 'Oak Shelving Set', 'category_id' => 212, 'category_slug' => 'home-organisation', 'category_name' => 'Home Organisation', 'brand' => 'Curran Home Co.' ),
+					array( 'id' => 111, 'slug' => 'linen-storage-bench', 'name' => 'Linen Storage Bench', 'category_id' => 211, 'category_slug' => 'storage', 'category_name' => 'Storage', 'brand' => 'Ashworth Home' ),
+					array( 'id' => 112, 'slug' => 'oak-shelving-set', 'name' => 'Oak Shelving Set', 'category_id' => 212, 'category_slug' => 'home-organisation', 'category_name' => 'Home Organisation', 'brand' => 'Ashworth Home' ),
 				),
 			),
 			'wellness' => array(
 				'products' => array(
-					array( 'id' => 121, 'slug' => 'ginger-energy-shot', 'name' => 'Ginger Energy Shot', 'category_id' => 221, 'category_slug' => 'wellness-shots', 'category_name' => 'Wellness Shots', 'brand' => 'Herbist' ),
-					array( 'id' => 122, 'slug' => 'turmeric-recovery-shot', 'name' => 'Turmeric Recovery Shot', 'category_id' => 221, 'category_slug' => 'wellness-shots', 'category_name' => 'Wellness Shots', 'brand' => 'Herbist' ),
+					array( 'id' => 121, 'slug' => 'ginger-energy-shot', 'name' => 'Ginger Energy Shot', 'category_id' => 221, 'category_slug' => 'wellness-shots', 'category_name' => 'Wellness Shots', 'brand' => 'Verdant' ),
+					array( 'id' => 122, 'slug' => 'turmeric-recovery-shot', 'name' => 'Turmeric Recovery Shot', 'category_id' => 221, 'category_slug' => 'wellness-shots', 'category_name' => 'Wellness Shots', 'brand' => 'Verdant' ),
 				),
 			),
 			'studio' => array(
 				'products' => array(
-					array( 'id' => 131, 'slug' => 'tattoo-workstation-pro', 'name' => 'Tattoo Workstation Pro', 'category_id' => 231, 'category_slug' => 'studio-carts', 'category_name' => 'Studio Carts', 'brand' => 'Uni Carts' ),
-					array( 'id' => 132, 'slug' => 'compact-artist-cart', 'name' => 'Compact Artist Cart', 'category_id' => 231, 'category_slug' => 'studio-carts', 'category_name' => 'Studio Carts', 'brand' => 'Uni Carts' ),
+					array( 'id' => 131, 'slug' => 'tattoo-workstation-pro', 'name' => 'Tattoo Workstation Pro', 'category_id' => 231, 'category_slug' => 'studio-carts', 'category_name' => 'Studio Carts', 'brand' => 'Cartwright' ),
+					array( 'id' => 132, 'slug' => 'compact-artist-cart', 'name' => 'Compact Artist Cart', 'category_id' => 231, 'category_slug' => 'studio-carts', 'category_name' => 'Studio Carts', 'brand' => 'Cartwright' ),
 				),
 			),
 		);
