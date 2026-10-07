@@ -34,7 +34,7 @@ Scopes are `network-<id>` for the network connection and `site-<blog_id>` for a 
 
 This is the open-source self-hosted route documented by OpenAI for servers without the Codex bridge. It is not a direct WordPress OAuth callback, and no account is connected automatically.
 
-1. Open the connection settings at the intended scope. For IEG, use **Network Admin**, then test the first AI feature on the dev subsite.
+1. Open the connection settings at the intended scope. On a multisite network, use **Network Admin**, then test the first AI feature on a development subsite.
 2. Download the sign-in helper to the computer running your browser. It requires Node.js 20 or newer. Expand **Set up on a self-hosted server** for the command containing this installation's host ID.
 3. Run that command in a private folder, open the one-time link it prints, and approve the requested ChatGPT plan permission. The helper listens on `127.0.0.1` on that computer; running it on a different server will not receive the browser callback.
 4. Import the resulting protected credential file in settings and confirm the site/network scope. Never paste credentials into chat or tickets. Remove the transfer file after import. The `.registration` companion contains the issued client/account mapping and can be kept privately for later sign-in; pass it as the optional third helper argument to reuse that registration.

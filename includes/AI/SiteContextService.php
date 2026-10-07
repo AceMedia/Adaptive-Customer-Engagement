@@ -651,10 +651,18 @@ final class SiteContextService {
 		}
 
 		if ( preg_match( '/\b(largest|biggest|smallest|capacity|size|litre|litres)\b/i', $query ) ) {
-			$expanded .= ' bin bins container containers litre litres capacity taylor metal bins';
+			$expanded .= ' bin bins container containers litre litres capacity';
 		}
 
-		return $expanded;
+		/**
+		 * Filter the expanded search query before it hits site search.
+		 *
+		 * Sites can append their own brand or product vocabulary here.
+		 *
+		 * @param string $expanded Expanded query.
+		 * @param string $query    Original user question.
+		 */
+		return (string) apply_filters( 'ace_ai_search_query_expansion', $expanded, $query );
 	}
 
 	/**
@@ -2058,12 +2066,18 @@ final class SiteContextService {
 			'current',
 			'basket',
 			'cart',
-			'egbert',
 			'sheffield',
 			'leeds',
 			'uk',
 			'gb',
 		);
+
+		/**
+		 * Filter the words ignored when pulling a product reference out of a shipping question.
+		 *
+		 * @param array<int, string> $stopwords Lower-case words to ignore.
+		 */
+		$ignored = (array) apply_filters( 'ace_ai_shipping_reference_stopwords', $ignored );
 
 		return array_values(
 			array_filter(
@@ -2810,7 +2824,7 @@ final class SiteContextService {
 	 * @return array<string, array<int, string>>
 	 */
 	private function get_shipping_city_postcode_aliases(): array {
-		return array(
+		$aliases = array(
 			'sheffield'   => array( 'S1*', 'S2*', 'S3*', 'S4*', 'S5*', 'S6*', 'S7*', 'S8*', 'S9*' ),
 			'leeds'       => array( 'LS*' ),
 			'wakefield'   => array( 'WF*' ),
@@ -2835,6 +2849,13 @@ final class SiteContextService {
 			'liverpool'   => array( 'L1*', 'L2*', 'L3*', 'L4*', 'L5*', 'L6*', 'L7*', 'L8*', 'L9*' ),
 			'manchester'  => array( 'M*' ),
 		);
+
+		/**
+		 * Filter the city name to outward postcode pattern map used for regional shipping checks.
+		 *
+		 * @param array<string, array<int, string>> $aliases Lower-case city => postcode wildcards.
+		 */
+		return (array) apply_filters( 'ace_ai_shipping_city_postcode_aliases', $aliases );
 	}
 
 	/**
@@ -3903,6 +3924,26 @@ final class SiteContextService {
 	 * @return string
 	 */
 	private function classify_product_kind( string $title, array $categories ): string {
+		$kind = $this->detect_product_kind( $title, $categories );
+
+		/**
+		 * Filter the detected product kind (accessory, container, product).
+		 *
+		 * @param string             $kind       Detected kind.
+		 * @param string             $title      Product title.
+		 * @param array<int, string> $categories Product categories.
+		 */
+		return (string) apply_filters( 'ace_ai_product_kind', $kind, $title, $categories );
+	}
+
+	/**
+	 * Detect the product kind from keywords in the title and categories.
+	 *
+	 * @param string             $title      Product title.
+	 * @param array<int, string> $categories Product categories.
+	 * @return string
+	 */
+	private function detect_product_kind( string $title, array $categories ): string {
 		$haystack = $this->normalise_text( $title . ' ' . implode( ' ', $categories ) );
 
 		if ( preg_match( '/\b(range)\b/', $haystack ) ) {
@@ -3913,7 +3954,7 @@ final class SiteContextService {
 			return 'accessory';
 		}
 
-		if ( false !== strpos( $haystack, 'taylor metal bins' ) || preg_match( '/\b(bin|container|continental)\b/', $haystack ) ) {
+		if ( preg_match( '/\b(bin|container|continental)\b/', $haystack ) ) {
 			return 'container';
 		}
 

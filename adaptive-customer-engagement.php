@@ -9,6 +9,8 @@
  * Author:            Shane Rounce
  * Author URI:        https://acemedia.ninja/
  * Text Domain:       adaptive-customer-engagement
+ * License:           GPL-2.0-or-later
+ * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  *
  * @package ACE\AdaptiveCustomerEngagement
  */
