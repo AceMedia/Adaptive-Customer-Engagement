@@ -8,6 +8,7 @@
 namespace ACE\AdaptiveCustomerEngagement;
 
 use ACE\AdaptiveCustomerEngagement\AI\ChatClientFactory;
+use ACE\AdaptiveCustomerEngagement\AI\AgentSurface;
 use ACE\AdaptiveCustomerEngagement\AI\FrontendChatService;
 use ACE\AdaptiveCustomerEngagement\AI\LeadProfileService;
 use ACE\AdaptiveCustomerEngagement\AI\SiteContextService;
@@ -101,6 +102,7 @@ final class Plugin {
 		$connect_client     = new AmazonConnectClient();
 		$site_context       = new SiteContextService();
 		$lead_profiles      = new LeadProfileService( $session_repository, $company_repository, $chat_conversations, $ip_company_memory );
+		$frontend_chat      = new FrontendChatService( $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository );
 		$tracking           = new TrackingController(
 			new SessionManager( $session_repository, $privacy ),
 			new EventLogger( $event_repository ),
@@ -110,8 +112,9 @@ final class Plugin {
 			new BotDetector(),
 			$enrichment_service,
 			$site_context,
-			new FrontendChatService( $site_context, $session_repository, $chat_conversations, $chat_messages, $lead_profiles, $number_repository )
+			$frontend_chat
 		);
+		( new AgentSurface( $site_context, $frontend_chat ) )->register();
 		$admin              = new AdminController( $session_repository, $event_repository, $number_repository, $company_repository, $call_repository, $chat_conversations, $chat_messages, $privacy, $enrichment_service, $sample_data, $connect_client, $site_context );
 		
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );

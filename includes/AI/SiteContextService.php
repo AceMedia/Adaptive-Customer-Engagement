@@ -1204,6 +1204,15 @@ final class SiteContextService {
 	 * @return string
 	 */
 	/**
+	 * The whole-catalogue digest as plain lines (for agents and exports).
+	 *
+	 * @return array<int, string>
+	 */
+	public function get_catalogue_digest_lines(): array {
+		return (array) ( $this->build_catalogue_digest()['lines'] ?? array() );
+	}
+
+	/**
 	 * Whole-catalogue digest for range questions ("what sizes do you sell?"), so the assistant
 	 * can list every capacity rather than the handful of products a keyword search surfaces.
 	 *
