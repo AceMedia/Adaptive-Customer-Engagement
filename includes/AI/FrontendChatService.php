@@ -266,6 +266,12 @@ final class FrontendChatService {
 			if ( ! empty( $sources ) ) {
 				$context[] = "Relevant source documents:\n" . $this->format_sources( $sources );
 			}
+
+			$range_context = $this->site_context->get_catalogue_range_context( $message );
+
+			if ( '' !== $range_context ) {
+				$context[] = $range_context;
+			}
 		}
 
 		$messages = array(

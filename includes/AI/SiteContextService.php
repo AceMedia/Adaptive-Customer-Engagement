@@ -1181,6 +1181,165 @@ final class SiteContextService {
 	 *
 	 * @return string
 	 */
+	/**
+	 * Whole-catalogue digest for range questions ("what sizes do you sell?"), so the assistant
+	 * can list every capacity rather than the handful of products a keyword search surfaces.
+	 *
+	 * @param string $question Visitor question.
+	 * @return string Empty when the question is not about the range.
+	 */
+	public function get_catalogue_range_context( string $question ): string {
+		if ( ! $this->is_catalogue_range_question( $question ) ) {
+			return '';
+		}
+
+		$digest = $this->build_catalogue_digest();
+
+		if ( empty( $digest['lines'] ) ) {
+			return '';
+		}
+
+		$lines = $digest['lines'];
+		$text  = "Full catalogue by capacity (every published product, use this to list sizes and the range):\n" . implode( "\n", $lines );
+
+		if ( strlen( $text ) > 6000 ) {
+			$kept = array();
+			$size = 0;
+			foreach ( $lines as $line ) {
+				$size += strlen( $line ) + 1;
+				if ( $size > 5800 ) {
+					break;
+				}
+				$kept[] = $line;
+			}
+			$text = "Full catalogue by capacity (every published product, use this to list sizes and the range):\n" . implode( "\n", $kept ) . sprintf( "\n(+%d more products not listed)", count( $lines ) - count( $kept ) );
+		}
+
+		return $text;
+	}
+
+	/**
+	 * Is the visitor asking about the range or sizes rather than one item?
+	 *
+	 * @param string $question Visitor question.
+	 * @return bool
+	 */
+	private function is_catalogue_range_question( string $question ): bool {
+		$question = $this->normalise_text( $question );
+
+		if ( '' === $question ) {
+			return false;
+		}
+
+		return (bool) preg_match(
+			'/\b(sizes?|capacit(?:y|ies)|range|all (?:of )?(?:your|the) (?:bins?|products?|containers?)|which (?:bins?|sizes?|containers?)|what (?:bins?|sizes?|products?|containers?)|do you (?:sell|stock|offer|have|do|make)|types? of|options|litres?|smallest|largest|biggest|bigger|smaller|choose|choice|compare|comparison|best (?:bin|size|for)|suitable|recommend)\b/',
+			$question
+		);
+	}
+
+	/**
+	 * Build (and briefly cache) one line per published product with its capacity, price and link.
+	 * The cache key follows the catalogue's last modification, so product edits refresh it.
+	 *
+	 * @return array{lines: array<int, string>}
+	 */
+	private function build_catalogue_digest(): array {
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return array( 'lines' => array() );
+		}
+
+		$stamp = (string) get_lastpostmodified( 'gmt', 'product' ) . '|' . (string) ( wp_count_posts( 'product' )->publish ?? 0 );
+		$key   = 'ace_catalogue_digest_' . md5( $stamp );
+		$cache = get_transient( $key );
+
+		if ( is_array( $cache ) && isset( $cache['lines'] ) ) {
+			return $cache;
+		}
+
+		$products = wc_get_products(
+			array(
+				'status'  => 'publish',
+				'limit'   => 400,
+				'orderby' => 'title',
+				'order'   => 'ASC',
+				'return'  => 'objects',
+			)
+		);
+		$entries  = array();
+
+		foreach ( is_array( $products ) ? $products : array() as $product ) {
+			if ( ! is_object( $product ) || ! method_exists( $product, 'get_name' ) ) {
+				continue;
+			}
+			if ( method_exists( $product, 'is_visible' ) && ! $product->is_visible() ) {
+				continue;
+			}
+
+			$post_id    = (int) $product->get_id();
+			$title      = sanitize_text_field( (string) $product->get_name() );
+			$categories = wp_get_post_terms( $post_id, 'product_cat', array( 'fields' => 'names' ) );
+			$categories = is_array( $categories ) ? array_map( 'sanitize_text_field', $categories ) : array();
+			$kind       = $this->classify_product_kind( $title, $categories );
+			$capacity   = '';
+
+			foreach ( array( 'pa_capacity', 'pa_size', 'capacity', 'size' ) as $attribute ) {
+				$value = method_exists( $product, 'get_attribute' ) ? (string) $product->get_attribute( $attribute ) : '';
+				if ( '' !== trim( $value ) ) {
+					$capacity = sanitize_text_field( $value );
+					break;
+				}
+			}
+
+			if ( '' === $capacity && preg_match( '/\b(\d{2,4})\s?(?:l|ltr|litres?|liters?)\b/i', $title, $m ) ) {
+				$capacity = $m[1] . 'L';
+			}
+
+			$sort = $this->extract_measurement_value( array( $capacity, $title ), '/(\d{2,4}(?:\.\d+)?)\s?(?:l|ltr|litres?|liters?)\b/i' );
+			$price = method_exists( $product, 'get_price_html' ) ? $this->clean_price_text( (string) $product->get_price_html() ) : '';
+			$stock = method_exists( $product, 'is_in_stock' ) ? ( $product->is_in_stock() ? 'in stock' : 'out of stock' ) : '';
+			$bits  = array_filter( array( $title, '' !== $capacity ? 'capacity ' . $capacity : '', $price, $stock, (string) get_permalink( $post_id ) ) );
+
+			$entries[] = array(
+				'kind' => $kind,
+				'sort' => $sort > 0 ? $sort : PHP_FLOAT_MAX,
+				'line' => '- ' . implode( ' | ', $bits ),
+			);
+		}
+
+		usort(
+			$entries,
+			static function ( array $a, array $b ): int {
+				$order = array( 'container' => 0, 'collection' => 1, 'product' => 2, 'accessory' => 3 );
+				$ka    = $order[ $a['kind'] ] ?? 9;
+				$kb    = $order[ $b['kind'] ] ?? 9;
+				if ( $ka !== $kb ) {
+					return $ka <=> $kb;
+				}
+				if ( $a['sort'] !== $b['sort'] ) {
+					return $a['sort'] <=> $b['sort'];
+				}
+				return strcmp( $a['line'], $b['line'] );
+			}
+		);
+
+		$lines = array();
+		$group = '';
+
+		foreach ( $entries as $entry ) {
+			$label = array( 'container' => 'Bins and containers', 'collection' => 'Ranges', 'product' => 'Other products', 'accessory' => 'Lids, parts and accessories' )[ $entry['kind'] ] ?? 'Other products';
+			if ( $label !== $group ) {
+				$group   = $label;
+				$lines[] = $label . ':';
+			}
+			$lines[] = $entry['line'];
+		}
+
+		$digest = array( 'lines' => $lines );
+		set_transient( $key, $digest, 15 * MINUTE_IN_SECONDS );
+
+		return $digest;
+	}
+
 	public function get_public_offer_context(): string {
 		if ( ! function_exists( 'wc_get_coupon_id_by_code' ) || ! class_exists( '\WC_Coupon' ) ) {
 			return '';
