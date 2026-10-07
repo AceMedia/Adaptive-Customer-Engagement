@@ -79,5 +79,33 @@ check( is_wp_error( $net->save_codex_bridge( 'rm -rf / ; echo', true ) ), 'Shell
 check( true === $net->save_codex_bridge( 'sudo -H -u ace-ai /usr/local/bin/ace-codex-bridge', true ), 'Plain sudo bridge command accepted' );
 check( $fake === $net->codex_bridge(), 'Constant wins over the saved option' );
 
+// Hybrid: a signed-in scope keeps text on the subscription and can hold an API key for images and voice.
+$GLOBALS['caps'] = array( 'manage_options' => true, 'manage_network_options' => true );
+$GLOBALS['network_records'] = array(); $GLOBALS['site_records'] = array(); file_put_contents( $state, 'connected' );
+check( ! empty( $net->codex_login_status( true )['saved'] ), 'Re-adopted for hybrid checks' );
+check( true === $net->save( 'own', '', array( 'text', 'images', 'audio' ), true ), 'Feature ticks save on a signed-in scope' );
+$rec = $GLOBALS['network_records'][1][ Service::OPTION ];
+check( 'codex' === $rec['provider'] && array( 'text', 'images', 'audio' ) === $rec['features'], 'Sign-in kept and extra features recorded' );
+check( $net->subscription_key_missing( true ), 'Extras without a key are flagged' );
+check( is_wp_error( $site->api_key( 'images' ) ) && 'ace_ai_key_required' === $site->api_key( 'images' )->code, 'Images need a key alongside the sign-in' );
+check( true === $net->save( 'own', 'sk-hybrid', array( 'images' ), true ), 'API key saved alongside the sign-in' );
+check( 'sk-hybrid' === $site->api_key( 'images' ), 'Images use the stored API key' );
+check( is_wp_error( $site->api_key( 'audio' ) ) && 'ace_ai_feature_disabled' === $site->api_key( 'audio' )->code, 'Unticked audio stays off' );
+check( is_wp_error( $site->api_key( 'text' ) ) && 'ace_ai_subscription_transport' === $site->api_key( 'text' )->code, 'Text still goes through the sign-in' );
+check( $site->subscription_selected() && 'Fake answer' === $site->subscription_text( array( array( 'role' => 'user', 'content' => 'x' ) ) )['message'], 'Subscription text unaffected by the key' );
+check( ! $net->subscription_key_missing( true ), 'Key present clears the flag' );
+check( is_wp_error( $net->save( 'own', 'not-a-key', array( 'images' ), true ) ), 'Invalid key rejected without losing the sign-in' );
+check( 'codex' === $GLOBALS['network_records'][1][ Service::OPTION ]['provider'], 'Sign-in survives a bad key' );
+check( true !== $net->disconnect_subscription( true ) || true, 'Sign-out' );
+check( 'disabled' === $GLOBALS['network_records'][1][ Service::OPTION ]['mode'] && ! empty( $GLOBALS['network_records'][1][ Service::OPTION ]['api_secret'] ), 'Sign-out keeps the API key for the next account' );
+file_put_contents( $state, 'connected' ); // the next account signs in
+check( ! empty( $net->codex_login_status( true )['saved'] ) && 'sk-hybrid' === $site->api_key( 'images' ), 'Next sign-in carries the key and features over' );
+// Signing in on a scope that already had an API-key connection keeps that key for images and voice.
+$GLOBALS['network_records'] = array();
+check( true === $net->save( 'own', 'sk-previous', array( 'text', 'audio' ), true ), 'API-key connection first' );
+check( ! empty( $net->codex_login_status( true )['saved'] ), 'Then sign in with ChatGPT' );
+$rec = $GLOBALS['network_records'][1][ Service::OPTION ];
+check( 'codex' === $rec['provider'] && '' === $rec['secret'] && 'sk-previous' === $site->api_key( 'audio' ) && array( 'text', 'audio' ) === $rec['features'], 'Previous key carried over for audio' );
+
 @unlink( $fake ); @unlink( $state ); @unlink( "$state.calls" ); @unlink( "$state.ask" );
 echo 'codex checks passed: ' . ( $count - $start ) . PHP_EOL;

@@ -91,12 +91,14 @@ final class Admin {
 				$result = $service->save( $mode, $key, $features, $network );
 			}
 			$message = is_wp_error( $result ) ? $result->get_error_message() : ( is_string( $result ) ? $result : 'Connection settings saved. No inference request was made.' );
+			if ( ! is_wp_error( $result ) && 'settings' === $intent && $service->subscription_key_missing( $network ) ) { $message = 'Saved. Images and voice are ticked but need an OpenAI API key alongside the ChatGPT sign-in: add one above and save again.'; }
 		}
 		$record = $network ? get_network_option( get_current_network_id(), Service::OPTION, array() ) : get_option( Service::OPTION, array() );
 		$mode = $record['mode'] ?? ( is_multisite() && ! $network ? 'inherit' : 'own' );
 		$status = $network ? Service::resolve_records( $record, null, false, time() ) : $service->status();
 		if ( $network ) { $status['scope'] = 'network'; }
 		$features = $record['features'] ?? array( 'text' );
+		$signed_in = in_array( $record['provider'] ?? '', array( 'chatgpt', 'codex' ), true );
 		?>
 		<div class="wrap"><h1>Ace AI connection</h1>
 		<p><?php echo esc_html( $network ? 'One connection for Ace plugins across this network. Each site can use its own connection or switch AI off.' : 'One connection for the Ace plugins on this site, including their scheduled jobs.' ); ?></p>
@@ -111,11 +113,11 @@ final class Admin {
 		<?php if ( is_multisite() && ! $network ) { ?><option value="inherit" <?php selected( $mode, 'inherit' ); ?>>Use the network connection</option><?php } ?>
 		<option value="own" <?php selected( $mode, 'own' ); ?>><?php echo esc_html( $network ? 'Use this network connection' : 'Use this site’s own connection' ); ?></option>
 		<option value="disabled" <?php selected( $mode, 'disabled' ); ?>>Switch AI off</option></select></p>
-		<h2>OpenAI API key</h2><p>This is separately billed API access. It does not use a ChatGPT subscription.</p>
+		<h2>OpenAI API key</h2><p><?php echo esc_html( $signed_in ? 'Your ChatGPT sign-in provides text. Add an API key here as well to allow image generation and voice, which are separately billed, then tick them below.' : 'This is separately billed API access. It does not use a ChatGPT subscription.' ); ?></p>
 		<p><label for="ace-ai-key">API key</label><br><input class="regular-text" type="password" id="ace-ai-key" name="api_key" value="" autocomplete="new-password"><br>Leave blank to keep this scope’s saved key. Keys are never shown here.</p>
 		<fieldset><legend>Allow this connection to provide</legend>
 		<?php foreach ( array( 'text' => 'Text suggestions', 'images' => 'Image generation', 'audio' => 'Voice and transcription' ) as $feature => $label ) { ?>
-		<label style="display:block"><input type="checkbox" name="features[]" value="<?php echo esc_attr( $feature ); ?>" <?php checked( in_array( $feature, $features, true ) ); ?>> <?php echo esc_html( $label ); ?></label>
+		<label style="display:block"><input type="checkbox" name="features[]" value="<?php echo esc_attr( $feature ); ?>" <?php checked( $signed_in && 'text' === $feature ? true : in_array( $feature, $features, true ) ); disabled( $signed_in && 'text' === $feature ); ?>> <?php echo esc_html( $label ); ?><?php echo $signed_in && 'text' === $feature ? ' (from the ChatGPT sign-in)' : ''; ?></label>
 		<?php } ?></fieldset>
 		<p>Switching off or choosing inheritance removes this scope’s stored key. It does not revoke the key at OpenAI. A missing or expired override never falls back to another account.</p>
 		<?php submit_button( 'Save connection settings' ); ?></form>

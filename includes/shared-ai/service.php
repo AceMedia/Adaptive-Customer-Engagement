@@ -77,11 +77,19 @@ final class Service {
 		if ( 'configured' !== $resolved['status'] ) {
 			return new \WP_Error( 'ace_ai_' . $resolved['status'], 'The shared Ace AI connection is ' . $resolved['status'] . '. Check Ace AI connection settings.' );
 		}
-		if ( in_array( $resolved['record']['provider'] ?? '', array( 'chatgpt', 'codex' ), true ) ) {
+		$subscription = in_array( $resolved['record']['provider'] ?? '', array( 'chatgpt', 'codex' ), true );
+		if ( $subscription && 'text' === $feature ) {
 			return new \WP_Error( 'ace_ai_subscription_transport', 'Use the ChatGPT connection for this request.' );
 		}
 		if ( ! in_array( $feature, $resolved['record']['features'] ?? array(), true ) ) {
 			return new \WP_Error( 'ace_ai_feature_disabled', 'This AI feature is not enabled for the selected connection.' );
+		}
+		if ( $subscription ) {
+			// Text comes from the ChatGPT sign-in; images and voice use the API key stored alongside it.
+			if ( ! is_string( $resolved['record']['api_secret'] ?? null ) || '' === $resolved['record']['api_secret'] ) {
+				return new \WP_Error( 'ace_ai_key_required', 'Images and voice need an OpenAI API key alongside the ChatGPT sign-in. Add one in Ace AI connection settings.' );
+			}
+			return $this->decrypt( $resolved['record']['api_secret'] );
 		}
 		return $this->decrypt( $resolved['record']['secret'] );
 	}
@@ -97,7 +105,18 @@ final class Service {
 		$record = array( 'mode' => $mode, 'updated_at' => time() );
 		if ( 'own' === $mode ) {
 			$old = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
-			if ( '' === $key && in_array( $old['provider'] ?? '', array( 'chatgpt', 'codex' ), true ) ) { return true; }
+			if ( in_array( $old['provider'] ?? '', array( 'chatgpt', 'codex' ), true ) ) {
+				// Signed-in scope: keep the ChatGPT text connection and record which extra features its API key may provide.
+				$record = $old; $record['mode'] = 'own'; $record['updated_at'] = time();
+				$record['features'] = self::subscription_features( $features );
+				if ( '' !== $key ) {
+					if ( ! preg_match( '/^sk-[A-Za-z0-9_-]+$/D', $key ) ) { return new \WP_Error( 'ace_ai_invalid_key', 'Enter a valid OpenAI API key.' ); }
+					$secret = $this->encrypt( $key ); if ( is_wp_error( $secret ) ) { return $secret; }
+					$record['api_secret'] = $secret;
+				}
+				if ( $network ) { update_network_option( get_current_network_id(), self::OPTION, $record ); } else { update_option( self::OPTION, $record, false ); }
+				return true;
+			}
 			if ( '' === $key ) {
 				$secret = 'api_key' === ( $old['provider'] ?? '' ) ? ( $old['secret'] ?? '' ) : '';
 			} else {
@@ -119,6 +138,15 @@ final class Service {
 	}
 
 
+	/** Text is always provided by the sign-in; images and voice are opt-in extras backed by the API key. */
+	private static function subscription_features( array $features ): array {
+		return array_values( array_unique( array_merge( array( 'text' ), array_intersect( array( 'images', 'audio' ), array_filter( $features, 'is_string' ) ) ) ) );
+	}
+	/** Does this scope's signed-in record still need an API key for the extra features it has ticked? */
+	public function subscription_key_missing( bool $network = false ): bool {
+		$r = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
+		return is_array( $r ) && in_array( $r['provider'] ?? '', array( 'chatgpt', 'codex' ), true ) && array_diff( $r['features'] ?? array(), array( 'text' ) ) && empty( $r['api_secret'] );
+	}
 	public function subscription_selected(): bool {
 		$r = $this->resolve();
 		return in_array( $r['record']['provider'] ?? '', array( 'chatgpt', 'codex' ), true );
@@ -137,6 +165,7 @@ final class Service {
 			}
 		}
 		$disabled = array( 'mode' => 'disabled', 'updated_at' => time() );
+		if ( ! empty( $record['api_secret'] ) ) { $disabled += array( 'api_secret' => $record['api_secret'], 'features' => $record['features'] ?? array( 'text' ) ); } // Kept for the next sign-in.
 		if ( $network ) { update_network_option( get_current_network_id(), self::OPTION, $disabled ); } else { update_option( self::OPTION, $disabled, false ); }
 		return $confirmed ? true : new \WP_Error( 'ace_ai_revocation_unconfirmed', 'Disconnected locally. Remote revocation was not confirmed; disconnect the app in ChatGPT settings as well.' );
 	}
@@ -201,8 +230,14 @@ final class Service {
 		$record = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
 		$record = is_array( $record ) ? $record : array();
 		if ( ! empty( $status['connected'] ) && 'codex' !== ( $record['provider'] ?? '' ) ) {
-			$record = array( 'mode' => 'own', 'provider' => 'codex', 'features' => array( 'text' ), 'secret' => '', 'model' => '', 'updated_at' => time() ) + $record;
-			$record['mode'] = 'own'; $record['provider'] = 'codex'; $record['features'] = array( 'text' ); $record['secret'] = ''; unset( $record['expires_at'] );
+			$previous = $record;
+			$record   = array( 'mode' => 'own', 'provider' => 'codex', 'features' => array( 'text' ), 'secret' => '', 'model' => '', 'updated_at' => time() );
+			// Carry an existing API key (or one kept from a previous sign-in) over so images and voice keep working.
+			$carried = 'api_key' === ( $previous['provider'] ?? '' ) ? ( $previous['secret'] ?? '' ) : ( $previous['api_secret'] ?? '' );
+			if ( is_string( $carried ) && '' !== $carried ) {
+				$record['api_secret'] = $carried;
+				$record['features']   = self::subscription_features( is_array( $previous['features'] ?? null ) ? $previous['features'] : array() );
+			}
 			if ( $network ) { update_network_option( get_current_network_id(), self::OPTION, $record ); } else { update_option( self::OPTION, $record, false ); }
 		}
 		if ( ! empty( $status['connected'] ) ) {
