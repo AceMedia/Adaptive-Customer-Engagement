@@ -735,6 +735,116 @@ final class Plugin {
 	}
 
 	/**
+	 * Describe the current front-end page for the assistant: what the visitor is looking at.
+	 *
+	 * @return array{kind: string, name: string, id: int}
+	 */
+	private function get_chat_page_context(): array {
+		$context = array( 'kind' => 'page', 'name' => '', 'id' => 0 );
+
+		if ( function_exists( 'is_product' ) && is_product() ) {
+			$id      = (int) get_queried_object_id();
+			$context = array( 'kind' => 'product', 'name' => wp_strip_all_tags( (string) get_the_title( $id ) ), 'id' => $id );
+		} elseif ( function_exists( 'is_product_category' ) && is_product_category() ) {
+			$term    = get_queried_object();
+			$context = array( 'kind' => 'category', 'name' => $term instanceof \WP_Term ? (string) $term->name : '', 'id' => $term instanceof \WP_Term ? (int) $term->term_id : 0 );
+		} elseif ( function_exists( 'is_shop' ) && is_shop() ) {
+			$context['kind'] = 'shop';
+		} elseif ( function_exists( 'is_cart' ) && is_cart() ) {
+			$context['kind'] = 'cart';
+		} elseif ( function_exists( 'is_checkout' ) && is_checkout() ) {
+			$context['kind'] = 'checkout';
+		} elseif ( is_front_page() ) {
+			$context['kind'] = 'home';
+		} elseif ( is_singular() ) {
+			$post            = get_queried_object();
+			$context['id']   = (int) get_queried_object_id();
+			$context['name'] = $post instanceof \WP_Post ? wp_strip_all_tags( (string) $post->post_title ) : '';
+			if ( $post instanceof \WP_Post && preg_match( '/contact|get-in-touch|enquir/i', $post->post_name . ' ' . $post->post_title ) ) {
+				$context['kind'] = 'contact';
+			}
+		}
+
+		/**
+		 * Filter the page context used for the assistant's contextual greeting and suggestions.
+		 *
+		 * @param array{kind: string, name: string, id: int} $context Page context.
+		 */
+		return apply_filters( 'ace_ai_chat_page_context', $context );
+	}
+
+	/**
+	 * Contextual greeting, launcher teaser and suggested questions for the current page.
+	 *
+	 * @param array{kind: string, name: string, id: int} $context  Page context.
+	 * @param string                                     $bot_name Assistant name.
+	 * @param string                                     $default  Configured default greeting.
+	 * @return array{greeting: string, teaser: string, questions: array<int, string>, key: string}
+	 */
+	private function build_contextual_chat_copy( array $context, string $bot_name, string $default ): array {
+		$name  = trim( (string) ( $context['name'] ?? '' ) );
+		$lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $name ) : strtolower( $name );
+		$kind  = (string) ( $context['kind'] ?? 'page' );
+
+		switch ( $kind ) {
+			case 'product':
+				$greeting  = sprintf( 'Hi, I see you’re looking at the %s. Want its sizes, price, delivery or a matching lid?', $name );
+				$teaser    = sprintf( 'Looking at the %s? Ask me anything about it.', $name );
+				$questions = array( sprintf( 'What sizes and options does the %s come in?', $name ), 'How much is delivery for this?', 'Are there lids or spares for it?' );
+				break;
+			case 'category':
+				$greeting  = sprintf( 'Hi there, browsing %s? Tell me what you need and I’ll help you choose the right one.', $lower );
+				$teaser    = sprintf( 'Browsing %s? I can help you choose.', $lower );
+				$questions = array( sprintf( 'Which %s suit a small business?', $lower ), sprintf( 'What’s the largest %s you do?', $lower ), sprintf( 'What’s the price range for %s?', $lower ) );
+				break;
+			case 'shop':
+				$greeting  = 'Hi, looking for the right bin? Tell me the waste type and roughly how much you produce and I’ll suggest options.';
+				$teaser    = 'Not sure which bin you need? I can help.';
+				$questions = array( 'Help me choose the right bin', 'What sizes do you sell?', 'Do you deliver nationwide?' );
+				break;
+			case 'cart':
+			case 'checkout':
+				$greeting  = 'Need a hand with your order? Ask me about delivery, lead times or pricing for larger quantities.';
+				$teaser    = 'Questions about your order? Ask me here.';
+				$questions = array( 'How long does delivery take?', 'Can I get a quote for a larger order?', 'Which payment methods do you accept?' );
+				break;
+			case 'contact':
+				$greeting  = 'Looking to get in touch? I can answer most questions right now, or take your details for the team to call you back.';
+				$teaser    = 'Need an answer now? Ask me here.';
+				$questions = array( 'What are your opening hours?', 'Where are you based?', 'Can someone call me back?' );
+				break;
+			default:
+				$greeting  = $default;
+				$teaser    = sprintf( 'Hi, I’m %s. Need help choosing a bin?', $bot_name );
+				$questions = array( 'Help me choose the right bin', 'What sizes do you sell?', 'Do you deliver to my area?' );
+		}
+
+		/**
+		 * Filter the suggested starter questions for the current page.
+		 *
+		 * @param array<int, string> $questions Suggested questions.
+		 * @param array              $context   Page context.
+		 */
+		$questions = apply_filters( 'ace_ai_chat_starter_questions', $questions, $context );
+		$questions = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', (array) $questions ) ) ) );
+
+		/**
+		 * Filter the contextual greeting and teaser.
+		 *
+		 * @param array{greeting: string, teaser: string} $copy    Copy.
+		 * @param array                                   $context Page context.
+		 */
+		$copy = apply_filters( 'ace_ai_chat_contextual_copy', array( 'greeting' => $greeting, 'teaser' => $teaser ), $context );
+
+		return array(
+			'greeting'  => sanitize_textarea_field( (string) ( $copy['greeting'] ?? $greeting ) ),
+			'teaser'    => sanitize_text_field( (string) ( $copy['teaser'] ?? $teaser ) ),
+			'questions' => array_slice( $questions, 0, 3 ),
+			'key'       => $kind . ':' . (int) ( $context['id'] ?? 0 ),
+		);
+	}
+
+	/**
 	 * Build frontend AI chat config.
 	 *
 	 * @param array<string, mixed> $settings Plugin settings.
@@ -761,6 +871,9 @@ final class Plugin {
 			&& '' !== trim( (string) ChatClientFactory::resolve( $ai_agent )['api_key'] )
 			&& $can_view;
 
+		$page_context = $this->get_chat_page_context();
+		$contextual   = $this->build_contextual_chat_copy( $page_context, $bot_name, $greeting );
+
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
@@ -774,8 +887,12 @@ final class Plugin {
 			'title'             => $bot_name,
 			'botName'           => $bot_name,
 			'botAvatarUrl'      => esc_url_raw( get_site_icon_url( 96 ) ?: '' ),
-			'greeting'          => $greeting,
-			'starterQuestions'  => $chat_messages->get_common_user_questions( 3 ),
+			'greeting'          => $contextual['greeting'],
+			'greetingKey'       => $contextual['key'],
+			'teaser'            => $contextual['teaser'],
+			'starterQuestions'  => $contextual['questions'],
+			'starterLabel'      => 'Suggested questions',
+			'pageContext'       => $page_context,
 			'placeholder'       => sanitize_text_field( (string) ( $ai_agent['frontend_chat_placeholder'] ?? '' ) ),
 			'showSources'       => ! empty( $ai_agent['show_source_links'] ),
 			'keepHistory'       => ! empty( $ai_agent['keep_history'] ),

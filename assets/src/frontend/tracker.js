@@ -477,6 +477,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	let vadStream = null;
 
 	const launcher = document.createElement('button');
+	const launcherBadge = document.createElement('span');
+	const teaser = document.createElement('div');
+	const teaserText = document.createElement('button');
+	const teaserClose = document.createElement('button');
 	const panel = document.createElement('section');
 	const header = document.createElement('div');
 	const titleWrap = document.createElement('div');
@@ -521,6 +525,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		voiceListening: false,
 		voiceTranscribing: false,
 		voiceSpeaking: false,
+		unread: 0,
 		// Spoken replies are opt-in per visitor — off by default even when the admin enabled the capability.
 		voiceSpeakerOn: voiceRepliesEnabled && (() => {
 			try {
@@ -544,6 +549,23 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	launcher.type = 'button';
 	launcher.textContent = chatConfig.title || 'Chat with us';
 	launcher.setAttribute('aria-expanded', 'false');
+	launcherBadge.className = 'ace-ai-chat-launcher-badge';
+	launcherBadge.hidden = true;
+	launcherBadge.setAttribute('aria-label', 'Unread messages');
+	launcher.appendChild(launcherBadge);
+	teaser.id = 'ace-ai-chat-teaser';
+	teaser.hidden = true;
+	teaser.setAttribute('role', 'status');
+	teaser.setAttribute('aria-live', 'polite');
+	teaser.classList.add(`ace-place-${chatPlacement}`);
+	teaserText.type = 'button';
+	teaserText.className = 'ace-ai-chat-teaser-text';
+	teaserClose.type = 'button';
+	teaserClose.className = 'ace-ai-chat-teaser-close';
+	teaserClose.setAttribute('aria-label', 'Dismiss');
+	teaserClose.textContent = '×';
+	teaser.appendChild(teaserText);
+	teaser.appendChild(teaserClose);
 
 	panel.id = 'ace-ai-chat-panel';
 	panel.hidden = true;
@@ -667,6 +689,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	panel.appendChild(messagesNode);
 	panel.appendChild(form);
 	document.body.appendChild(launcher);
+	document.body.appendChild(teaser);
 	document.body.appendChild(panel);
 
 	const ensureMessageKey = (message) => {
@@ -726,6 +749,59 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			: [],
 	});
 
+	// Speech bubble that pops off the launcher: a contextual hello on arrival, and incoming
+	// replies while the chat is closed. Click it to open the chat; it fades out on its own.
+	let teaserTimer = null;
+	let teaserLeaveTimer = null;
+	const hideTeaser = ({ immediate = false } = {}) => {
+		if (teaserTimer) {
+			window.clearTimeout(teaserTimer);
+			teaserTimer = null;
+		}
+		if (teaserLeaveTimer) {
+			window.clearTimeout(teaserLeaveTimer);
+			teaserLeaveTimer = null;
+		}
+		if (immediate || !teaser.classList.contains('is-visible')) {
+			teaser.classList.remove('is-visible', 'is-leaving');
+			teaser.hidden = true;
+			return;
+		}
+		teaser.classList.add('is-leaving');
+		teaserLeaveTimer = window.setTimeout(() => {
+			teaser.classList.remove('is-visible', 'is-leaving');
+			teaser.hidden = true;
+			teaserLeaveTimer = null;
+		}, 360);
+	};
+	const showTeaser = (text, { ttl = 9000, author = '' } = {}) => {
+		const content = String(text || '').trim();
+		if (!content || state.open) {
+			return;
+		}
+		hideTeaser({ immediate: true });
+		teaserText.textContent = '';
+		if (author) {
+			const who = document.createElement('strong');
+			who.textContent = author;
+			teaserText.appendChild(who);
+		}
+		teaserText.appendChild(document.createTextNode(content.length > 140 ? `${content.slice(0, 137).trim()}…` : content));
+		teaser.hidden = false;
+		window.requestAnimationFrame(() => {
+			window.requestAnimationFrame(() => teaser.classList.add('is-visible'));
+		});
+		if (ttl > 0) {
+			teaserTimer = window.setTimeout(() => hideTeaser(), ttl);
+		}
+	};
+	const setUnread = (count) => {
+		state.unread = Math.max(0, Number(count || 0));
+		launcherBadge.textContent = state.unread > 9 ? '9+' : String(state.unread);
+		launcherBadge.hidden = state.unread < 1;
+		launcher.classList.toggle('has-unread', state.unread > 0);
+	};
+	const messageKey = (message) => (Number(message?.id || 0) > 0 ? `id:${message.id}` : `key:${message?.client_key || ''}`);
 	const persistChatState = () => {
 		try {
 			window.localStorage?.setItem(chatStateKey, JSON.stringify({
@@ -941,6 +1017,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		updateChatMeta();
 	};
 
+	// A persisted chat that nobody has typed in yet gets this page's hello instead of the old one.
+	const refreshContextualGreeting = () => {
+		if (!chatConfig.greeting || state.messages.some((message) => message?.role === 'user')) {
+			return;
+		}
+		const first = state.messages.find((message) => message?.role === 'assistant');
+		if (first && first.content !== chatConfig.greeting) {
+			first.content = chatConfig.greeting;
+			first.client_key = ensureMessageKey({});
+			persistChatState();
+		}
+	};
 	const resetConversationState = ({ keepOpen = false } = {}) => {
 		if (typingResetTimer) {
 			window.clearTimeout(typingResetTimer);
@@ -1015,10 +1103,18 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		const label = document.createElement('p');
 		const list = document.createElement('div');
 		label.className = 'ace-ai-chat-starters-label';
-		label.textContent = 'Popular questions';
+		label.textContent = String(chatConfig.starterLabel || 'Suggested questions');
 		list.className = 'ace-ai-chat-starters-list';
 
-		questions.forEach((question) => {
+		const seen = new Set();
+		questions.filter((question) => {
+			const key = question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+			if (!key || seen.has(key)) {
+				return false;
+			}
+			seen.add(key);
+			return true;
+		}).forEach((question) => {
 			const button = document.createElement('button');
 			button.type = 'button';
 			button.className = 'ace-ai-chat-starter';
@@ -2334,8 +2430,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				credentials: 'same-origin',
 				headers,
 			}, 'The chat conversation could not be loaded.');
+			const knownKeys = new Set(state.messages.map(messageKey));
 			applyConversationSnapshot(snapshot);
 			renderMessages({ focusLatest: true });
+			if (!state.open) {
+				const incoming = state.messages.filter((message) => message?.role !== 'user' && !knownKeys.has(messageKey(message)));
+				if (incoming.length) {
+					setUnread(state.unread + incoming.length);
+					const latest = incoming[incoming.length - 1];
+					showTeaser(latest.content, { ttl: 12000, author: latest.role === 'operator' ? getMessageAuthor(latest).name : '' });
+				}
+			}
 		} catch (error) {
 			if (Number(error?.status || 0) === 404) {
 				queueTypingState(false, { force: true });
@@ -2429,8 +2534,17 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			return;
 		}
 
+		// Poll while open; keep a slower eye on the conversation while closed so replies from the
+		// team still reach the visitor through the launcher bubble.
+		let closedTicks = 0;
 		syncTimer = window.setInterval(() => {
 			if (state.open) {
+				closedTicks = 0;
+				syncConversation().catch(() => {});
+				return;
+			}
+			closedTicks += 1;
+			if (closedTicks % 3 === 0) {
 				syncConversation().catch(() => {});
 			}
 		}, Number(chatConfig.pollIntervalMs || 5000));
@@ -2489,6 +2603,10 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const setOpen = (nextOpen) => {
 		state.open = nextOpen;
 		panel.hidden = !nextOpen;
+		if (nextOpen) {
+			hideTeaser({ immediate: true });
+			setUnread(0);
+		}
 		launcher.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
 		persistChatState();
 		updateChatMeta();
@@ -2701,6 +2819,8 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 	if (!state.messages.length) {
 		resetConversationState({ keepOpen: false });
+	} else {
+		refreshContextualGreeting();
 	}
 	updateChatMeta();
 	renderMessages({ force: true });
@@ -2708,9 +2828,41 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	fetchAvailability().catch(() => {});
 	if (state.open) {
 		setOpen(true);
+	} else if (state.started && state.conversationUuid && state.conversationStatus !== 'ended') {
+		startSync();
+	}
+	// Contextual hello off the launcher: once per page context per tab, never more than once a minute.
+	if (!state.open && chatConfig.teaser) {
+		const teaserKey = `ace_ai_chat_teaser:${String(chatConfig.greetingKey || 'page')}`;
+		let shouldTease = true;
+		try {
+			const lastShown = Number(window.sessionStorage?.getItem('ace_ai_chat_teaser_last') || 0);
+			shouldTease = !window.sessionStorage?.getItem(teaserKey) && Date.now() - lastShown > 60000;
+		} catch (error) {
+			shouldTease = true;
+		}
+		if (shouldTease) {
+			window.setTimeout(() => {
+				if (state.open) {
+					return;
+				}
+				showTeaser(chatConfig.teaser, { ttl: 9000 });
+				try {
+					window.sessionStorage?.setItem(teaserKey, '1');
+					window.sessionStorage?.setItem('ace_ai_chat_teaser_last', String(Date.now()));
+				} catch (error) {
+					// Ignore storage failures in the browser.
+				}
+			}, 1800);
+		}
 	}
 
 	launcher.addEventListener('click', () => setOpen(!state.open));
+	teaserText.addEventListener('click', () => setOpen(true));
+	teaserClose.addEventListener('click', (event) => {
+		event.stopPropagation();
+		hideTeaser();
+	});
 	close.addEventListener('click', () => setOpen(false));
 	contactToggle.addEventListener('click', () => {
 		contactPanel.hidden = !contactPanel.hidden;
