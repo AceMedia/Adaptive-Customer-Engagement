@@ -1518,11 +1518,13 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 						product_id: Number(item.product_id) || 0,
 						variation_id: Number(item.variation_id) || 0,
 						quantity: Number(item.quantity) || 1,
+						components: item.components && typeof item.components === 'object' ? item.components : undefined,
 					})) }
 					: {
 						product_id: Number(data.product_id) || 0,
 						variation_id: Number(data.variation_id) || 0,
 						quantity: Number(data.quantity) || 1,
+						components: data.components && typeof data.components === 'object' ? data.components : undefined,
 					}),
 			});
 			const result = await response.json();
@@ -1574,6 +1576,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			product_id: Number(action.product_id) || 0,
 			variation_id: Number(action.variation_id) || 0,
 			quantity: Number(action.quantity) || 1,
+			components: action.composite && typeof action.composite === 'object' ? action.composite : undefined,
 		}));
 
 		try {
@@ -1581,7 +1584,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			const label = list.map(cartActionLabel).join(', ');
 			pushMessage({
 				role: 'assistant',
-				content: `🛒 Added ${label} to your basket.\nView your basket: ${cartPageUrl()}`,
+				content: `🛒 Added ${label} to your basket.\n[View basket](${String(chatConfig.cartUrl || cartPageUrl())})${String(chatConfig.checkoutUrl || '').trim() ? ` · [Go to checkout](${String(chatConfig.checkoutUrl).trim()})` : ''}`,
 			});
 			renderMessages({ focusLatest: true });
 		} catch (error) {

@@ -909,6 +909,8 @@ final class Plugin {
 			'placement'         => sanitize_key( (string) ( $ai_agent['frontend_chat_placement'] ?? 'bottom-right' ) ),
 			'dockEnabled'       => ! empty( $ai_agent['frontend_chat_dock_enabled'] ),
 			'addToCartEnabled'  => function_exists( 'wc_get_product' ) && ! empty( $ai_agent['frontend_add_to_cart_enabled'] ),
+			'cartUrl'           => function_exists( 'wc_get_cart_url' ) ? esc_url_raw( (string) wc_get_cart_url() ) : '',
+			'checkoutUrl'       => function_exists( 'wc_get_checkout_url' ) ? esc_url_raw( (string) wc_get_checkout_url() ) : '',
 			'voiceTtsEnabled'   => ! empty( $ai_agent['frontend_voice_replies'] ) && ( new TextToSpeechService() )->is_configured( $ai_agent ),
 			'voiceTtsEndpoint'  => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/voice/tts' ) ) ),
 			'voiceSttEnabled'   => ! empty( $ai_agent['frontend_voice_input'] ) && ( new SpeechToTextService() )->is_configured( $ai_agent ),

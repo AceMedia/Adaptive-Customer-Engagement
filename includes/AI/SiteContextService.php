@@ -1037,6 +1037,8 @@ final class SiteContextService {
 		$product_permalink = get_permalink( $post ) ?: '';
 		$is_variable       = $product->is_type( 'variable' );
 		$is_simple         = $product->is_type( 'simple' );
+		$is_composite      = $product->is_type( 'composite' );
+		$components        = $is_composite ? $this->get_composite_components( $product ) : array();
 		$variation_count   = $is_variable && method_exists( $product, 'get_children' ) ? count( $product->get_children() ) : 0;
 		$price_html        = (string) $product->get_price_html();
 		$direct_weight     = method_exists( $product, 'get_weight' ) ? (float) $product->get_weight() : 0.0;
@@ -1093,6 +1095,16 @@ final class SiteContextService {
 				: (string) wc_price( $price_min ) . ' – ' . (string) wc_price( $price_max );
 		}
 
+		if ( $is_composite && method_exists( $product, 'get_composite_price' ) ) {
+			// Composite (configurable) products carry a £0 base price; the real price comes from the chosen components.
+			$price_min      = (float) $product->get_composite_price( 'min' );
+			$price_max      = (float) $product->get_composite_price( 'max' );
+			$price_value    = $price_min;
+			$is_purchasable = $is_purchasable || ! empty( $components );
+			if ( function_exists( 'wc_price' ) && $price_min > 0 ) {
+				$price_html = ( $price_max > $price_min ? 'From ' : '' ) . (string) wc_price( $price_min );
+			}
+		}
 		$price_html        = $this->clean_price_text( $price_html );
 		$related_ids       = array();
 
@@ -1155,6 +1167,8 @@ final class SiteContextService {
 				'variations'       => $variations,
 				'related_products' => $related_products,
 				'can_add_to_cart'  => $can_add_to_cart,
+				'is_composite'     => $is_composite,
+				'components'       => $components,
 				'purchasable'      => $is_purchasable,
 				'add_to_cart_url'  => esc_url_raw( $add_to_cart_url ),
 				'view_url'         => esc_url_raw( $product_permalink ),
@@ -1580,7 +1594,7 @@ final class SiteContextService {
 	 * @param int                   $quantity   Quantity.
 	 * @return array<string, mixed>|null  cart action, ['error'=>...], ['needs_more'=>true], or null.
 	 */
-	public function resolve_cart_selection( int $product_id, array $attributes, int $quantity = 1 ) {
+	public function resolve_cart_selection( int $product_id, array $attributes, int $quantity = 1, array $components = array() ) {
 		if ( $product_id <= 0 || ! function_exists( 'wc_get_product' ) ) {
 			return null;
 		}
@@ -1608,6 +1622,10 @@ final class SiteContextService {
 				'add_to_cart_url' => esc_url_raw( '' !== $permalink ? add_query_arg( 'add-to-cart', $product_id, $permalink ) : '' ),
 				'attributes'      => array(),
 			);
+		}
+
+		if ( $product->is_type( 'composite' ) ) {
+			return $this->resolve_composite_selection( $product, $components, $quantity, $permalink );
 		}
 
 		if ( ! $product->is_type( 'variable' ) ) {
@@ -1737,6 +1755,21 @@ final class SiteContextService {
 			$parts[] = $price_line;
 		}
 
+		if ( ! empty( $commerce['is_composite'] ) && ! empty( $commerce['components'] ) && is_array( $commerce['components'] ) ) {
+			$lines = array();
+			foreach ( $commerce['components'] as $component ) {
+				$opts = array();
+				foreach ( (array) ( $component['options'] ?? array() ) as $option ) {
+					$attrs = array();
+					foreach ( (array) ( $option['attributes'] ?? array() ) as $label => $values ) {
+						$attrs[] = $label . ': ' . $values;
+					}
+					$opts[] = $option['name'] . ( ! empty( $option['price'] ) ? ' ' . $option['price'] : '' ) . ( $attrs ? ' [' . implode( '; ', $attrs ) . ']' : '' );
+				}
+				$lines[] = $component['title'] . ( ! empty( $component['optional'] ) ? ' (optional)' : ' (required)' ) . ' — ' . implode( ' | ', $opts );
+			}
+			$parts[] = 'Configurable product, built from components: ' . implode( '. ', $lines ) . '.';
+		}
 		$stock_status = (string) ( $commerce['stock_status'] ?? '' );
 
 		if ( '' !== $stock_status || array_key_exists( 'in_stock', $commerce ) ) {
@@ -2224,9 +2257,254 @@ final class SiteContextService {
 				'purchasable'     => ! empty( $commerce['purchasable'] ),
 				'add_to_cart_url' => esc_url_raw( (string) ( $commerce['add_to_cart_url'] ?? '' ) ),
 				'view_url'        => esc_url_raw( (string) ( $commerce['view_url'] ?? $document['url'] ?? '' ) ),
+				'is_composite'    => ! empty( $commerce['is_composite'] ),
+				'components'      => $this->trim_components_for_source( is_array( $commerce['components'] ?? null ) ? $commerce['components'] : array() ),
 			),
 		);
 	}
+
+	/**
+	 * Compact component list for the front end and the model: titles, whether required, and each option's name, price and choices.
+	 *
+	 * @param array<int, array<string, mixed>> $components Components from get_composite_components().
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function trim_components_for_source( array $components ): array {
+		$out = array();
+		foreach ( array_slice( $components, 0, 12 ) as $component ) {
+			$options = array();
+			foreach ( array_slice( (array) ( $component['options'] ?? array() ), 0, 12 ) as $option ) {
+				$options[] = array(
+					'id'         => (int) ( $option['id'] ?? 0 ),
+					'name'       => sanitize_text_field( (string) ( $option['name'] ?? '' ) ),
+					'price'      => sanitize_text_field( (string) ( $option['price'] ?? '' ) ),
+					'attributes' => array_map( 'sanitize_text_field', (array) ( $option['attributes'] ?? array() ) ),
+				);
+			}
+			$out[] = array(
+				'id'       => (string) ( $component['id'] ?? '' ),
+				'title'    => sanitize_text_field( (string) ( $component['title'] ?? '' ) ),
+				'optional' => ! empty( $component['optional'] ),
+				'options'  => $options,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * Components of a WooCommerce Composite product with their selectable options and prices.
+	 *
+	 * @param \WC_Product $product Composite product.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function get_composite_components( $product ): array {
+		if ( ! is_object( $product ) || ! method_exists( $product, 'get_components' ) ) {
+			return array();
+		}
+		$components = array();
+		foreach ( (array) $product->get_components() as $component_id => $component ) {
+			if ( ! is_object( $component ) || ! method_exists( $component, 'get_options' ) ) {
+				continue;
+			}
+			$options = array();
+			foreach ( array_slice( (array) $component->get_options(), 0, 15 ) as $option_id ) {
+				$option = wc_get_product( (int) $option_id );
+				if ( ! $option || ! $option->is_purchasable() ) {
+					continue;
+				}
+				$is_var = $option->is_type( 'variable' ) && method_exists( $option, 'get_variation_price' );
+				$min    = (float) ( $is_var ? $option->get_variation_price( 'min' ) : $option->get_price() );
+				$max    = (float) ( $is_var ? $option->get_variation_price( 'max' ) : $option->get_price() );
+				$options[] = array(
+					'id'         => (int) $option_id,
+					'name'       => sanitize_text_field( (string) $option->get_name() ),
+					'type'       => $option->get_type(),
+					'price_min'  => $min,
+					'price'      => function_exists( 'wc_price' ) ? $this->clean_price_text( $max > $min ? (string) wc_price( $min ) . ' – ' . (string) wc_price( $max ) : (string) wc_price( $min ) ) : '',
+					'in_stock'   => $option->is_in_stock(),
+					'attributes' => $is_var ? $this->get_product_attributes( $option, (int) $option_id ) : array(),
+				);
+			}
+			$components[] = array(
+				'id'           => (string) $component_id,
+				'title'        => sanitize_text_field( (string) $component->get_title() ),
+				'optional'     => method_exists( $component, 'is_optional' ) && $component->is_optional(),
+				'quantity_min' => method_exists( $component, 'get_quantity' ) ? max( 1, (int) $component->get_quantity( 'min' ) ) : 1,
+				'options'      => $options,
+			);
+		}
+		return $components;
+	}
+
+	/**
+	 * Turn the visitor's component choices into a Composite Products configuration, or say what is still needed.
+	 *
+	 * @param \WC_Product          $product   Composite product.
+	 * @param array<string, mixed> $choices   Component title/id => array{option?: string, attributes?: array, qty?: int} or a plain option name.
+	 * @param int                  $quantity  Composite quantity.
+	 * @param string               $permalink Product permalink.
+	 * @return array<string, mixed>|null
+	 */
+	private function resolve_composite_selection( $product, array $choices, int $quantity, string $permalink ) {
+		$components = $this->get_composite_components( $product );
+		if ( empty( $components ) ) {
+			return null;
+		}
+		$by_key = array();
+		foreach ( $choices as $key => $choice ) {
+			$by_key[ $this->normalise_attr_token( (string) $key ) ] = is_array( $choice ) ? $choice : array( 'option' => (string) $choice );
+		}
+		$configuration = array();
+		$missing       = array();
+		$summary       = array();
+		$total         = 0.0;
+		foreach ( $components as $component ) {
+			$choice  = $by_key[ $this->normalise_attr_token( $component['title'] ) ] ?? $by_key[ $this->normalise_attr_token( $component['id'] ) ] ?? null;
+			$options = $component['options'];
+			if ( empty( $options ) ) {
+				continue;
+			}
+			$picked = null;
+			if ( null !== $choice && '' !== trim( (string) ( $choice['option'] ?? '' ) ) ) {
+				$wanted = $this->normalise_attr_token( (string) $choice['option'] );
+				foreach ( $options as $option ) {
+					$name = $this->normalise_attr_token( $option['name'] );
+					if ( $wanted === (string) $option['id'] || $wanted === $name || false !== strpos( $name, $wanted ) || false !== strpos( $wanted, $name ) ) {
+						$picked = $option;
+						break;
+					}
+				}
+			}
+			if ( null === $picked && 1 === count( $options ) ) {
+				// One possible option: a bare value like "No Artwork" is then an attribute choice, not the option name.
+				$picked = $options[0];
+				if ( null !== $choice && '' !== trim( (string) ( $choice['option'] ?? '' ) ) && $this->normalise_attr_token( (string) $choice['option'] ) !== $this->normalise_attr_token( $picked['name'] ) && empty( $choice['attributes'] ) ) {
+					$choice['attributes'] = array( 'choice' => (string) $choice['option'] );
+				}
+			}
+			if ( null === $picked ) {
+				if ( ! empty( $component['optional'] ) && null === $choice ) {
+					continue;
+				}
+				$missing[] = array(
+					'component' => $component['title'],
+					'choices'   => array_map( static fn( $o ) => $o['name'] . ( $o['price'] ? ' (' . $o['price'] . ')' : '' ), $options ),
+				);
+				continue;
+			}
+			$qty   = max( (int) $component['quantity_min'], (int) ( $choice['qty'] ?? 1 ) );
+			$entry = array( 'product_id' => (int) $picked['id'], 'quantity' => $qty );
+			$label = $picked['name'];
+			$price = (float) $picked['price_min'];
+			if ( 'variable' === $picked['type'] ) {
+				$option_product = wc_get_product( (int) $picked['id'] );
+				$attributes     = is_array( $choice['attributes'] ?? null ) ? $choice['attributes'] : array();
+				if ( empty( $attributes ) && '' !== trim( (string) ( $choice['option'] ?? '' ) ) ) {
+					// "Welded Din Points" names both the option and its only real choice: try it as an attribute value.
+					$attributes = array( 'choice' => (string) $choice['option'] );
+				}
+				$match          = $option_product ? $this->match_variation( $option_product, $attributes, $permalink ) : null;
+				if ( ! is_array( $match ) ) {
+					$missing[] = array( 'component' => $component['title'] . ' (' . $picked['name'] . ')', 'choices' => $this->describe_attribute_choices( $picked['attributes'] ) );
+					continue;
+				}
+				$entry['variation_id'] = (int) $match['id'];
+				$entry['attributes']   = array();
+				// WooCommerce expects the variation's own attribute keys (attribute_pa_colour => galvanised), not the labels.
+				$variation_product = wc_get_product( (int) $match['id'] );
+				if ( $variation_product && method_exists( $variation_product, 'get_variation_attributes' ) ) {
+					foreach ( (array) $variation_product->get_variation_attributes() as $attr_key => $attr_value ) {
+						$entry['attributes'][ (string) $attr_key ] = (string) $attr_value;
+					}
+				}
+				$label .= '' !== (string) ( $match['label'] ?? '' ) ? ' – ' . $match['label'] : '';
+				$price  = isset( $match['price'] ) && null !== $match['price'] ? (float) $match['price'] : $price;
+			}
+			$configuration[ $component['id'] ] = $entry;
+			$summary[] = $component['title'] . ': ' . $label;
+			$total    += $price * $qty;
+		}
+		if ( ! empty( $missing ) ) {
+			return array( 'needs_more' => true, 'name' => sanitize_text_field( $product->get_name() ), 'missing' => $missing );
+		}
+		return array(
+			'product_id'      => (int) $product->get_id(),
+			'variation_id'    => 0,
+			'quantity'        => $quantity,
+			'name'            => sanitize_text_field( $product->get_name() . ( $summary ? ' (' . implode( ', ', $summary ) . ')' : '' ) ),
+			'price'           => function_exists( 'wc_price' ) ? $this->clean_price_text( (string) wc_price( $total ) ) : '',
+			'add_to_cart_url' => '',
+			'attributes'      => array(),
+			'composite'       => $configuration,
+		);
+	}
+
+	/**
+	 * Human list of an option's attribute choices, e.g. "Colour: Galvanised, Black".
+	 *
+	 * @param array<string, string> $attributes Attribute label => comma-separated values.
+	 * @return array<int, string>
+	 */
+	private function describe_attribute_choices( array $attributes ): array {
+		$out = array();
+		foreach ( $attributes as $label => $values ) {
+			$out[] = $label . ': ' . $values;
+		}
+		return $out;
+	}
+
+	/**
+	 * Match requested attribute values against a variable product's variations.
+	 *
+	 * @param \WC_Product           $product    Variable product.
+	 * @param array<string, string> $attributes Requested attribute label => value.
+	 * @param string                $permalink  Product permalink.
+	 * @return array<string, mixed>|null The single matching variation, or null when none or ambiguous.
+	 */
+	private function match_variation( $product, array $attributes, string $permalink ) {
+		$variations = $this->get_product_variations( $product, $permalink );
+		if ( empty( $variations ) ) {
+			return null;
+		}
+		$requested = array();
+		foreach ( $attributes as $key => $value ) {
+			$value = $this->normalise_attr_token( (string) $value );
+			if ( '' !== $value ) {
+				$requested[ $this->normalise_attr_token( (string) $key ) ] = $value;
+			}
+		}
+		$matches = array();
+		foreach ( $variations as $variation ) {
+			if ( empty( $variation['in_stock'] ) || empty( $variation['purchasable'] ) ) {
+				continue;
+			}
+			$human = array();
+			foreach ( (array) ( $variation['attributes'] ?? array() ) as $label => $value ) {
+				$human[ $this->normalise_attr_token( (string) $label ) ] = $this->normalise_attr_token( (string) $value );
+			}
+			$all_ok = true;
+			foreach ( $requested as $req_key => $req_value ) {
+				$found = isset( $human[ $req_key ] ) && $this->attr_value_matches( $human[ $req_key ], $req_value );
+				if ( ! $found ) {
+					foreach ( $human as $human_value ) {
+						if ( $this->attr_value_matches( $human_value, $req_value ) ) {
+							$found = true;
+							break;
+						}
+					}
+				}
+				if ( ! $found ) {
+					$all_ok = false;
+					break;
+				}
+			}
+			if ( $all_ok ) {
+				$matches[] = $variation;
+			}
+		}
+		return 1 === count( $matches ) ? $matches[0] : null;
+	}
+
 
 	/**
 	 * Trim variation data carried on a source to the fields needed for the

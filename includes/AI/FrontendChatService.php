@@ -161,6 +161,7 @@ final class FrontendChatService {
 
 		$lead_capture = $this->lead_profiles->capture_from_message( $thread, $session, $message );
 		$thread       = is_array( $lead_capture['conversation'] ?? null ) ? $lead_capture['conversation'] : $thread;
+		$this->prefill_checkout_from_lead( $thread );
 		$session      = is_array( $lead_capture['session'] ?? null ) ? $lead_capture['session'] : $session;
 		$ip_memory    = is_array( $lead_capture['memory'] ?? null ) ? $lead_capture['memory'] : $ip_memory;
 		$thread       = $this->apply_known_contact_defaults( $thread, $ip_memory );
@@ -346,6 +347,8 @@ final class FrontendChatService {
 					. 'Use the option labels and values exactly as listed under the product\'s "required options". For a product with no options use "attributes":{}. If a required option has only one possible value listed, use it automatically without asking. Only ask the visitor about options that genuinely have more than one value and that they have not already specified. If, after that, a required multi-value option is still missing or ambiguous, DO NOT emit the directive — instead ask for it (for example, "What size would you like — 660L or 1100L?"). '
 						. 'To add several products at once (e.g. "add three cage bins and a green Schafer bin"), list them all in a single directive using an items array, like [[ACE_CART:{"items":[{"product_id":123,"qty":3,"attributes":{}},{"product_id":456,"qty":1,"attributes":{"Colour":"Green"}}]}]]. Set "qty" for the number of units of each line. '
 						. 'Only ever emit the directive (and only ever say you are adding something) for a product that has a "cart product id" in the facts. If a product is shown as "price on request" / has no cart product id, it CANNOT be added to the basket — never say you are adding it. Instead: clearly say it is available on request, refer to it by its exact product name, include the link to its product page from the facts, and offer to arrange a quote (you can take their name and email so the team can follow up). '
+						. 'Configurable products (facts say "configurable — components"): the price is built from the chosen components. Before adding one, make sure you know every required component choice; if any are unknown, ask for them in ONE short question listing the options and prices (e.g. "Which body colour: Galvanised, Black or Green? And a flat or domed lid?"). Then emit the directive with a "components" object keyed by component title, e.g. [[ACE_CART:{"product_id":7486,"qty":1,"components":{"Body":{"option":"1100L Continental Body","attributes":{"Colour":"Galvanised"}},"Lid":{"option":"Container Lid 1100L","attributes":{"Lid Type":"Flat"}}}}]]. Components with a single option can be omitted. '
+						. 'Collecting details: once a visitor wants to buy or asks for a quote, ask once, politely, for their name, company and email (and phone if they prefer a call) so the order can be prepared; never block adding to the basket on this. After adding, tell them they can go straight to checkout. '
 						. 'The directive must be the very last line and is processed silently; never describe it or show its text in your prose. Only ever add products that appear in the provided context. The basket add is performed and confirmed automatically, so phrase your reply as adding it (e.g. "Adding the blue 1100L bin to your basket now.").',
 			);
 		}
@@ -405,13 +408,22 @@ final class FrontendChatService {
 				$out_of_stock     = false;
 
 				foreach ( $parsed['items'] as $item ) {
-					$resolved = $this->site_context->resolve_cart_selection( $item['product_id'], $item['attributes'], $item['qty'] );
+					$resolved = $this->site_context->resolve_cart_selection( $item['product_id'], $item['attributes'], $item['qty'], $item['components'] );
 
 					if ( is_array( $resolved ) ) {
 						if ( ! empty( $resolved['error'] ) && 'out_of_stock' === $resolved['error'] ) {
 							$out_of_stock = true;
 						} elseif ( empty( $resolved['needs_more'] ) && ! empty( $resolved['product_id'] ) ) {
 							$cart_actions[] = $resolved;
+						} elseif ( ! empty( $resolved['missing'] ) && is_array( $resolved['missing'] ) ) {
+							// A configurable product still needs choices: ask for them instead of silently dropping the add.
+							$asks = array();
+							foreach ( array_slice( $resolved['missing'], 0, 3 ) as $need ) {
+								$asks[] = sanitize_text_field( (string) ( $need['component'] ?? '' ) ) . ' (' . implode( ', ', array_map( 'sanitize_text_field', array_slice( (array) ( $need['choices'] ?? array() ), 0, 8 ) ) ) . ')';
+							}
+							if ( $asks ) {
+								$response_message = trim( $response_message . "\n\nTo add the " . sanitize_text_field( (string) ( $resolved['name'] ?? 'product' ) ) . ' I just need you to choose: ' . implode( '; ', $asks ) . '.' );
+							}
 						}
 					}
 				}
@@ -656,6 +668,66 @@ final class FrontendChatService {
 	 * @param string $message Assistant message.
 	 * @return array{message:string,items:array<int,array{product_id:int,qty:int,attributes:array<string,string>}>}
 	 */
+	/**
+	 * Carry details the visitor has shared in chat (name, email, phone, company) into the WooCommerce
+	 * customer session, so the checkout form is pre-filled when they go to pay. Never overwrites a
+	 * value the customer has already entered at checkout.
+	 *
+	 * @param array<string, mixed> $thread Conversation with captured contact fields.
+	 * @return void
+	 */
+	private function prefill_checkout_from_lead( array $thread ): void {
+		if ( ! function_exists( 'WC' ) || ! function_exists( 'wc_load_cart' ) ) {
+			return;
+		}
+		$name    = sanitize_text_field( (string) ( $thread['contact_name'] ?? '' ) );
+		$email   = sanitize_email( (string) ( $thread['contact_email'] ?? '' ) );
+		$phone   = sanitize_text_field( (string) ( $thread['contact_phone'] ?? '' ) );
+		$company = sanitize_text_field( (string) ( $thread['contact_company'] ?? '' ) );
+		if ( '' === $name && '' === $email && '' === $phone && '' === $company ) {
+			return;
+		}
+		try {
+			if ( is_null( WC()->cart ) ) {
+				wc_load_cart();
+			}
+			$customer = WC()->customer ?? null;
+			if ( ! is_object( $customer ) || ! method_exists( $customer, 'get_billing_email' ) ) {
+				return;
+			}
+			$changed = false;
+			if ( '' !== $email && '' === (string) $customer->get_billing_email() && is_email( $email ) ) {
+				$customer->set_billing_email( $email );
+				$changed = true;
+			}
+			if ( '' !== $phone && '' === (string) $customer->get_billing_phone() ) {
+				$customer->set_billing_phone( $phone );
+				$changed = true;
+			}
+			if ( '' !== $company && '' === (string) $customer->get_billing_company() ) {
+				$customer->set_billing_company( $company );
+				$changed = true;
+			}
+			if ( '' !== $name && '' === (string) $customer->get_billing_first_name() ) {
+				$parts = preg_split( '/\s+/', $name, 2 ) ?: array( $name );
+				$customer->set_billing_first_name( (string) $parts[0] );
+				if ( isset( $parts[1] ) && '' === (string) $customer->get_billing_last_name() ) {
+					$customer->set_billing_last_name( (string) $parts[1] );
+				}
+				$changed = true;
+			}
+			if ( $changed ) {
+				if ( WC()->session && method_exists( WC()->session, 'has_session' ) && ! WC()->session->has_session() ) {
+					WC()->session->set_customer_session_cookie( true );
+				}
+				$customer->save();
+			}
+		} catch ( \Throwable $e ) {
+			// Pre-filling checkout is a convenience; never let it break a chat reply.
+			unset( $e );
+		}
+	}
+
 	private function parse_cart_directives( string $message ): array {
 		$items = array();
 
@@ -706,10 +778,33 @@ final class FrontendChatService {
 			}
 		}
 
+		$components = array();
+		if ( isset( $raw['components'] ) && is_array( $raw['components'] ) ) {
+			foreach ( $raw['components'] as $component => $choice ) {
+				$key = sanitize_text_field( (string) $component );
+				if ( '' === $key ) {
+					continue;
+				}
+				if ( is_array( $choice ) ) {
+					$attrs = array();
+					foreach ( (array) ( $choice['attributes'] ?? array() ) as $label => $value ) {
+						$attrs[ sanitize_text_field( (string) $label ) ] = sanitize_text_field( (string) ( is_scalar( $value ) ? $value : '' ) );
+					}
+					$components[ $key ] = array(
+						'option'     => sanitize_text_field( (string) ( is_scalar( $choice['option'] ?? null ) ? $choice['option'] : '' ) ),
+						'attributes' => $attrs,
+						'qty'        => max( 1, absint( $choice['qty'] ?? 1 ) ),
+					);
+				} elseif ( is_scalar( $choice ) ) {
+					$components[ $key ] = array( 'option' => sanitize_text_field( (string) $choice ), 'attributes' => array(), 'qty' => 1 );
+				}
+			}
+		}
 		return array(
 			'product_id' => absint( $raw['product_id'] ),
 			'qty'        => max( 1, absint( $raw['qty'] ?? 1 ) ),
 			'attributes' => $attributes,
+			'components' => $components,
 		);
 	}
 
@@ -1551,6 +1646,21 @@ final class FrontendChatService {
 			}
 		}
 
+		if ( ! empty( $commerce['is_composite'] ) && ! empty( $commerce['components'] ) && is_array( $commerce['components'] ) ) {
+			$component_facts = array();
+			foreach ( $commerce['components'] as $component ) {
+				$opts = array();
+				foreach ( (array) ( $component['options'] ?? array() ) as $option ) {
+					$attrs = array();
+					foreach ( (array) ( $option['attributes'] ?? array() ) as $label => $values ) {
+						$attrs[] = $label . ': ' . $values;
+					}
+					$opts[] = '"' . $option['name'] . '"' . ( ! empty( $option['price'] ) ? ' ' . $option['price'] : '' ) . ( $attrs ? ' [choose ' . implode( '; ', $attrs ) . ']' : '' );
+				}
+				$component_facts[] = '"' . $component['title'] . '"' . ( ! empty( $component['optional'] ) ? ' (optional)' : ' (required)' ) . ': ' . implode( ' | ', $opts );
+			}
+			$facts[] = 'configurable — components: ' . implode( '; ', $component_facts );
+		}
 		$variations = is_array( $commerce['variations'] ?? null ) ? $commerce['variations'] : array();
 
 		if ( ! empty( $commerce['is_variable'] ) && ! empty( $variations ) ) {

@@ -455,10 +455,27 @@ final class TrackingController {
 			$pid = absint( $raw['product_id'] ?? 0 );
 
 			if ( $pid ) {
+				$components = array();
+				foreach ( (array) ( $raw['components'] ?? array() ) as $component_id => $entry ) {
+					if ( ! is_array( $entry ) || empty( $entry['product_id'] ) ) {
+						continue;
+					}
+					$attrs = array();
+					foreach ( (array) ( $entry['attributes'] ?? array() ) as $attr_key => $attr_value ) {
+						$attrs[ sanitize_key( (string) $attr_key ) ] = sanitize_text_field( (string) ( is_scalar( $attr_value ) ? $attr_value : '' ) );
+					}
+					$components[ sanitize_text_field( (string) $component_id ) ] = array(
+						'product_id'   => absint( $entry['product_id'] ),
+						'quantity'     => max( 1, absint( $entry['quantity'] ?? 1 ) ),
+						'variation_id' => absint( $entry['variation_id'] ?? 0 ),
+						'attributes'   => $attrs,
+					);
+				}
 				$items[] = array(
 					'product_id'   => $pid,
 					'variation_id' => absint( $raw['variation_id'] ?? 0 ),
 					'quantity'     => max( 1, absint( $raw['quantity'] ?? 1 ) ),
+					'components'   => $components,
 				);
 			}
 		}
@@ -509,8 +526,17 @@ final class TrackingController {
 			}
 
 			$passed = apply_filters( 'woocommerce_add_to_cart_validation', true, $product_id, $quantity, $variation_id, $variation );
-			$added  = $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false;
+			$is_composite_add = ! empty( $item['components'] ) && $reference->is_type( 'composite' ) && function_exists( 'WC_CP' ) && is_object( WC_CP()->cart ) && method_exists( WC_CP()->cart, 'add_composite_to_cart' );
+			// A configurable product built in chat: Composite Products validates and adds the whole configuration.
+			$added  = $is_composite_add ? WC_CP()->cart->add_composite_to_cart( $product_id, $quantity, $item['components'] ) : ( $passed ? WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation ) : false );
 
+			if ( is_wp_error( $added ) ) {
+				// Composite Products reports configuration problems as a WP_Error with its notices attached.
+				$cp_notices = (array) ( $added->get_error_data()['notices'] ?? array() );
+				$cp_message = ! empty( $cp_notices ) ? wp_strip_all_tags( (string) ( $cp_notices[0]['notice'] ?? '' ) ) : $added->get_error_message();
+				if ( function_exists( 'wc_clear_notices' ) ) { wc_clear_notices(); }
+				return new WP_Error( 'ace_cart_failed', html_entity_decode( $cp_message ?: __( 'Sorry, that could not be added to your basket.', 'adaptive-customer-engagement' ), ENT_QUOTES ), array( 'status' => 400 ) );
+			}
 			if ( false !== $added ) {
 				do_action( 'woocommerce_ajax_added_to_cart', $product_id );
 				$added_names[] = $reference->get_name();
