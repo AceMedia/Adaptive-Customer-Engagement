@@ -746,7 +746,7 @@ final class SampleDataSeeder {
 		return array(
 			'waste' => array(
 				'products' => array(
-					array( 'id' => 101, 'slug' => 'smart-street-bin', 'name' => 'Smart Street Bin', 'category_id' => 201, 'category_slug' => 'street-bins', 'category_name' => 'Street Bins', 'brand' => 'Egbert Taylor' ),
+					array( 'id' => 101, 'slug' => 'smart-street-bin', 'name' => 'Smart Street Bin', 'category_id' => 201, 'category_slug' => 'street-bins', 'category_name' => 'Street Bins', 'brand' => 'Greyfield' ),
 					array( 'id' => 102, 'slug' => 'recycling-container', 'name' => 'Recycling Container', 'category_id' => 202, 'category_slug' => 'recycling', 'category_name' => 'Recycling', 'brand' => 'Future Street' ),
 					array( 'id' => 103, 'slug' => 'compaction-unit', 'name' => 'Compaction Unit', 'category_id' => 203, 'category_slug' => 'compact-bins', 'category_name' => 'Compact Bins', 'brand' => 'Future Street' ),
 				),
