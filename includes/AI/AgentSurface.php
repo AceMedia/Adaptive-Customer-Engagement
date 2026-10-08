@@ -492,9 +492,11 @@ final class AgentSurface {
 		if ( ! $what || ! $this->enabled() ) {
 			return;
 		}
+		// Never page-cached: a stale copy would show an old state of the surface.
 		nocache_headers();
 		status_header( 200 );
-		header( 'Cache-Control: public, max-age=3600' );
+		header( 'Cache-Control: no-store, max-age=0' );
+		header( 'X-Ace-Cache: bypass' );
 		if ( 'mcp' === $what ) {
 			header( 'Content-Type: application/json; charset=utf-8' );
 			echo wp_json_encode( $this->declaration(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
