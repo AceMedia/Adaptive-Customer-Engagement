@@ -3441,7 +3441,12 @@ final class SiteContextService {
 			$seen[ $key ]  = true;
 		};
 
+		$direct = array(); // Attached to the product: keep the ones about this product, or all of them when none match.
 		foreach ( $this->get_attached_pdf_posts( array( (int) $product_post->ID ) ) as $attachment ) {
+			$direct[] = $attachment;
+		}
+		$matching = array_values( array_filter( $direct, fn( $a ) => $this->pdf_matches_product( $a, $product_post ) ) );
+		foreach ( $matching ?: $direct as $attachment ) {
 			$append_attachment( $attachment );
 		}
 
