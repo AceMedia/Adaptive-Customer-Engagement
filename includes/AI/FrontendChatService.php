@@ -447,7 +447,17 @@ final class FrontendChatService {
 		}
 
 		$show_sources     = $this->extract_source_display_decision( $response_message, ! empty( $sources ), $message, $sources );
-		$response_message = $this->apply_sales_follow_up_prompt( $response_message, $message, $thread, $lead_capture['captured'] ?? array() );
+		// Say what the configured product actually costs when the reply only quoted the "from" price.
+		foreach ( $cart_actions as $action ) {
+			$configured_price = (string) ( $action['price'] ?? '' );
+			if ( '' !== $configured_price && ! empty( $action['composite'] ) && false === strpos( $response_message, $configured_price ) ) {
+				$response_message = trim( $response_message ) . "\n\n" . sprintf( __( 'Price for that configuration: %1$s each (%2$d in your basket).', 'adaptive-customer-engagement' ), $configured_price, (int) ( $action['quantity'] ?? 1 ) );
+				break;
+			}
+		}
+		$user_turns       = 1 + count( array_filter( $this->sanitize_history( $payload['history'] ?? array(), 40 ), static fn( $m ) => 'user' === ( $m['role'] ?? '' ) ) );
+		$response_message = $this->apply_sales_follow_up_prompt( $response_message, $message, $thread, $lead_capture['captured'] ?? array(), $user_turns, ! empty( $cart_actions ) );
+		$this->maybe_notify_team( $thread, $lead_capture['captured'] ?? array(), $message, $cart_actions, $payload );
 		$response_message = $this->append_primary_contact_number( $response_message );
 		$normalised_sources = $this->normalise_sources( $show_sources ? $sources : array() );
 
@@ -647,6 +657,7 @@ final class FrontendChatService {
 			return new WP_Error( 'ace_ai_chat_follow_up_failed', __( 'The follow-up request could not be saved just now.', 'adaptive-customer-engagement' ), array( 'status' => 500 ) );
 		}
 
+		$this->maybe_notify_team( $thread, array( 'contact_name' => $contact_name, 'contact_email' => $contact_email, 'contact_phone' => $contact_phone ), '', array(), $payload, 'follow-up' );
 		$lead_capture = $this->lead_profiles->capture_from_contact(
 			$thread,
 			$session,
@@ -1316,6 +1327,83 @@ final class FrontendChatService {
 	}
 
 	/**
+	 * Tell the team about a lead: when a visitor asks for a call back, or shares an email/phone in chat
+	 * with something commercial going on (a basket, a quote). One email per conversation per day, to the
+	 * address in the assistant settings (lead_notification_email) or the site admin, filterable.
+	 *
+	 * @param array<string, mixed>              $thread       Conversation.
+	 * @param array<string, mixed>              $captured     Details captured this turn.
+	 * @param string                            $message      Visitor message (empty for the call-back form).
+	 * @param array<int, array<string, mixed>>  $cart_actions Basket actions this turn.
+	 * @param array<string, mixed>              $payload      Request payload (page URL).
+	 * @param string                            $trigger      Why: "follow-up" or "chat".
+	 * @return void
+	 */
+	private function maybe_notify_team( array $thread, array $captured, string $message, array $cart_actions, array $payload, string $trigger = 'chat' ): void {
+		$email = sanitize_email( (string) ( $captured['contact_email'] ?? $thread['contact_email'] ?? '' ) );
+		$phone = sanitize_text_field( (string) ( $captured['contact_phone'] ?? $thread['contact_phone'] ?? '' ) );
+		if ( '' === $email && '' === $phone ) {
+			return;
+		}
+		if ( 'chat' === $trigger && empty( $cart_actions ) && empty( $captured['contact_email'] ) && empty( $captured['contact_phone'] ) ) {
+			return; // Nothing new this turn.
+		}
+		$conversation_id = (int) ( $thread['id'] ?? 0 );
+		$key             = 'ace_lead_notified_' . $conversation_id . '_' . $trigger;
+		if ( $conversation_id > 0 && get_transient( $key ) ) {
+			return;
+		}
+		$settings = Settings::get();
+		$ai_agent = is_array( $settings['ai_agent'] ?? null ) ? $settings['ai_agent'] : array();
+		$to       = sanitize_email( (string) ( $ai_agent['lead_notification_email'] ?? '' ) ) ?: (string) get_option( 'admin_email' );
+		/**
+		 * Filter where lead notifications go (empty string switches them off).
+		 *
+		 * @param string $to      Email address.
+		 * @param array  $thread  Conversation.
+		 * @param string $trigger Trigger.
+		 */
+		$to   = (string) apply_filters( 'ace_ai_lead_notification_email', $to, $thread, $trigger );
+		$lead = array(
+			'name'      => sanitize_text_field( (string) ( $captured['contact_name'] ?? $thread['contact_name'] ?? '' ) ),
+			'email'     => $email,
+			'phone'     => $phone,
+			'company'   => sanitize_text_field( (string) ( $captured['contact_company'] ?? $thread['contact_company'] ?? '' ) ),
+			'summary'   => sanitize_textarea_field( (string) ( $thread['lead_summary'] ?? '' ) ),
+			'message'   => sanitize_textarea_field( $message ),
+			'page_url'  => esc_url_raw( (string) ( $payload['page_url'] ?? $thread['page_url'] ?? '' ) ),
+			'basket'    => array_map( static fn( $a ) => sprintf( '%d × %s (%s)', (int) ( $a['quantity'] ?? 1 ), (string) ( $a['name'] ?? '' ), (string) ( $a['price'] ?? '' ) ), $cart_actions ),
+			'admin_url' => admin_url( 'admin.php?page=adaptive-customer-engagement-dashboard' ),
+			'trigger'   => $trigger,
+		);
+		/**
+		 * A lead was captured by the assistant (fires before the email, whether or not one is sent).
+		 *
+		 * @param array<string, mixed> $lead   Lead details.
+		 * @param array<string, mixed> $thread Conversation.
+		 */
+		do_action( 'ace_ai_lead_captured', $lead, $thread );
+		if ( '' !== $to && is_email( $to ) ) {
+			$subject = sprintf( '[%s] %s: %s', wp_strip_all_tags( get_bloginfo( 'name' ) ), 'follow-up' === $trigger ? __( 'Call back requested', 'adaptive-customer-engagement' ) : __( 'New lead from the assistant', 'adaptive-customer-engagement' ), $lead['name'] ?: $lead['email'] ?: $lead['phone'] );
+			$lines   = array();
+			foreach ( array( 'name' => 'Name', 'company' => 'Company', 'email' => 'Email', 'phone' => 'Phone', 'page_url' => 'Page', 'message' => 'Last message', 'summary' => 'Summary' ) as $field => $label ) {
+				if ( '' !== (string) $lead[ $field ] ) {
+					$lines[] = $label . ': ' . $lead[ $field ];
+				}
+			}
+			if ( $lead['basket'] ) {
+				$lines[] = 'Basket: ' . implode( '; ', $lead['basket'] );
+			}
+			$lines[] = '';
+			$lines[] = 'Open in the Adaptive Engagement dashboard: ' . $lead['admin_url'];
+			wp_mail( $to, $subject, implode( "\n", $lines ) );
+		}
+		if ( $conversation_id > 0 ) {
+			set_transient( $key, 1, DAY_IN_SECONDS );
+		}
+	}
+
+	/**
 	 * Append a deterministic lead-capture question when the AI has not done so.
 	 *
 	 * @param string               $reply    Assistant reply.
@@ -1324,10 +1412,16 @@ final class FrontendChatService {
 	 * @param array<string, mixed> $captured Freshly captured lead data.
 	 * @return string
 	 */
-	private function apply_sales_follow_up_prompt( string $reply, string $message, array $thread, array $captured ): string {
+	private function apply_sales_follow_up_prompt( string $reply, string $message, array $thread, array $captured, int $user_turns = 1, bool $added_to_basket = false ): string {
 		$reply = trim( $reply );
 
 		if ( ! $this->is_commercial_enquiry( $message ) ) {
+			return $reply;
+		}
+		// Ask for details at the right moment: once something is in the basket, when the visitor shows
+		// buying intent, or once the conversation has got going. Never on a first "what sizes do you do?".
+		$buying_intent = (bool) preg_match( '/\\b(quote|quotes|order|ordering|buy|purchase|basket|checkout|invoice|lead time|bulk|how many|price for|deliver(?:y|ed)? to)\\b/i', $message );
+		if ( ! $added_to_basket && ! $buying_intent && $user_turns < 3 && empty( $captured['contact_email'] ) && empty( $captured['contact_phone'] ) ) {
 			return $reply;
 		}
 

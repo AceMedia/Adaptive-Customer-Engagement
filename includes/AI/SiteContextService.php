@@ -3453,13 +3453,21 @@ final class SiteContextService {
 			return $attachments;
 		}
 
+		// Fallbacks (documents from related products, then a title search) only count when the document
+		// is clearly about this product: same capacity figure and a shared name word. Otherwise a 1100L bin
+		// picks up the 820L datasheet or a company policy that merely shares a category.
+		$related_filter = function ( \WP_Post $attachment ) use ( $product_post, &$append_attachment ): void {
+			if ( $this->pdf_matches_product( $attachment, $product_post ) ) {
+				$append_attachment( $attachment );
+			}
+		};
 		foreach ( $this->get_related_product_posts_for_documents( $product_post, $product_source ) as $related_post ) {
 			foreach ( $this->get_attached_pdf_posts( array( (int) $related_post->ID ) ) as $attachment ) {
-				$append_attachment( $attachment );
+				$related_filter( $attachment );
 			}
 
 			foreach ( $this->extract_linked_pdf_attachments( $related_post ) as $attachment ) {
-				$append_attachment( $attachment );
+				$related_filter( $attachment );
 			}
 
 			if ( count( $attachments ) >= 4 ) {
@@ -3472,7 +3480,7 @@ final class SiteContextService {
 		}
 
 		foreach ( $this->search_pdf_attachments_by_terms( $this->get_product_document_search_terms( $product_post, $product_source ) ) as $attachment ) {
-			$append_attachment( $attachment );
+			$related_filter( $attachment );
 
 			if ( count( $attachments ) >= 4 ) {
 				break;
@@ -3480,6 +3488,41 @@ final class SiteContextService {
 		}
 
 		return array_slice( $attachments, 0, 4 );
+	}
+
+	/**
+	 * Is a PDF found by association actually about this product? It must mention the same capacity figure
+	 * (when the product has one) and share at least one non-generic word with the product title.
+	 *
+	 * @param \WP_Post $attachment   PDF attachment.
+	 * @param \WP_Post $product_post Product.
+	 * @return bool
+	 */
+	private function pdf_matches_product( \WP_Post $attachment, \WP_Post $product_post ): bool {
+		$doc     = $this->normalise_text( $attachment->post_title . ' ' . basename( (string) get_attached_file( $attachment->ID ) ) );
+		$product = $this->normalise_text( (string) $product_post->post_title );
+		if ( preg_match_all( '/\\b(\\d{2,4})\\s?(?:l|ltr|litres?|liters?)?\\b/', $product, $numbers ) && ! empty( $numbers[1] ) ) {
+			$figures = array_unique( array_filter( $numbers[1], static fn( $n ) => (int) $n >= 50 ) );
+			if ( $figures ) {
+				$found = false;
+				foreach ( $figures as $figure ) {
+					if ( preg_match( '/\\b' . preg_quote( $figure, '/' ) . '\\b/', $doc ) ) {
+						$found = true;
+						break;
+					}
+				}
+				if ( ! $found ) {
+					return false;
+				}
+			}
+		}
+		$generic = array( 'bin', 'bins', 'body', 'wheelie', 'container', 'containers', 'litre', 'litres', 'range', 'the', 'and', 'with' );
+		foreach ( $this->extract_terms( $product ) as $term ) {
+			if ( strlen( $term ) >= 4 && ! in_array( $term, $generic, true ) && ! ctype_digit( $term ) && false !== strpos( $doc, $term ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
