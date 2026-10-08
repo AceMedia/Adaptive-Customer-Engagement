@@ -53,7 +53,9 @@ final class AgentSurface {
 	/** The surface follows the public chat: on when the assistant and its widget are on for this site. */
 	public function enabled(): bool {
 		$ai_agent = is_array( Settings::get()['ai_agent'] ?? null ) ? Settings::get()['ai_agent'] : array();
-		$enabled  = ! empty( $ai_agent['enabled'] ) && ! empty( $ai_agent['frontend_chat_enabled'] ) && empty( $ai_agent['frontend_chat_admin_only'] );
+		$chat_on  = ! empty( $ai_agent['enabled'] ) && ! empty( $ai_agent['frontend_chat_enabled'] ) && empty( $ai_agent['frontend_chat_admin_only'] );
+		// Agents can be served without the visitor-facing widget: set ai_agent.agent_surface_enabled.
+		$enabled = $chat_on || ! empty( $ai_agent['agent_surface_enabled'] );
 		/**
 		 * Filter whether the agent surface (abilities, MCP server, discovery files) is available.
 		 *
