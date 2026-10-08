@@ -345,14 +345,22 @@ final class LeadProfileService {
 			$phone = (string) $phone_match[1];
 		}
 
-		if ( '' === $name && preg_match( '/\b(?:my name is|name is|i am|i\'m|this is|it\'s)\s+([a-z][a-z\'\-]+(?:\s+[a-z][a-z\'\-]+){0,2})\b/i', $message, $name_match ) ) {
-			$candidate = trim( preg_replace( '/\s+/', ' ', (string) $name_match[1] ) ?: '' );
-
-			if ( ! preg_match( '/\b(looking|interested|after|trying|buying|shopping|purchase|purchasing|ordering|procuring|needing|from|with|the)\b/i', $candidate ) ) {
-				$name = $candidate;
+		if ( '' === $name && preg_match( '/\b(?:my name is|name is|i am|i\'m|this is|it\'s)\s+([A-Z][a-z\'\-]+(?:\s+[A-Z][a-z\'\-]+){0,2}?)(?=\s+(?:from|at|with|and|of|here|calling|speaking|again|for)\b|\s*[,.;:!?]|\s*$)/i', $message, $name_match ) ) {
+			$candidate = trim( (string) $name_match[1] );
+			if ( ! preg_match( '/\b(looking|interested|after|trying|buying|shopping|purchase|purchasing|ordering|procuring|needing|from|with|the|not|sure|just|very|really|happy|fine|good|here|back)\b/i', $candidate ) ) {
+				$name = $this->clean_person_name( $candidate );
 			}
 		}
-
+		// "Shane Rounce, AceMedia Ltd" or "Shane Rounce from AceMedia" at the start of a message.
+		if ( '' === $name && preg_match( '/^\s*([A-Z][a-z\'\-]+\s+[A-Z][a-z\'\-]+)(?:\s*[,\-–]\s*|\s+(?:from|at|of)\s+)([A-Z][A-Za-z0-9&.\' -]{1,60}?)(?=\s*[,.;:\-–]|\s+(?:ltd|limited|plc|group|llc|inc|co)\b|\s*$)/', $message, $start_match ) ) {
+			$name = $this->clean_person_name( (string) $start_match[1] );
+			if ( '' === $company ) {
+				$company = $this->clean_company_name( (string) $start_match[2] );
+			}
+		}
+		if ( '' === $company && '' !== $name && preg_match( '/\b(?:from|at|with)\s+([A-Z][A-Za-z0-9&.\' -]{1,60}?)(?=\s*[,.;:!?]|\s+(?:ltd|limited|plc|group|llc|inc|co)\b|\s*$)/', $message, $from_match ) ) {
+			$company = $this->clean_company_name( (string) $from_match[1] );
+		}
 		$company_patterns = array(
 			'/\b(?:company|organisation|organization|business)(?:\s+name)?\s*(?:is|:)\s+([A-Za-z0-9&.,\' -]{2,120})/i',
 			'/\b(?:shopping for|buying for|looking to buy for|purchase for|purchasing for|looking to purchase for|ordering for|procuring for|on behalf of)\s+([A-Za-z0-9&.,\' -]{3,120}?)(?:[\r\n]|[?.!,]|$)/i',
