@@ -1424,6 +1424,10 @@ final class FrontendChatService {
 		if ( ! $added_to_basket && ! $buying_intent && $user_turns < 3 && empty( $captured['contact_email'] ) && empty( $captured['contact_phone'] ) ) {
 			return $reply;
 		}
+		// The model was told to ask for details itself; do not ask twice in one reply.
+		if ( preg_match( '/\b(company|organisation|organization|email|e-mail|phone|name)\b[^.?!]{0,80}\?/i', $reply ) ) {
+			return $reply;
+		}
 
 		if ( ( ! empty( $captured['contact_email'] ) || ! empty( $captured['contact_phone'] ) ) && ! preg_match( '/\b(saved|follow up|get back|team)\b/i', $reply ) ) {
 			return $reply . "\n\n" . __( 'Thanks — I have saved those details so the team can follow this up properly.', 'adaptive-customer-engagement' );

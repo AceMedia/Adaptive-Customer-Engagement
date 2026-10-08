@@ -3446,7 +3446,7 @@ final class SiteContextService {
 		}
 
 		foreach ( $this->extract_linked_pdf_attachments( $product_post ) as $attachment ) {
-			$append_attachment( $attachment );
+			if ( $this->pdf_matches_product( $attachment, $product_post ) ) { $append_attachment( $attachment ); } // Linked from the page, but still only when it is about this product.
 		}
 
 		if ( ! empty( $attachments ) ) {
