@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.12';
+	public const SCHEMA_VERSION        = '0.1.14';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -285,6 +285,36 @@ final class Schema {
 			KEY last_seen (last_seen)
 		) {$collate};";
 
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'basket_recovery' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			token CHAR(32) NOT NULL,
+			session_key VARCHAR(64) NOT NULL,
+			email VARCHAR(190) NULL,
+			email_hash CHAR(64) NOT NULL,
+			cart LONGTEXT NULL,
+			status VARCHAR(20) NOT NULL DEFAULT 'pending',
+			sent_at DATETIME NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY token (token),
+			UNIQUE KEY session_key (session_key),
+			KEY email_hash (email_hash),
+			KEY status (status),
+			KEY updated_at (updated_at)
+		) {$collate};";
+
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'basket_events' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			basket_id BIGINT UNSIGNED NOT NULL,
+			event VARCHAR(40) NOT NULL,
+			source VARCHAR(40) NULL,
+			created_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			KEY basket_event (basket_id, event),
+			KEY event_created (event, created_at)
+		) {$collate};";
+
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'form_submissions' ) . " (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			session_id BIGINT UNSIGNED NULL,
@@ -427,6 +457,8 @@ final class Schema {
 			self::table_name( 'chat_messages' ),
 			self::table_name( 'ip_company_memory' ),
 			self::table_name( 'form_submissions' ),
+			self::table_name( 'basket_recovery' ),
+			self::table_name( 'basket_events' ),
 		);
 	}
 

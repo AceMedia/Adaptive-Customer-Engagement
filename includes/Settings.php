@@ -82,6 +82,19 @@ final class Settings {
 				'chat_api_endpoint'       => '',
 				'webhook_secret'          => '',
 			),
+			'basket_recovery' => array(
+				'enabled'        => false,
+				'nudge_enabled'  => true,
+				'delay_hours'    => 2,
+				'from_name'      => '',
+				'from_email'     => '',
+				'subject'        => 'Your basket and quote from {site}',
+				'intro'          => 'Thank you for your interest. You left items in your basket, so we have put them together as a quote in case it is useful.',
+				'contact_phone'  => '',
+				'contact_email'  => '',
+				'open_tracking'  => true,
+				'retention_days' => 30,
+			),
 			'ai_agent'       => array(
 				'enabled'                    => false,
 				'mode'                       => 'chat',
@@ -373,6 +386,7 @@ final class Settings {
 		$privacy        = isset( $settings['privacy'] ) && is_array( $settings['privacy'] ) ? $settings['privacy'] : array();
 		$enrichment     = isset( $settings['enrichment'] ) && is_array( $settings['enrichment'] ) ? $settings['enrichment'] : array();
 		$amazon_connect = isset( $settings['amazon_connect'] ) && is_array( $settings['amazon_connect'] ) ? $settings['amazon_connect'] : array();
+		$basket         = isset( $settings['basket_recovery'] ) && is_array( $settings['basket_recovery'] ) ? $settings['basket_recovery'] : array();
 		$ai_agent       = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$provider       = sanitize_key( $ai_agent['provider'] ?? $defaults['ai_agent']['provider'] );
 		$mode           = sanitize_key( $ai_agent['mode'] ?? $defaults['ai_agent']['mode'] );
@@ -458,6 +472,19 @@ final class Settings {
 				'chat_contact_flow_id'    => sanitize_text_field( $amazon_connect['chat_contact_flow_id'] ?? $defaults['amazon_connect']['chat_contact_flow_id'] ),
 				'chat_api_endpoint'       => esc_url_raw( $amazon_connect['chat_api_endpoint'] ?? $defaults['amazon_connect']['chat_api_endpoint'] ),
 				'webhook_secret'          => sanitize_text_field( $amazon_connect['webhook_secret'] ?? $defaults['amazon_connect']['webhook_secret'] ),
+			),
+			'basket_recovery' => array(
+				'enabled'        => rest_sanitize_boolean( $basket['enabled'] ?? $defaults['basket_recovery']['enabled'] ),
+				'nudge_enabled'  => rest_sanitize_boolean( $basket['nudge_enabled'] ?? $defaults['basket_recovery']['nudge_enabled'] ),
+				'delay_hours'    => max( 1, min( 168, absint( $basket['delay_hours'] ?? $defaults['basket_recovery']['delay_hours'] ) ) ),
+				'from_name'      => sanitize_text_field( $basket['from_name'] ?? $defaults['basket_recovery']['from_name'] ),
+				'from_email'     => sanitize_email( (string) ( $basket['from_email'] ?? $defaults['basket_recovery']['from_email'] ) ),
+				'subject'        => sanitize_text_field( $basket['subject'] ?? $defaults['basket_recovery']['subject'] ),
+				'intro'          => sanitize_textarea_field( $basket['intro'] ?? $defaults['basket_recovery']['intro'] ),
+				'contact_phone'  => sanitize_text_field( $basket['contact_phone'] ?? $defaults['basket_recovery']['contact_phone'] ),
+				'contact_email'  => sanitize_email( (string) ( $basket['contact_email'] ?? $defaults['basket_recovery']['contact_email'] ) ),
+				'open_tracking'  => rest_sanitize_boolean( $basket['open_tracking'] ?? $defaults['basket_recovery']['open_tracking'] ),
+				'retention_days' => max( 7, min( 365, absint( $basket['retention_days'] ?? $defaults['basket_recovery']['retention_days'] ) ) ),
 			),
 			'ai_agent'       => array(
 				'enabled'                   => rest_sanitize_boolean( $ai_agent['enabled'] ?? $defaults['ai_agent']['enabled'] ),

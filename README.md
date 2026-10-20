@@ -170,6 +170,17 @@ Saved reporting segments preserve useful filter combinations, and the dashboard 
 
 The admin now leans much more heavily on **single-item takeover views** for sessions, companies, calls, and numbers. Those views include summary cards, charts, related activity tables, and cross-links into the other reporting surfaces so a top-level trend can be followed into the underlying record without losing context.
 
+## Abandoned basket quote email
+
+A WooCommerce-only module (it does nothing unless WooCommerce is active). Everything is off until switched on per site under Privacy > Abandoned basket quote email, so on a multisite network each shop opts in separately.
+
+- **Capture:** a guest saves their basket from the cart or checkout notice, or simply types their email in the checkout (block or classic). The basket is stored against a random token. Opted-out addresses are never captured again (only a salted hash is kept).
+- **Send:** after the delay (default 2 hours) an Action Scheduler job sends one plain email listing the lines excluding VAT as a 14-day quote, with a restore link, a create-an-account link, contact details and an opt-out link. One email per basket; none if an order was placed, and none to an address emailed in the last 14 days.
+- **Tracking:** first-party, anonymous events in `ace_basket_events`: `basket_saved`, `email_sent`, `email_opened` (1 pixel image, switchable), `link_clicked`, `basket_restored`, `order_placed_after_recovery`, `opt_out`. Email links are signed and pass through a plugin redirect that records the click and adds `utm_source=basket-recovery&utm_medium=email&utm_campaign=quote`. When a `dataLayer` exists, `basket_recovery_restored` and `basket_recovery_converted` are pushed.
+- **Results:** counts in the settings screen and `wp ace basket-recovery stats [--from=] [--to=] [--format=]`.
+- **Retention:** baskets are purged after the retention setting (30 days default) by the daily privacy purge. Sends are logged to the WooCommerce log source `ace-basket-recovery`.
+- **Testing without sending:** the `ace_basket_recovery_pre_send` filter receives the email arguments and can return true to bypass `wp_mail()`.
+
 ## WooCommerce reporting
 
 The WooCommerce screen surfaces **repeat product and category interest**, plus the sessions and companies showing those repeat patterns. Session and company detail views also summarise the strongest commerce interest signals attached to that record.

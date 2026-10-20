@@ -4313,6 +4313,58 @@ function SettingsPageIntro({ eyebrow, title, description, highlights = [] }) {
 	);
 }
 
+
+function BasketRecoveryStats() {
+	const [days, setDays] = useState('30');
+	const [data, setData] = useState(null);
+	const [error, setError] = useState('');
+
+	useEffect(() => {
+		let cancelled = false;
+		const to = new Date();
+		const from = new Date(Date.now() - Number(days) * 86400000);
+		const fmt = (d) => d.toISOString().slice(0, 10);
+		setError('');
+		request(withQuery('/basket-recovery/stats', { from: fmt(from), to: fmt(to) }))
+			.then((response) => { if (!cancelled) { setData(response); } })
+			.catch((err) => { if (!cancelled) { setError(err.message); } });
+		return () => { cancelled = true; };
+	}, [days]);
+
+	const steps = [
+		['saved', __('Saved', 'adaptive-customer-engagement')],
+		['sent', __('Emailed', 'adaptive-customer-engagement')],
+		['opened', __('Opened', 'adaptive-customer-engagement')],
+		['clicked', __('Clicked', 'adaptive-customer-engagement')],
+		['restored', __('Restored', 'adaptive-customer-engagement')],
+		['converted', __('Converted', 'adaptive-customer-engagement')],
+		['opted_out', __('Opted out', 'adaptive-customer-engagement')],
+	];
+
+	return createElement(SettingsPanel, {
+		title: __('Basket recovery results', 'adaptive-customer-engagement'),
+		description: __('Distinct baskets at each step. "Converted" means an order was placed after the basket was restored from a recovery link. Also available as wp ace basket-recovery stats.', 'adaptive-customer-engagement'),
+	},
+	createElement(SelectControl, {
+		label: __('Period', 'adaptive-customer-engagement'),
+		value: days,
+		options: [
+			{ label: __('Last 7 days', 'adaptive-customer-engagement'), value: '7' },
+			{ label: __('Last 30 days', 'adaptive-customer-engagement'), value: '30' },
+			{ label: __('Last 90 days', 'adaptive-customer-engagement'), value: '90' },
+			{ label: __('Last 365 days', 'adaptive-customer-engagement'), value: '365' },
+		],
+		onChange: setDays,
+	}),
+	error ? createElement(Notice, { status: 'error', isDismissible: false }, error) : null,
+	createElement('div', { className: 'ace-basket-stats', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '12px', marginTop: '12px' } },
+		steps.map(([key, label]) => createElement('div', { key, style: { border: '1px solid #dcdcde', padding: '12px', background: '#fff' } },
+			createElement('div', { style: { fontSize: '24px', fontWeight: 600, lineHeight: 1.2 } }, data ? String(data.counts[key] ?? 0) : '-'),
+			createElement('div', { style: { color: '#50575e', fontSize: '12px' } }, label)
+		))
+	));
+}
+
 function SettingsPanel({ title, description, children, tone = 'default', className = '' }) {
 	return createElement(
 		Card,
@@ -5395,6 +5447,7 @@ function SettingsView({ section = 'settings', active }) {
 
 	const setTracking = (next) => setSettings({ ...settings, tracking: { ...settings.tracking, ...next } });
 	const setPrivacy = (next) => setSettings({ ...settings, privacy: { ...settings.privacy, ...next } });
+	const setBasket = (next) => setSettings({ ...settings, basket_recovery: { ...settings.basket_recovery, ...next } });
 	const setEnrichment = (next) => setSettings({ ...settings, enrichment: { ...settings.enrichment, ...next } });
 	const setAmazonConnect = (next) => setSettings({ ...settings, amazon_connect: { ...settings.amazon_connect, ...next } });
 	const trackingEnabled = !!settings.enabled;
@@ -5527,7 +5580,28 @@ function SettingsView({ section = 'settings', active }) {
 			),
 			createElement(SettingsActionRow, null,
 				createElement(Button, { variant: 'secondary', onClick: purge, disabled: busy }, __('Run privacy purge now', 'adaptive-customer-engagement'))
-			))
+			)),
+			config.wooActive && settings.basket_recovery ? createElement(SettingsPanel, {
+				title: __('Abandoned basket quote email', 'adaptive-customer-engagement'),
+				description: __('Off by default and switched on per site. A guest who saves their basket (or types their email at checkout) and does not order within the delay gets one plain email listing the basket excluding VAT as a 14-day quote, with a link back to the basket and an opt-out link. The lawful basis is legitimate interest. Baskets are kept for the retention period below (30 days by default) and then purged by the daily privacy purge; only a hash of an address that has opted out is kept. Event counts are anonymous.', 'adaptive-customer-engagement'),
+			},
+			createElement(SettingsToggleList, null,
+				createElement(ToggleControl, { label: __('Send abandoned basket quote emails on this site', 'adaptive-customer-engagement'), checked: !!settings.basket_recovery.enabled, onChange: (next) => setBasket({ enabled: next }) }),
+				createElement(ToggleControl, { label: __('Show the "save your basket" notice on the cart and checkout', 'adaptive-customer-engagement'), checked: !!settings.basket_recovery.nudge_enabled, onChange: (next) => setBasket({ nudge_enabled: next }) }),
+				createElement(ToggleControl, { label: __('Track email opens (1 pixel image)', 'adaptive-customer-engagement'), checked: !!settings.basket_recovery.open_tracking, onChange: (next) => setBasket({ open_tracking: next }) })
+			),
+			createElement(SettingsFieldGrid, null,
+				createElement(TextControl, { label: __('Delay before sending (hours)', 'adaptive-customer-engagement'), type: 'number', value: settings.basket_recovery.delay_hours, onChange: (next) => setBasket({ delay_hours: Number(next || 1) }) }),
+				createElement(TextControl, { label: __('Retention (days)', 'adaptive-customer-engagement'), type: 'number', value: settings.basket_recovery.retention_days, onChange: (next) => setBasket({ retention_days: Number(next || 30) }) }),
+				createElement(TextControl, { label: __('Sender name', 'adaptive-customer-engagement'), value: settings.basket_recovery.from_name, help: __('Blank uses the site name.', 'adaptive-customer-engagement'), onChange: (next) => setBasket({ from_name: next }) }),
+				createElement(TextControl, { label: __('Sender email address', 'adaptive-customer-engagement'), type: 'email', value: settings.basket_recovery.from_email, help: __('Blank uses enquiries@ on the site admin email domain.', 'adaptive-customer-engagement'), onChange: (next) => setBasket({ from_email: next }) }),
+				createElement(TextControl, { label: __('Subject ({site} = site name)', 'adaptive-customer-engagement'), value: settings.basket_recovery.subject, onChange: (next) => setBasket({ subject: next }) }),
+				createElement(TextControl, { label: __('Contact phone shown in the email', 'adaptive-customer-engagement'), value: settings.basket_recovery.contact_phone, onChange: (next) => setBasket({ contact_phone: next }) }),
+				createElement(TextControl, { label: __('Contact email shown in the email', 'adaptive-customer-engagement'), type: 'email', value: settings.basket_recovery.contact_email, onChange: (next) => setBasket({ contact_email: next }) }),
+			),
+			createElement(TextareaControl, { label: __('Introduction text', 'adaptive-customer-engagement'), value: settings.basket_recovery.intro, onChange: (next) => setBasket({ intro: next }) })
+			) : null,
+			config.wooActive ? createElement(BasketRecoveryStats, null) : null
 		),
 		enrichment: createElement(
 			Fragment,

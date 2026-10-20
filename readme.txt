@@ -4,7 +4,7 @@ Tags: lead tracking, analytics, attribution, phone tracking, b2b
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.2
+Stable tag: 0.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,11 @@ Yes. The frontend website assistant is now plugin-managed and uses the saved Ope
 Yes. It tracks product and category interest and surfaces repeat-interest reporting across products, categories, sessions, and companies.
 
 == Changelog ==
+
+= 0.1.4 =
+* Add an optional abandoned-basket quote email for WooCommerce sites. Off by default and switched on per site under Privacy. One email per basket, 14-day quote, restore and sign-up links, opt-out and a retention purge.
+* Show guests a small "save your basket" notice on the cart and checkout, and capture the checkout email as it is typed.
+* Record each step (saved, emailed, opened, clicked, restored, converted, opted out) as anonymous first-party events, with a stats panel, `wp ace basket-recovery stats`, and GA4 dataLayer events for restore and conversion.
 
 = 0.1.2 =
 * Sign in with ChatGPT from Ace AI connection settings through a second, isolated Codex instance on the server (device-code login, no helper download or credential file).

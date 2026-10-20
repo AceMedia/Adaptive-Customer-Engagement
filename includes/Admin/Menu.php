@@ -136,6 +136,7 @@ final class Menu {
 					 * reappears automatically while sample rows exist (so
 					 * they can be removed) or when this filter opts in.
 					 */
+					'wooActive'       => class_exists( 'WooCommerce' ),
 					'showSampleTools' => (bool) apply_filters( 'ace_show_sample_data_tools', false ),
 					'hiddenPages'     => current_user_can( Capabilities::MANAGE ) ? array() : self::ADMIN_ONLY_PAGES,
 				)

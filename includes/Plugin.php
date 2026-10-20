@@ -45,6 +45,9 @@ use ACE\AdaptiveCustomerEngagement\Tracking\FormCaptureService;
 use ACE\AdaptiveCustomerEngagement\Tracking\SessionManager;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooCommerceContext;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooOrderCaptureService;
+use ACE\AdaptiveCustomerEngagement\Tracking\BasketRecoveryService;
+use ACE\AdaptiveCustomerEngagement\Tracking\BasketRecoveryCli;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\BasketRecoveryRepository;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -132,8 +135,10 @@ final class Plugin {
 		( new FormCaptureService( $form_submissions, $session_repository, $company_repository, $ip_company_memory ) )->register();
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			\WP_CLI::add_command( 'ace-engagement import-ace-entries', array( AceEntriesImporter::class, 'cli' ) );
+			\WP_CLI::add_command( 'ace basket-recovery', BasketRecoveryCli::class );
 		}
 		( new WooOrderCaptureService( $session_repository, $company_repository, $ip_company_memory, $privacy ) )->register();
+		( new BasketRecoveryService( new BasketRecoveryRepository() ) )->register();
 		add_filter( 'rest_authentication_errors', array( $this, 'allow_public_endpoints_without_nonce' ), 101 );
 		$this->maybe_migrate_voice_provider();
 		$this->maybe_backfill_company_classification();
