@@ -3215,6 +3215,56 @@ function CompaniesTable({ items, onView, compact = false }) {
 	);
 }
 
+function BusinessAddressPanel({ company }) {
+	const [addresses, setAddresses] = useState([]);
+	const [placesSettings, setPlacesSettings] = useState(null);
+	const [draft, setDraft] = useState({ line_1: '', line_2: '', city: '', region: '', postcode: '', country_code: 'GB' });
+	const [candidates, setCandidates] = useState({});
+	const [notice, setNotice] = useState('');
+	const [emptyLookup, setEmptyLookup] = useState({});
+	const [busy, setBusy] = useState(false);
+	const base = `/admin/companies/${company.id}/business-addresses`;
+	const reload = () => request(base).then(setAddresses).catch(() => setNotice(__('Address records could not be loaded.', 'adaptive-customer-engagement')));
+	useEffect(() => { setCandidates({}); setEmptyLookup({}); setDraft({ line_1: '', line_2: '', city: '', region: '', postcode: '', country_code: 'GB' }); reload(); request('/admin/places/settings').then(setPlacesSettings).catch(() => setNotice(__('Places settings could not be loaded.', 'adaptive-customer-engagement'))); }, [company.id]);
+	const act = async (path, data = {}) => {
+		setBusy(true);
+		setNotice('');
+		try {
+			const result = await request(path, { method: 'POST', data });
+			await reload();
+			return result;
+		} catch (error) {
+			setNotice(getApiErrorMessage(error, __('The address action failed.', 'adaptive-customer-engagement')));
+			return null;
+		} finally { setBusy(false); }
+	};
+	return createElement(SettingsPanel, { title: __('Business premises and Places', 'adaptive-customer-engagement'), description: __('First-party addresses stay local until an administrator independently verifies public business premises. A billing company or matching postcode alone is not proof.', 'adaptive-customer-engagement') },
+		notice && createElement(Notice, { status: 'warning', isDismissible: false }, notice),
+		placesSettings && createElement(Notice, { status: 'info', isDismissible: false }, placesSettings.staging_blocked ? __('Google Places lookup is blocked in this environment.', 'adaptive-customer-engagement') : !placesSettings.enabled ? __('Google Places is disabled in Enrichment settings.', 'adaptive-customer-engagement') : !placesSettings.has_key ? __('Add a Google Places key in Enrichment settings before searching.', 'adaptive-customer-engagement') : __('Google Places is ready for an administrator-requested search.', 'adaptive-customer-engagement')),
+		createElement(SettingsFieldGrid, null,
+			...Object.entries({ line_1: __('Street and building', 'adaptive-customer-engagement'), line_2: __('Unit or second line', 'adaptive-customer-engagement'), city: __('Town or city', 'adaptive-customer-engagement'), region: __('Region', 'adaptive-customer-engagement'), postcode: __('Postcode', 'adaptive-customer-engagement'), country_code: __('Two-letter country code', 'adaptive-customer-engagement') }).map(([key, label]) => createElement(TextControl, { key, label, value: draft[key], onChange: (value) => setDraft({ ...draft, [key]: value }) }))
+		),
+		createElement(Button, { variant: 'secondary', disabled: busy || !draft.line_1 || !draft.postcode || !draft.country_code, onClick: async () => { if (await act(base, draft)) setDraft({ line_1: '', line_2: '', city: '', region: '', postcode: '', country_code: 'GB' }); } }, __('Save address for review', 'adaptive-customer-engagement')),
+		addresses.map((address) => createElement('div', { key: address.id, style: { borderTop: '1px solid #ddd', padding: '12px 0' } },
+			createElement('strong', null, [address.line_1, address.line_2, address.city, address.postcode, address.country_code].filter(Boolean).join(', ')),
+			createElement('p', null, `${address.source === 'admin' ? __('Added by an administrator', 'adaptive-customer-engagement') : address.source === 'woocommerce_billing' ? sprintf(__('Order #%s billing address', 'adaptive-customer-engagement'), address.source_record) : sprintf(__('Form submission #%s', 'adaptive-customer-engagement'), address.source_record)} · ${address.captured_at || ''} · ${address.public_premises == 1 ? __('Verified public premises', 'adaptive-customer-engagement') : __('Unverified, kept local', 'adaptive-customer-engagement')}${address.place_id ? ` · Place ID: ${address.place_id}` : ''}`),
+			createElement(Button, { variant: 'tertiary', isDestructive: true, disabled: busy, onClick: async () => { if (!window.confirm(__('Delete this local address and its linked Place ID?', 'adaptive-customer-engagement'))) return; setBusy(true); try { await request(`${base}/${address.id}`, { method: 'DELETE' }); await reload(); setCandidates({ ...candidates, [address.id]: [] }); } catch (error) { setNotice(getApiErrorMessage(error, __('Address could not be deleted.', 'adaptive-customer-engagement'))); } setBusy(false); } }, __('Delete address', 'adaptive-customer-engagement')),
+			address.public_premises != 1 && createElement(Button, { variant: 'secondary', disabled: busy, onClick: () => { if (window.confirm(__('I have independently checked that this is a public business premises address, not a home or customer billing address.', 'adaptive-customer-engagement'))) act(`${base}/${address.id}/verify`, { public_premises_confirmed: true }); } }, __('Confirm public premises', 'adaptive-customer-engagement')),
+			address.public_premises == 1 && placesSettings?.enabled && placesSettings?.has_key && !placesSettings?.staging_blocked && createElement(Button, { variant: 'secondary', disabled: busy, onClick: async () => { const result = await act(`${base}/${address.id}/lookup`); if (result) { setCandidates({ ...candidates, [address.id]: result.candidates || [] }); setEmptyLookup({ ...emptyLookup, [address.id]: !(result.candidates || []).length }); } } }, __('Search Google Places', 'adaptive-customer-engagement')),
+			emptyLookup[address.id] && createElement('p', null, __('No matching places found. Review the first-party address and try again only if appropriate.', 'adaptive-customer-engagement')),
+			(candidates[address.id] || []).length > 0 && createElement('div', null,
+				createElement('p', { translate: 'no', style: { fontFamily: 'Arial, sans-serif', fontSize: 14, fontWeight: 400 } }, 'Google Maps'),
+				candidates[address.id].map((candidate) => createElement('div', { key: candidate.id, style: { marginBottom: 12 } },
+					createElement('strong', null, candidate.name), createElement('p', null, candidate.address),
+					createElement('p', null, `${candidate.business_status || ''} · ${__('Our assessment', 'adaptive-customer-engagement')}: ${candidate.assessment}`),
+					(candidate.attributions || []).map((attribution) => createElement('p', { key: attribution.uri || attribution.display_name }, attribution.uri ? createElement('a', { href: attribution.uri, target: '_blank', rel: 'noreferrer noopener' }, attribution.display_name) : attribution.display_name)),
+					createElement(Button, { variant: 'secondary', disabled: busy || !candidate.id, onClick: async () => { if (window.confirm(__('Link this location ID after checking the business name, street, unit and branch?', 'adaptive-customer-engagement'))) { if (await act(`${base}/${address.id}/place`, { place_id: candidate.id })) setCandidates({ ...candidates, [address.id]: [] }); } } }, __('Link Place ID', 'adaptive-customer-engagement'))
+				))
+			)
+		))
+	);
+}
+
 function CompanyDetailPanel({ detail, onClose }) {
 	const sessions = detail?.recent_sessions || [];
 	const recentCalls = detail?.recent_calls || [];
@@ -3250,6 +3300,7 @@ function CompanyDetailPanel({ detail, onClose }) {
 			createElement(
 				'div',
 				{ className: 'ace-admin-record__main' },
+				config.canManagePlaces && createElement(BusinessAddressPanel, { company: detail }),
 				createElement(
 					'div',
 					{ className: 'ace-admin-dashboard-charts ace-admin-detail-charts' },
@@ -5100,6 +5151,9 @@ function NumbersView({ active, route }) {
 
 function SettingsView({ section = 'settings', active }) {
 	const [settings, setSettings] = useState(null);
+	const [places, setPlaces] = useState(null);
+	const [placesKey, setPlacesKey] = useState('');
+	const [placesNotice, setPlacesNotice] = useState('');
 	const [notice, setNotice] = useState(null);
 	const [busy, setBusy] = useState(false);
 	const [settingsImportFile, setSettingsImportFile] = useState(null);
@@ -5116,6 +5170,19 @@ function SettingsView({ section = 'settings', active }) {
 	const [openAiModelsData, setOpenAiModelsData] = useState(null);
 	const [openAiModelsBusy, setOpenAiModelsBusy] = useState(false);
 	const [openAiModelsKey, setOpenAiModelsKey] = useState('');
+	useEffect(() => {
+		if (active && section === 'enrichment' && config.canManagePlaces) request('/admin/places/settings').then(setPlaces).catch(() => setPlacesNotice(__('Places settings could not be loaded.', 'adaptive-customer-engagement')));
+	}, [active, section]);
+	const savePlaces = async (extra = {}) => {
+		setBusy(true);
+		try {
+			const result = await request('/admin/places/settings', { method: 'POST', data: { ...places, ...extra } });
+			setPlaces(result);
+			setPlacesKey('');
+			setPlacesNotice(__('Google Places settings saved. No lookup was sent.', 'adaptive-customer-engagement'));
+		} catch (error) { setPlacesNotice(getApiErrorMessage(error, __('Places settings could not be saved.', 'adaptive-customer-engagement'))); }
+		setBusy(false);
+	};
 	const aiProvider = aiProviderName(settings?.ai_agent || {});
 	const effectiveVoiceProvider = (() => {
 		const vp = settings?.ai_agent?.frontend_voice_provider || 'auto';
@@ -5606,6 +5673,27 @@ function SettingsView({ section = 'settings', active }) {
 		enrichment: createElement(
 			Fragment,
 			null,
+			config.canManagePlaces && places && createElement(SettingsPanel, {
+				title: __('Google Places business lookup', 'adaptive-customer-engagement'),
+				description: __('Optional administrator review of independently verified public business premises. Disabled by default. Search from a company record after confirming the premises. No request is sent when saving settings.', 'adaptive-customer-engagement'),
+			},
+				placesNotice && createElement(Notice, { status: 'info', isDismissible: false }, placesNotice),
+				createElement('p', null, `${__('Connection status', 'adaptive-customer-engagement')}: ${places.status === 'last_lookup_succeeded' ? __('Last lookup succeeded', 'adaptive-customer-engagement') : __('Untested', 'adaptive-customer-engagement')} · ${places.requests_today}/${places.daily_limit} ${__('requests today', 'adaptive-customer-engagement')}${places.staging_blocked ? ` · ${__('Blocked in this environment', 'adaptive-customer-engagement')}` : ''}`),
+				createElement(ToggleControl, { label: __('Enable administrator-requested Places lookups', 'adaptive-customer-engagement'), checked: !!places.enabled, onChange: (enabled) => setPlaces({ ...places, enabled }) }),
+				createElement(ToggleControl, { label: __('Capture mapped form and Woo billing addresses for local review', 'adaptive-customer-engagement'), checked: !!places.capture_addresses, onChange: (capture_addresses) => setPlaces({ ...places, capture_addresses }) }),
+				createElement(SettingsFieldGrid, null,
+					createElement(TextControl, { label: __('Google Places API (New) server key', 'adaptive-customer-engagement'), type: 'password', value: placesKey, placeholder: places.has_key ? __('Key saved. Enter a new key to replace it.', 'adaptive-customer-engagement') : '', onChange: setPlacesKey }),
+					createElement(TextControl, { label: __('Country code', 'adaptive-customer-engagement'), value: places.country, onChange: (country) => setPlaces({ ...places, country }) }),
+					createElement(TextControl, { label: __('Language code', 'adaptive-customer-engagement'), value: places.language, onChange: (language) => setPlaces({ ...places, language }) }),
+					createElement(TextControl, { label: __('Hard daily request limit', 'adaptive-customer-engagement'), type: 'number', value: places.daily_limit, onChange: (daily_limit) => setPlaces({ ...places, daily_limit: Number(daily_limit) }) })
+				),
+				createElement(SettingsActionRow, null,
+					createElement(Button, { variant: 'primary', disabled: busy, onClick: () => savePlaces(placesKey ? { replace_key: placesKey } : {}) }, __('Save Places settings', 'adaptive-customer-engagement')),
+					places.has_key && createElement(Button, { variant: 'secondary', disabled: busy, isDestructive: true, onClick: () => { if (window.confirm(__('Remove the saved Places key and disable lookups?', 'adaptive-customer-engagement'))) savePlaces({ remove_key: true }); } }, __('Remove key', 'adaptive-customer-engagement'))
+				),
+				createElement('p', null, __('In Google Cloud, enable Places API (New), restrict this key to that API and to this server’s public egress IP. Update the IP restriction when hosting moves. Set a provider quota too: billing alerts are not a hard spending cap. Check the applicable Maps Platform terms and privacy notice before enabling.', 'adaptive-customer-engagement')),
+				createElement('a', { href: 'https://developers.google.com/maps/documentation/places/web-service/text-search', target: '_blank', rel: 'noreferrer noopener' }, __('Places API setup and field masks', 'adaptive-customer-engagement'))
+			),
 			createElement(SettingsPageIntro, {
 				eyebrow: __('IP enrichment setup', 'adaptive-customer-engagement'),
 				title: __('Configure provider-backed company and network lookups for enriched reporting.', 'adaptive-customer-engagement'),

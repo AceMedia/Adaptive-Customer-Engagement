@@ -10,7 +10,7 @@ namespace ACE\AdaptiveCustomerEngagement\Database;
 defined( 'ABSPATH' ) || exit;
 
 final class Schema {
-	public const SCHEMA_VERSION        = '0.1.14';
+	public const SCHEMA_VERSION        = '0.1.16';
 	public const SCHEMA_VERSION_OPTION = 'ace_schema_version';
 
 	/**
@@ -121,6 +121,32 @@ final class Schema {
 			KEY type (type),
 			KEY last_seen (last_seen),
 			KEY ignored (ignored)
+		) {$collate};";
+
+		// First-party addresses stay separate from company identity and IP caches.
+		$tables[] = 'CREATE TABLE ' . self::table_name( 'business_addresses' ) . " (
+			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			company_id BIGINT UNSIGNED NOT NULL,
+			line_1 VARCHAR(255) NOT NULL,
+			line_2 VARCHAR(255) NULL,
+			city VARCHAR(150) NULL,
+			region VARCHAR(150) NULL,
+			postcode VARCHAR(32) NOT NULL,
+			country_code VARCHAR(2) NOT NULL,
+			source VARCHAR(32) NOT NULL,
+			source_record VARCHAR(100) NULL,
+			source_email_hash CHAR(64) NULL,
+			captured_at DATETIME NOT NULL,
+			public_premises TINYINT(1) NOT NULL DEFAULT 0,
+			verified_by BIGINT UNSIGNED NULL,
+			verified_at DATETIME NULL,
+			place_id VARCHAR(255) NULL,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY  (id),
+			KEY company_id (company_id),
+			KEY source_record (source, source_record),
+			KEY source_email_hash (source_email_hash)
 		) {$collate};";
 
 		$tables[] = 'CREATE TABLE ' . self::table_name( 'numbers' ) . " (
@@ -450,6 +476,7 @@ final class Schema {
 			self::table_name( 'sessions' ),
 			self::table_name( 'events' ),
 			self::table_name( 'companies' ),
+			self::table_name( 'business_addresses' ),
 			self::table_name( 'numbers' ),
 			self::table_name( 'calls' ),
 			self::table_name( 'enrichment_cache' ),

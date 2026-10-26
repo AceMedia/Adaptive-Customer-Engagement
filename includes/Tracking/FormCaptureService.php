@@ -13,10 +13,12 @@
 namespace ACE\AdaptiveCustomerEngagement\Tracking;
 
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\BusinessAddressRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
+use ACE\AdaptiveCustomerEngagement\Enrichment\PlacesLookupService;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -186,6 +188,16 @@ final class FormCaptureService {
 		$company = $this->resolve_company( $contact );
 
 		if ( is_array( $company ) && ! empty( $company['id'] ) ) {
+			// Only fields explicitly mapped by this form's owner become an address.
+			$map = apply_filters( 'ace_form_business_address_field_map', array(), (string) ( $config['formId'] ?? '' ), $config );
+			if ( $submission_id > 0 && PlacesLookupService::settings()['capture_addresses'] && is_array( $map ) && isset( $map['line_1'], $map['postcode'], $map['country_code'] ) ) {
+				$address = array();
+				foreach ( array( 'line_1', 'line_2', 'city', 'region', 'postcode', 'country_code' ) as $part ) {
+					$key = isset( $map[ $part ] ) ? sanitize_key( (string) $map[ $part ] ) : '';
+					$address[ $part ] = $key && isset( $fields[ $key ] ) && is_scalar( $fields[ $key ] ) ? (string) $fields[ $key ] : '';
+				}
+				( new BusinessAddressRepository() )->capture( (int) $company['id'], $address, 'form_submission', (string) $submission_id, $contact['email'] );
+			}
 			if ( $submission_id > 0 ) {
 				$this->submissions->set_company( $submission_id, (int) $company['id'] );
 			}

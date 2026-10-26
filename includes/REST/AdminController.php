@@ -21,7 +21,9 @@ use ACE\AdaptiveCustomerEngagement\Database\Repositories\FormSubmissionRepositor
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\NumberRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\BusinessAddressRepository;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
+use ACE\AdaptiveCustomerEngagement\Enrichment\PlacesLookupService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\LeadScorer;
@@ -177,6 +179,18 @@ final class AdminController {
 	 * @return void
 	 */
 	public function register_routes(): void {
+		register_rest_route( $this->namespace, '/admin/places/settings', array(
+			array( 'methods' => 'GET', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => static function () { return new WP_REST_Response( PlacesLookupService::public_settings() ); } ),
+			array( 'methods' => 'POST', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => static function ( WP_REST_Request $request ) { return new WP_REST_Response( PlacesLookupService::save( (array) $request->get_json_params() ) ); } ),
+		) );
+		register_rest_route( $this->namespace, '/admin/companies/(?P<id>\\d+)/business-addresses', array(
+			array( 'methods' => 'GET', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'business_addresses' ) ),
+			array( 'methods' => 'POST', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'save_business_address' ) ),
+		) );
+		register_rest_route( $this->namespace, '/admin/companies/(?P<id>\\d+)/business-addresses/(?P<address_id>\\d+)/verify', array( 'methods' => 'POST', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'verify_business_address' ) ) );
+		register_rest_route( $this->namespace, '/admin/companies/(?P<id>\\d+)/business-addresses/(?P<address_id>\\d+)/lookup', array( 'methods' => 'POST', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'lookup_business_address' ) ) );
+		register_rest_route( $this->namespace, '/admin/companies/(?P<id>\\d+)/business-addresses/(?P<address_id>\\d+)/place', array( 'methods' => 'POST', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'link_business_place' ) ) );
+		register_rest_route( $this->namespace, '/admin/companies/(?P<id>\\d+)/business-addresses/(?P<address_id>\\d+)', array( 'methods' => 'DELETE', 'permission_callback' => array( $this, 'can_manage_places' ), 'callback' => array( $this, 'delete_business_address' ) ) );
 		register_rest_route(
 			$this->namespace,
 			'/admin/dashboard',
@@ -718,6 +732,63 @@ final class AdminController {
 	 */
 	public function can_manage(): bool {
 		return current_user_can( Capabilities::MANAGE );
+	}
+
+	/** Sensitive Places operations need this site's administrator and REST nonce. */
+	public function can_manage_places( WP_REST_Request $request ): bool {
+		return current_user_can( 'manage_options' ) && current_user_can( Capabilities::MANAGE_SETTINGS ) && (bool) wp_verify_nonce( (string) $request->get_header( 'X-WP-Nonce' ), 'wp_rest' );
+	}
+
+	private function places_company( WP_REST_Request $request ) {
+		$company = $this->companies->find( absint( $request['id'] ) );
+		return is_array( $company ) ? $company : new WP_Error( 'ace_company_not_found', 'Company not found on this site.', array( 'status' => 404 ) );
+	}
+
+	public function business_addresses( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		return is_wp_error( $company ) ? $company : new WP_REST_Response( ( new BusinessAddressRepository() )->for_company( (int) $company['id'] ) );
+	}
+
+	public function save_business_address( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		if ( is_wp_error( $company ) ) { return $company; }
+		$data = (array) $request->get_json_params();
+		$id = ( new BusinessAddressRepository() )->capture( (int) $company['id'], $data, 'admin', 'admin:' . wp_generate_uuid4() );
+		return $id ? new WP_REST_Response( array( 'id' => $id ), 201 ) : new WP_Error( 'ace_address_invalid', 'Enter a street address, postcode and two-letter country code.', array( 'status' => 400 ) );
+	}
+
+	public function verify_business_address( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		if ( is_wp_error( $company ) ) { return $company; }
+		if ( ! rest_sanitize_boolean( $request->get_param( 'public_premises_confirmed' ) ) ) {
+			return new WP_Error( 'ace_premises_confirmation_required', 'Confirm independently verified public business premises. A billing company field does not prove this.', array( 'status' => 400 ) );
+		}
+		$ok = ( new BusinessAddressRepository() )->verify( absint( $request['address_id'] ), (int) $company['id'], get_current_user_id() );
+		return $ok ? new WP_REST_Response( array( 'verified' => true ) ) : new WP_Error( 'ace_address_not_found', 'Address not found for this company.', array( 'status' => 404 ) );
+	}
+
+	public function lookup_business_address( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		if ( is_wp_error( $company ) ) { return $company; }
+		$address = ( new BusinessAddressRepository() )->find( absint( $request['address_id'] ) );
+		if ( ! $address || (int) $address['company_id'] !== (int) $company['id'] ) { return new WP_Error( 'ace_address_not_found', 'Address not found for this company.', array( 'status' => 404 ) ); }
+		$result = ( new PlacesLookupService() )->lookup( (string) $company['name'], $address );
+		return is_wp_error( $result ) ? $result : new WP_REST_Response( $result );
+	}
+
+	public function link_business_place( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		if ( is_wp_error( $company ) ) { return $company; }
+		$id = sanitize_text_field( (string) $request->get_param( 'place_id' ) );
+		$ok = ( new BusinessAddressRepository() )->link_place( absint( $request['address_id'] ), (int) $company['id'], $id );
+		return $ok ? new WP_REST_Response( array( 'linked' => true ) ) : new WP_Error( 'ace_place_invalid', 'A valid Place ID and verified premises are required.', array( 'status' => 400 ) );
+	}
+
+	public function delete_business_address( WP_REST_Request $request ) {
+		$company = $this->places_company( $request );
+		if ( is_wp_error( $company ) ) { return $company; }
+		$ok = ( new BusinessAddressRepository() )->delete( absint( $request['address_id'] ), (int) $company['id'] );
+		return $ok ? new WP_REST_Response( array( 'deleted' => true ) ) : new WP_Error( 'ace_address_not_found', 'Address not found for this company.', array( 'status' => 404 ) );
 	}
 
 	/**

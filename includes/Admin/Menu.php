@@ -125,6 +125,7 @@ final class Menu {
 					'root'         => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url() ) ),
 					'namespace'    => 'adaptive-customer-engagement/v1',
 					'nonce'        => wp_create_nonce( 'wp_rest' ),
+					'canManagePlaces' => current_user_can( 'manage_options' ) && current_user_can( \ACE\AdaptiveCustomerEngagement\Security\Capabilities::MANAGE_SETTINGS ),
 					'exportNonce'  => wp_create_nonce( 'ace_export_report' ),
 					'adminUrl'     => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php' ) ) ),
 					'adminPostUrl' => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin-post.php' ) ) ),
@@ -212,11 +213,6 @@ final class Menu {
 	 * @return void
 	 */
 	private function render_page( string $page ): void {
-		if ( 'dashboard' !== $page ) {
-			wp_safe_redirect( ace_adaptive_customer_engagement_make_local_url( admin_url( 'admin.php?page=' . self::TOP_LEVEL_SLUG . '#' . rawurlencode( $page ) ) ) );
-			exit;
-		}
-
 		?>
 		<div class="wrap ace-admin-wrap">
 			<div id="ace-admin-root" data-page="<?php echo esc_attr( $page ); ?>"></div>

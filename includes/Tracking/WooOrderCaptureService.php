@@ -14,9 +14,11 @@
 namespace ACE\AdaptiveCustomerEngagement\Tracking;
 
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\CompanyRepository;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\BusinessAddressRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\IpCompanyMemoryRepository;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\SessionRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
+use ACE\AdaptiveCustomerEngagement\Enrichment\PlacesLookupService;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -73,6 +75,20 @@ final class WooOrderCaptureService {
 	public function register(): void {
 		add_action( 'woocommerce_checkout_order_processed', array( $this, 'capture_classic' ), 20, 3 );
 		add_action( 'woocommerce_store_api_checkout_order_processed', array( $this, 'capture_order' ), 20, 1 );
+		add_action( 'woocommerce_before_delete_order', array( $this, 'delete_order_address' ), 10, 1 );
+		add_action( 'woocommerce_delete_order', array( $this, 'delete_order_address' ), 10, 1 );
+		add_action( 'before_delete_post', array( $this, 'delete_legacy_order_address' ), 10, 1 );
+	}
+
+	/** Remove the local address copy when Woo deletes its source order. */
+	public function delete_order_address( $order_id ): void {
+		$id = $order_id instanceof \WC_Order ? $order_id->get_id() : absint( $order_id );
+		if ( $id ) { ( new BusinessAddressRepository() )->delete_by_source( 'woocommerce_billing', (string) $id ); }
+	}
+
+	/** Legacy post-storage order deletion uses the core hook. */
+	public function delete_legacy_order_address( $post_id ): void {
+		if ( 'shop_order' === get_post_type( (int) $post_id ) ) { $this->delete_order_address( $post_id ); }
 	}
 
 	/**
@@ -119,6 +135,17 @@ final class WooOrderCaptureService {
 					'source'     => 'woocommerce_order',
 				)
 			);
+		}
+
+		if ( PlacesLookupService::settings()['capture_addresses'] && is_array( $company_row ) && ! empty( $company_row['id'] ) ) {
+			( new BusinessAddressRepository() )->capture( (int) $company_row['id'], array(
+				'line_1' => $order->get_billing_address_1(),
+				'line_2' => $order->get_billing_address_2(),
+				'city' => $order->get_billing_city(),
+				'region' => $order->get_billing_state(),
+				'postcode' => $order->get_billing_postcode(),
+				'country_code' => $order->get_billing_country(),
+			), 'woocommerce_billing', (string) $order->get_id(), $email );
 		}
 
 		$session = $this->resolve_session();

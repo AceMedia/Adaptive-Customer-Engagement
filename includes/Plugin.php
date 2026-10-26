@@ -230,6 +230,7 @@ final class Plugin {
 			$id = (int) $row['id'];
 
 			if ( 'keyless' === (string) $row['source_provider'] && DnsIntel::looks_like_person( (string) $row['name'] ) ) {
+				$wpdb->delete( Schema::table_name( 'business_addresses' ), array( 'company_id' => $id ) );
 				$wpdb->delete( $companies, array( 'id' => $id ) );
 				$wpdb->update(
 					$sessions,

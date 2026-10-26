@@ -44,7 +44,33 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 - Guided setup content and external links for enrichment providers, Amazon Connect, and future AI configuration
 - Local sample-data seeding controls for generating realistic recent UK business and council activity across sessions, companies, events, WooCommerce interest, calls, pages, and tracking numbers for UI preview work
 
-### Enrichment already in place
+### Enrichment
+
+### Optional Google Places business lookup
+
+I can add a Google Places API (New) server key on the **Enrichment** page. This is separate from IP enrichment and is disabled by default. The key is stored in a separate per-site option; the settings screen only reports whether a key exists, with explicit replace and remove actions. Normal settings saves and exports do not include it. Enabling address capture is a separate switch. Neither saving settings nor capturing an address sends a Places request.
+
+Each company record has a **Business premises and Places** panel for administrators. I can add a first-party address there, or opt in to capture WooCommerce billing addresses and explicitly mapped ACE form fields. Captured addresses are unverified. I must independently check that an address is public business premises before confirming it in the panel. A company field, a billing address or a shared postcode is not proof. Unverified addresses are purged after 90 days; administrators can delete any address, including a linked Place ID, from the panel. Copies linked to a form or order contact participate in WordPress personal-data export and erasure, and are removed when their source form or order is deleted.
+
+To map a form's address fields, use the `ace_form_business_address_field_map` filter and return the field keys for `line_1`, `postcode`, and `country_code`, with optional `line_2`, `city`, and `region`. The filter receives the form ID and verified form configuration. For example:
+
+```php
+add_filter( 'ace_form_business_address_field_map', static function ( $map, $form_id ) {
+	return 'trade-enquiry' === $form_id ? array(
+		'line_1' => 'business_address_1',
+		'line_2' => 'business_address_2',
+		'city' => 'business_town',
+		'postcode' => 'business_postcode',
+		'country_code' => 'business_country',
+	) : $map;
+}, 10, 2 );
+```
+
+An administrator-requested search uses Places API (New) Text Search with the public company name and verified premises address. The field mask requests Place ID, display name, formatted address, address components, business status, types and attributions. Results appear in Google's order with Google Maps attribution and a separate local assessment. I can link a reviewed Place ID, but the lookup never changes the declared company name or confidence and never stores Google's names, addresses, result payload or assessment in company records, exports, AI context or the IP cache. No automatic or historical bulk lookup runs.
+
+Before setting the key, enable Places API (New) in Google Cloud and restrict the key to that API and the server's **public egress IP**. Recheck the IP restriction after a hosting move. Configure a provider quota as well as the plugin's hard daily request limit; Cloud billing alerts are not a hard spending cap. The screen reports an untested connection until an explicit lookup succeeds. A failed request counts towards the daily limit; quota/server failures cool down for five minutes. Lookups are blocked on local or staging environments. Review the applicable [Maps Platform terms](https://cloud.google.com/maps-platform/terms), [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies) and privacy notices before enabling. Personal, household and uncertain addresses must stay local. If permanent CRM enrichment is needed beyond Place IDs, choose a provider licensed for that use.
+
+### IP enrichment already in place
 
 - Live enrichment provider support for **ipregistry**, **ipinfo**, and a free **keyless** provider (Team Cymru IP-to-ASN DNS, registry RDAP, and reverse DNS — no account or API key)
 - Every provider's results are augmented with free DNS signals: hosting/datacentre flagging by ASN and reverse-DNS suffix, plus a reverse-DNS confidence booster

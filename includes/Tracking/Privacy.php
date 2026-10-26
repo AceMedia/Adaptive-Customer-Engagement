@@ -8,6 +8,7 @@
 namespace ACE\AdaptiveCustomerEngagement\Tracking;
 
 use ACE\AdaptiveCustomerEngagement\Database\Schema;
+use ACE\AdaptiveCustomerEngagement\Database\Repositories\BusinessAddressRepository;
 use ACE\AdaptiveCustomerEngagement\Settings;
 
 defined( 'ABSPATH' ) || exit;
@@ -19,6 +20,7 @@ final class Privacy {
 			'exporter_friendly_name' => __( 'Customer Engagement form submissions', 'adaptive-customer-engagement' ),
 			'callback' => array( $this, 'export_forms' ),
 		);
+		$exporters['ace-engagement-business-addresses'] = array( 'exporter_friendly_name' => __( 'Customer Engagement captured addresses', 'adaptive-customer-engagement' ), 'callback' => array( $this, 'export_addresses' ) );
 		return $exporters;
 	}
 
@@ -28,7 +30,42 @@ final class Privacy {
 			'eraser_friendly_name' => __( 'Customer Engagement form submissions', 'adaptive-customer-engagement' ),
 			'callback' => array( $this, 'erase_forms' ),
 		);
+		$erasers['ace-engagement-business-addresses'] = array( 'eraser_friendly_name' => __( 'Customer Engagement captured addresses', 'adaptive-customer-engagement' ), 'callback' => array( $this, 'erase_addresses' ) );
 		return $erasers;
+	}
+
+	/** Export copies tied to the requesting form or order contact. */
+	public function export_addresses( string $email, int $page = 1 ): array {
+		global $wpdb;
+		$table = Schema::table_name( 'business_addresses' );
+		$hash = BusinessAddressRepository::email_hash( $email );
+		$rows = $hash ? $wpdb->get_results( $wpdb->prepare( "SELECT id,line_1,line_2,city,region,postcode,country_code,source,source_record,captured_at FROM {$table} WHERE source_email_hash = %s ORDER BY id LIMIT 100 OFFSET %d", $hash, ( max( 1, $page ) - 1 ) * 100 ), ARRAY_A ) : array();
+		$data = array();
+		foreach ( (array) $rows as $row ) {
+			$data[] = array( 'group_id' => 'ace-engagement-business-addresses', 'group_label' => __( 'Customer Engagement captured addresses', 'adaptive-customer-engagement' ), 'item_id' => 'ace-address-' . $row['id'], 'data' => array(
+				array( 'name' => __( 'Address', 'adaptive-customer-engagement' ), 'value' => implode( ', ', array_filter( array( $row['line_1'], $row['line_2'], $row['city'], $row['region'], $row['postcode'], $row['country_code'] ) ) ) ),
+				array( 'name' => __( 'Source', 'adaptive-customer-engagement' ), 'value' => $row['source'] . ' #' . $row['source_record'] ),
+				array( 'name' => __( 'Captured', 'adaptive-customer-engagement' ), 'value' => $row['captured_at'] ),
+			) );
+		}
+		return array( 'data' => $data, 'done' => count( (array) $rows ) < 100 );
+	}
+
+	/** Remove address copies, including verified copies, tied to this email. */
+	public function erase_addresses( string $email, int $page = 1 ): array {
+		global $wpdb;
+		$table = Schema::table_name( 'business_addresses' );
+		$hash = BusinessAddressRepository::email_hash( $email );
+		if ( ! $hash ) { return array( 'items_removed' => false, 'items_retained' => false, 'messages' => array(), 'done' => true ); }
+		$ids = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM {$table} WHERE source_email_hash = %s ORDER BY id LIMIT 100", $hash ) );
+		$removed = false;
+		$retained = false;
+		foreach ( (array) $ids as $id ) {
+			$deleted = $wpdb->delete( $table, array( 'id' => (int) $id ) );
+			$removed = (bool) $deleted || $removed;
+			$retained = ! $deleted || $retained;
+		}
+		return array( 'items_removed' => $removed, 'items_retained' => $retained, 'messages' => $retained ? array( __( 'One or more captured addresses could not be removed.', 'adaptive-customer-engagement' ) ) : array(), 'done' => count( (array) $ids ) < 100 );
 	}
 
 	/** Export form captures matching the supplied email address. */
@@ -86,6 +123,7 @@ final class Privacy {
 				continue;
 			}
 			$removed = (bool) $wpdb->delete( $table, array( 'id' => (int) $row['id'] ) ) || $removed;
+			( new BusinessAddressRepository() )->delete_by_source( 'form_submission', (string) $row['id'] );
 		}
 		return array( 'items_removed' => $removed, 'items_retained' => $retained, 'messages' => $retained ? array( __( 'One or more private files could not be removed.', 'adaptive-customer-engagement' ) ) : array(), 'done' => count( (array) $rows ) < 100 );
 	}
@@ -237,6 +275,8 @@ final class Privacy {
 		$events_table     = Schema::table_name( 'events' );
 		$enrichment_table = Schema::table_name( 'enrichment_cache' );
 		$forms_table      = Schema::table_name( 'form_submissions' );
+		$addresses_table  = Schema::table_name( 'business_addresses' );
+		$address_cutoff   = gmdate( 'Y-m-d H:i:s', time() - ( 90 * DAY_IN_SECONDS ) );
 
 		$deleted = array(
 			'events_deleted'     => $this->delete_in_batches( "DELETE FROM {$events_table} WHERE occurred_at < %s", $session_cutoff ),
@@ -244,6 +284,7 @@ final class Privacy {
 			'bot_sessions_deleted' => $this->delete_in_batches( "DELETE FROM {$sessions_table} WHERE ( is_bot = 1 OR ignored = 1 ) AND last_seen < %s", $bot_cutoff ),
 			'enrichment_deleted' => $this->delete_in_batches( "DELETE FROM {$enrichment_table} WHERE expires_at < %s", $now ),
 			'form_submissions_deleted' => $this->purge_expired_forms( $forms_table, $form_cutoff ),
+			'unverified_addresses_deleted' => $this->delete_in_batches( "DELETE FROM {$addresses_table} WHERE public_premises = 0 AND captured_at < %s", $address_cutoff ),
 		);
 
 		return $deleted;
@@ -281,7 +322,12 @@ final class Privacy {
 			if ( ! $ids ) {
 				break;
 			}
-			$total += (int) $wpdb->query( "DELETE FROM {$table} WHERE id IN (" . implode( ',', $ids ) . ')' );
+			$removed = (int) $wpdb->query( "DELETE FROM {$table} WHERE id IN (" . implode( ',', $ids ) . ')' );
+			$total += $removed;
+			if ( $removed > 0 ) {
+				$addresses = new BusinessAddressRepository();
+				foreach ( $ids as $id ) { $addresses->delete_by_source( 'form_submission', (string) $id ); }
+			}
 			if ( count( $rows ) < 2000 ) {
 				break;
 			}
