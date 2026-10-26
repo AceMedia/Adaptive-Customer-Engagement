@@ -53,6 +53,12 @@ Adaptive Customer Engagement is a native WordPress plugin for tracking first-par
 - Cached enrichment lookups, company linking, enrichment storage on sessions, and an admin test lookup tool
 - Reporting surfaces that reuse enrichment data for company views and prioritisation
 
+IP enrichment treats provider errors as failures, caches them for 15 minutes by default, and does not write them to sessions or companies. The `ace_enrichment_error_ttl` filter accepts seconds from 60 to 3600; a provider Retry-After hint can extend the chosen value within that range. Successful lookups retain only derived classification diagnostics in cache and company payloads, without provider IP fields or reverse-DNS hostnames. Older provider payloads are sanitised on repository reads.
+
+The visitor address comes from validated `REMOTE_ADDR`. Configure trusted proxy resolution in the web server first; a host with its own trusted resolver can set the `ace_client_ip` filter, whose return value is validated again. IP-only company memory is a likely hint for at most 30 days, never a confirmed declaration. The `ace_ip_memory_max_age_days` filter accepts 0 to disable recall or up to 90 days. Existing session classifications are not rewritten automatically.
+
+For historical cache and company JSON, use `bin/ace-scrub-enrichment-payloads.php` with `wp eval-file` and `--skip-plugins --skip-themes`. It is a dry run by default and requires an explicit site ID. Check each batch using `blog=1 limit=500 cache-after-id=0 company-after-id=0`, then advance each cursor to its table's reported `last_id`. After a scoped database backup, `apply backup-confirmed` enables the same targeted JSON update. The tool leaves session confidence, company IDs, expiry and unrelated columns unchanged. See [enrichment operations](docs/ENRICHMENT-OPERATIONS.md) for commands and the wiki-ready reference.
+
 ## What is intentionally deferred
 
 This repository does **not** yet implement:

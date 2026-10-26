@@ -93,9 +93,7 @@ final class EnrichmentService {
 			return null;
 		}
 
-		// Deterministic local knowledge (form submissions, orders) beats any
-		// provider lookup: a returning visitor from a known IP is relabelled
-		// with the company we have already confirmed.
+		// IP memory is a recent hint only. Direct declarations stay confirmed.
 		$recalled = $this->recall_from_memory( $session_id, $ip, $is_bot, $session );
 
 		if ( null !== $recalled ) {
@@ -108,7 +106,7 @@ final class EnrichmentService {
 
 		$result = $this->lookup( $ip );
 
-		if ( ! $result ) {
+		if ( ! $result || $result->is_error() ) {
 			return null;
 		}
 
@@ -152,7 +150,8 @@ final class EnrichmentService {
 			return null;
 		}
 
-		$recalled = $this->recall_from_memory( $session_id, $ip, false, array_merge( $session, array( 'company_id' => null ) ) );
+		$is_bot = ! empty( $session['is_bot'] );
+		$recalled = $this->recall_from_memory( $session_id, $ip, $is_bot, array_merge( $session, array( 'company_id' => null ) ) );
 
 		if ( null !== $recalled ) {
 			return $recalled;
@@ -164,6 +163,9 @@ final class EnrichmentService {
 		if ( ! $provider->is_configured() || 'none' === $provider->get_name() ) {
 			return null;
 		}
+		if ( $is_bot && empty( $settings['enrichment']['enrich_bots'] ) ) {
+			return null;
+		}
 
 		if ( $this->privacy->is_private_ip( $ip ) && empty( $settings['enrichment']['enrich_private_ips'] ) ) {
 			return null;
@@ -171,7 +173,7 @@ final class EnrichmentService {
 
 		$result = $this->lookup( $ip );
 
-		if ( ! $result || isset( $result->raw['error'] ) ) {
+		if ( ! $result || $result->is_error() ) {
 			return null;
 		}
 
@@ -222,7 +224,7 @@ final class EnrichmentService {
 	 * @return array<string, mixed>|null Assignment summary, or null when no memory applies.
 	 */
 	private function recall_from_memory( int $session_id, string $ip, bool $is_bot, array $session ): ?array {
-		if ( null === $this->ip_memory || $is_bot || ! empty( $session['company_id'] ) ) {
+		if ( null === $this->ip_memory || $is_bot || $this->privacy->is_private_ip( $ip ) || ! empty( $session['company_id'] ) ) {
 			return null;
 		}
 
@@ -236,14 +238,21 @@ final class EnrichmentService {
 			return null;
 		}
 
+		$max_age = apply_filters( 'ace_ip_memory_max_age_days', 30 );
+		$max_age = ( is_int( $max_age ) || ( is_string( $max_age ) && ctype_digit( $max_age ) ) ) && (int) $max_age >= 0 ? (int) $max_age : 30;
+		$max_age = min( 90, $max_age );
+		if ( 0 === $max_age ) {
+			return null;
+		}
 		$hint       = $this->ip_memory->find_by_ip_hash( $ip_hash );
 		$company_id = is_array( $hint ) ? (int) ( $hint['company_id'] ?? 0 ) : 0;
+		$last_seen = is_array( $hint ) ? strtotime( (string) ( $hint['last_seen'] ?? '' ) . ' UTC' ) : false;
 
-		if ( $company_id <= 0 ) {
+		if ( $company_id <= 0 || false === $last_seen || $last_seen > time() || $last_seen < time() - ( $max_age * DAY_IN_SECONDS ) ) {
 			return null;
 		}
 
-		$confidence = sanitize_key( (string) ( $hint['confidence'] ?? '' ) ) ?: 'likely';
+		$confidence = 'likely';
 
 		$this->sessions->assign_company( $session_id, $company_id, $confidence );
 		$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
@@ -308,19 +317,29 @@ final class EnrichmentService {
 		$cached = $this->cache->find_valid( $provider->get_name(), $ip_hash );
 
 		if ( $cached ) {
+			if ( $cached->is_error() ) {
+				return $cached;
+			}
 			// Re-augment cached results so classification improvements apply
 			// to entries cached before the rules changed; augment() is
 			// deterministic and cheap on a cached payload.
 			return $this->augment( $cached, $ip );
 		}
 
-		$result = $this->augment( $provider->lookup( $ip ), $ip );
+		$result = $provider->lookup( $ip );
+		if ( ! $result->is_error() ) {
+			$result = $this->augment( $result, $ip );
+		}
 
 		// Errors are cached briefly so a transient provider outage does not
 		// pin an empty result against this IP for the full cache window.
-		$ttl_days = isset( $result->raw['error'] ) ? 1 : $cache_days;
-
-		$this->cache->upsert( $provider->get_name(), $ip_hash, $result, $ttl_days );
+		$ttl_seconds = $cache_days * DAY_IN_SECONDS;
+		if ( $result->is_error() ) {
+			$ttl_seconds = apply_filters( 'ace_enrichment_error_ttl', 15 * MINUTE_IN_SECONDS, $result );
+			$ttl_seconds = ( is_int( $ttl_seconds ) || ( is_string( $ttl_seconds ) && ctype_digit( $ttl_seconds ) ) ) && (int) $ttl_seconds > 0 ? (int) $ttl_seconds : 15 * MINUTE_IN_SECONDS;
+			$ttl_seconds = max( 60, min( HOUR_IN_SECONDS, max( $ttl_seconds, $result->retry_after ) ) );
+		}
+		$this->cache->upsert( $provider->get_name(), $ip_hash, $result, $ttl_seconds );
 
 		return $result;
 	}
@@ -338,13 +357,11 @@ final class EnrichmentService {
 			return $result;
 		}
 
-		$ptr = array_key_exists( 'ptr', $result->raw ) ? $result->raw['ptr'] : DnsIntel::ptr( $ip );
+		$ptr = ! empty( $result->raw['ptr_checked'] ) ? null : ( array_key_exists( 'ptr', $result->raw ) ? $result->raw['ptr'] : DnsIntel::ptr( $ip ) );
+		$result->raw['ptr_checked'] = true;
+		$result->raw['ptr_hosting'] = ! empty( $result->raw['ptr_hosting'] ) || DnsIntel::is_hosting_host( $ptr );
 
-		if ( null !== $ptr ) {
-			$result->raw['ptr'] = $ptr;
-		}
-
-		if ( true !== $result->is_hosting && ( DnsIntel::is_hosting_asn( DnsIntel::parse_asn( $result->asn ) ) || DnsIntel::is_hosting_host( $ptr ) ) ) {
+		if ( true !== $result->is_hosting && ( DnsIntel::is_hosting_asn( DnsIntel::parse_asn( $result->asn ) ) || $result->raw['ptr_hosting'] ) ) {
 			$result->is_hosting = true;
 
 			if ( 'likely' === $result->confidence ) {
@@ -359,8 +376,12 @@ final class EnrichmentService {
 			$ptr_domain = DnsIntel::registrable_domain( $ptr );
 
 			if ( $ptr_domain && strtolower( $result->company_domain ) === $ptr_domain ) {
+				$result->raw['ptr_domain_match'] = true;
 				$result->confidence = 'likely';
 			}
+		}
+		if ( ! empty( $result->raw['ptr_domain_match'] ) && 'weak' === $result->confidence && true !== $result->is_hosting ) {
+			$result->confidence = 'likely';
 		}
 
 		// RDAP registrant contacts sometimes hold a private individual's
@@ -462,7 +483,7 @@ final class EnrichmentService {
 			'is_hosting'     => $result->is_hosting,
 			'is_vpn'         => $result->is_vpn,
 			'is_proxy'       => $result->is_proxy,
-			'raw'            => $result->raw,
+			'raw'            => EnrichmentResult::safe_raw( $result->raw ),
 		);
 	}
 }

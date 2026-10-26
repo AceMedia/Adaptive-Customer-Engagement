@@ -38,6 +38,71 @@ final class EnrichmentResult {
 	public $confidence = 'unknown';
 	/** @var array<string, mixed> */
 	public $raw = array();
+	/** @var string|null Safe provider failure code. */
+	public $error_code;
+	/** @var int Provider retry hint in seconds. */
+	public $retry_after = 0;
+
+	public function is_error(): bool {
+		return null !== $this->error_code || isset( $this->raw['error'] ) || ( isset( $this->raw['code'] ) && isset( $this->raw['message'] ) );
+	}
+
+	public static function error( string $provider, string $code, int $retry_after = 0 ): self {
+		$result = new self();
+		$result->provider = $provider;
+		$result->error_code = self::safe_error_code( $code );
+		$result->retry_after = $retry_after;
+		$result->raw = array( 'error' => array( 'code' => $result->error_code ) );
+		return $result;
+	}
+
+	private static function safe_error_code( string $code ): string {
+		$code = strtoupper( (string) preg_replace( '/[^A-Za-z0-9_]/', '_', $code ) );
+		return substr( $code ?: 'PROVIDER_ERROR', 0, 64 );
+	}
+
+	/** Accept numeric and HTTP-date Retry-After values without persisting headers. */
+	public static function retry_seconds( $header ): int {
+		if ( ! is_scalar( $header ) ) {
+			return 0;
+		}
+		$value = trim( (string) $header );
+		if ( ctype_digit( $value ) ) {
+			return (int) $value;
+		}
+		$timestamp = strtotime( $value );
+		return false === $timestamp ? 0 : max( 0, $timestamp - time() );
+	}
+
+	/** Keep only diagnostics needed to classify a cached result. */
+	public static function safe_raw( array $raw ): array {
+		if ( isset( $raw['error'] ) || ( isset( $raw['code'] ) && isset( $raw['message'] ) ) ) {
+			$code = is_array( $raw['error'] ?? null ) ? (string) ( $raw['error']['code'] ?? 'PROVIDER_ERROR' ) : (string) ( $raw['code'] ?? 'PROVIDER_ERROR' );
+			return array( 'error' => array( 'code' => self::safe_error_code( $code ) ) );
+		}
+		$safe = array();
+		foreach ( array( 'asn_type', 'network_kind' ) as $key ) {
+			if ( isset( $raw[ $key ] ) && is_string( $raw[ $key ] ) ) {
+				$safe[ $key ] = sanitize_key( $raw[ $key ] );
+			}
+		}
+		foreach ( array( 'scrubbed_person', 'ptr_checked', 'ptr_hosting', 'ptr_domain_match' ) as $key ) {
+			if ( isset( $raw[ $key ] ) ) {
+				$safe[ $key ] = (bool) $raw[ $key ];
+			}
+		}
+		return $safe;
+	}
+
+	/** Identify a legacy provider response even if local confirmation changed its source. */
+	public static function looks_like_provider_raw( array $raw ): bool {
+		foreach ( array( 'ip', 'ptr', 'connection', 'security', 'privacy', 'rdap', 'cymru', 'asname', 'hostname', 'network_kind', 'asn_type' ) as $key ) {
+			if ( array_key_exists( $key, $raw ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	/**
 	 * Convert the result to an array.
@@ -59,7 +124,9 @@ final class EnrichmentResult {
 			'is_vpn'         => $this->is_vpn,
 			'is_proxy'       => $this->is_proxy,
 			'confidence'     => $this->confidence,
-			'raw'            => $this->raw,
+			'raw'            => self::safe_raw( $this->raw ),
+			'error_code'     => $this->error_code,
+			'retry_after'    => $this->retry_after,
 		);
 	}
 
@@ -84,7 +151,14 @@ final class EnrichmentResult {
 		$result->is_vpn         = isset( $data['is_vpn'] ) ? (bool) $data['is_vpn'] : null;
 		$result->is_proxy       = isset( $data['is_proxy'] ) ? (bool) $data['is_proxy'] : null;
 		$result->confidence     = isset( $data['confidence'] ) ? (string) $data['confidence'] : 'unknown';
-		$result->raw            = isset( $data['raw'] ) && is_array( $data['raw'] ) ? $data['raw'] : array();
+		$raw = isset( $data['raw'] ) && is_array( $data['raw'] ) ? $data['raw'] : array();
+		$result->raw            = self::safe_raw( $raw );
+		if ( array_key_exists( 'ptr', $raw ) ) {
+			$result->raw['ptr_checked'] = true;
+			$result->raw['ptr_hosting'] = true === $result->is_hosting;
+		}
+		$result->error_code     = ! empty( $data['error_code'] ) ? self::safe_error_code( (string) $data['error_code'] ) : ( isset( $result->raw['error'] ) ? $result->raw['error']['code'] : null );
+		$result->retry_after    = max( 0, (int) ( $data['retry_after'] ?? 0 ) );
 
 		return $result;
 	}

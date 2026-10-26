@@ -25,7 +25,7 @@ final class EnrichmentCacheRepository {
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT response FROM ' . Schema::table_name( 'enrichment_cache' ) . ' WHERE provider = %s AND ip_hash = %s AND expires_at >= %s LIMIT 1',
+				'SELECT response, created_at FROM ' . Schema::table_name( 'enrichment_cache' ) . ' WHERE provider = %s AND ip_hash = %s AND expires_at >= %s LIMIT 1',
 				$provider,
 				$ip_hash,
 				current_time( 'mysql', true )
@@ -39,7 +39,19 @@ final class EnrichmentCacheRepository {
 
 		$data = json_decode( (string) $row['response'], true );
 
-		return is_array( $data ) ? EnrichmentResult::from_array( $data ) : null;
+		if ( ! is_array( $data ) ) {
+			return null;
+		}
+		// Older error rows used the normal cache period. Retry after the
+		// short default interval without rewriting unrelated historic rows.
+		$legacy_error = empty( $data['error_code'] ) && ( isset( $data['raw']['error'] ) || ( isset( $data['raw']['code'] ) && isset( $data['raw']['message'] ) ) );
+		if ( $legacy_error ) {
+			$created = strtotime( (string) ( $row['created_at'] ?? '' ) . ' UTC' );
+			if ( false === $created || $created < time() - ( 15 * MINUTE_IN_SECONDS ) ) {
+				return null;
+			}
+		}
+		return EnrichmentResult::from_array( $data );
 	}
 
 	/**
@@ -48,10 +60,10 @@ final class EnrichmentCacheRepository {
 	 * @param string           $provider   Provider name.
 	 * @param string           $ip_hash    IP hash.
 	 * @param EnrichmentResult $result     Enrichment result.
-	 * @param int              $cache_days Cache days.
+	 * @param int              $ttl_seconds Cache lifetime in seconds.
 	 * @return void
 	 */
-	public function upsert( string $provider, string $ip_hash, EnrichmentResult $result, int $cache_days ): void {
+	public function upsert( string $provider, string $ip_hash, EnrichmentResult $result, int $ttl_seconds ): void {
 		global $wpdb;
 
 		$wpdb->replace(
@@ -66,7 +78,7 @@ final class EnrichmentCacheRepository {
 				'asn'            => $result->asn,
 				'isp'            => $result->isp,
 				'confidence'     => $result->confidence,
-				'expires_at'     => gmdate( 'Y-m-d H:i:s', time() + ( max( 1, $cache_days ) * DAY_IN_SECONDS ) ),
+				'expires_at'     => gmdate( 'Y-m-d H:i:s', time() + max( 1, $ttl_seconds ) ),
 				'created_at'     => current_time( 'mysql', true ),
 			)
 		);

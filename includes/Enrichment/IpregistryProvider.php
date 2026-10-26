@@ -8,7 +8,6 @@
 namespace ACE\AdaptiveCustomerEngagement\Enrichment;
 
 use ACE\AdaptiveCustomerEngagement\Settings;
-use WP_Error;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -51,14 +50,20 @@ final class IpregistryProvider implements ProviderInterface {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			return $this->error_result( $response );
+			return EnrichmentResult::error( $this->get_name(), 'TRANSPORT_ERROR' );
 		}
 
+		$status = (int) wp_remote_retrieve_response_code( $response );
 		$body = wp_remote_retrieve_body( $response );
 		$data = json_decode( $body, true );
+		$retry_after = EnrichmentResult::retry_seconds( wp_remote_retrieve_header( $response, 'retry-after' ) );
+		if ( $status < 200 || $status >= 300 || ( is_array( $data ) && isset( $data['code'], $data['message'] ) ) ) {
+			$code = is_array( $data ) && isset( $data['code'] ) && is_scalar( $data['code'] ) ? (string) $data['code'] : 'HTTP_' . $status;
+			return EnrichmentResult::error( $this->get_name(), $code, $retry_after );
+		}
 
-		if ( ! is_array( $data ) ) {
-			return $this->error_result( new WP_Error( 'ace_enrichment_invalid_response', 'Invalid enrichment response.' ) );
+		if ( ! is_array( $data ) || ! array_intersect( array( 'company', 'location', 'connection', 'security' ), array_keys( $data ) ) ) {
+			return EnrichmentResult::error( $this->get_name(), 'INVALID_RESPONSE' );
 		}
 
 		$result               = new EnrichmentResult();
@@ -74,8 +79,8 @@ final class IpregistryProvider implements ProviderInterface {
 		$result->is_hosting   = isset( $data['connection']['type'] ) ? 'hosting' === sanitize_key( (string) $data['connection']['type'] ) : null;
 		$result->is_vpn       = isset( $data['security']['is_vpn'] ) ? (bool) $data['security']['is_vpn'] : null;
 		$result->is_proxy     = isset( $data['security']['is_proxy'] ) ? (bool) $data['security']['is_proxy'] : null;
-		$result->confidence   = $this->map_confidence( $result );
 		$result->raw          = $data;
+		$result->confidence   = $this->map_confidence( $result );
 
 		return $result;
 	}
@@ -118,19 +123,4 @@ final class IpregistryProvider implements ProviderInterface {
 		return 'unknown';
 	}
 
-	/**
-	 * Build an error result.
-	 *
-	 * @param WP_Error $error Error.
-	 * @return EnrichmentResult
-	 */
-	private function error_result( WP_Error $error ): EnrichmentResult {
-		$result           = new EnrichmentResult();
-		$result->provider = $this->get_name();
-		$result->raw      = array(
-			'error' => $error->get_error_message(),
-		);
-
-		return $result;
-	}
 }

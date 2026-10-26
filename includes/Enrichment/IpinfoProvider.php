@@ -8,7 +8,6 @@
 namespace ACE\AdaptiveCustomerEngagement\Enrichment;
 
 use ACE\AdaptiveCustomerEngagement\Settings;
-use WP_Error;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -51,14 +50,20 @@ final class IpinfoProvider implements ProviderInterface {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			return $this->error_result( $response );
+			return EnrichmentResult::error( $this->get_name(), 'TRANSPORT_ERROR' );
 		}
 
+		$status = (int) wp_remote_retrieve_response_code( $response );
 		$body = wp_remote_retrieve_body( $response );
 		$data = json_decode( $body, true );
+		$retry_after = EnrichmentResult::retry_seconds( wp_remote_retrieve_header( $response, 'retry-after' ) );
+		if ( $status < 200 || $status >= 300 || ( is_array( $data ) && isset( $data['error'] ) ) ) {
+			$code = is_array( $data ) && isset( $data['error']['title'] ) && is_scalar( $data['error']['title'] ) ? (string) $data['error']['title'] : 'HTTP_' . $status;
+			return EnrichmentResult::error( $this->get_name(), $code, $retry_after );
+		}
 
-		if ( ! is_array( $data ) ) {
-			return $this->error_result( new WP_Error( 'ace_enrichment_invalid_response', 'Invalid enrichment response.' ) );
+		if ( ! is_array( $data ) || ! array_intersect( array( 'company', 'asn', 'country', 'region', 'city', 'org', 'privacy' ), array_keys( $data ) ) ) {
+			return EnrichmentResult::error( $this->get_name(), 'INVALID_RESPONSE' );
 		}
 
 		$result                 = new EnrichmentResult();
@@ -94,6 +99,9 @@ final class IpinfoProvider implements ProviderInterface {
 		if ( $result->is_proxy || $result->is_vpn ) {
 			return 'ignore';
 		}
+		if ( $result->is_hosting || in_array( $company_type, array( 'isp', 'hosting' ), true ) ) {
+			return 'weak';
+		}
 
 		if ( $result->company_name && $result->company_domain && ! $result->is_hosting ) {
 			if ( in_array( $company_type, array( 'business', 'government', 'education', 'organization', 'organisation' ), true ) ) {
@@ -116,19 +124,4 @@ final class IpinfoProvider implements ProviderInterface {
 		return 'unknown';
 	}
 
-	/**
-	 * Build an error result.
-	 *
-	 * @param WP_Error $error Error.
-	 * @return EnrichmentResult
-	 */
-	private function error_result( WP_Error $error ): EnrichmentResult {
-		$result           = new EnrichmentResult();
-		$result->provider = $this->get_name();
-		$result->raw      = array(
-			'error' => $error->get_error_message(),
-		);
-
-		return $result;
-	}
 }

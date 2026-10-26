@@ -103,7 +103,7 @@ final class CompanyRepository {
 	public function create_or_touch_from_result( EnrichmentResult $result ): ?array {
 		global $wpdb;
 
-		if ( empty( $result->company_name ) ) {
+		if ( $result->is_error() || empty( $result->company_name ) ) {
 			return null;
 		}
 
@@ -133,6 +133,12 @@ final class CompanyRepository {
 		$now = current_time( 'mysql', true );
 
 		if ( is_array( $row ) ) {
+			// A direct declaration keeps its provenance when the same domain is
+			// subsequently seen on an IP lookup.
+			if ( 'confirmed' === (string) ( $row['confidence'] ?? '' ) ) {
+				$wpdb->update( $table, array( 'last_seen' => $now, 'updated_at' => $now ), array( 'id' => (int) $row['id'] ) );
+				return $this->find( (int) $row['id'] );
+			}
 			$wpdb->update(
 				$table,
 				array(
@@ -141,7 +147,7 @@ final class CompanyRepository {
 					'type'            => $result->company_type,
 					'country_code'    => $result->country_code,
 					'source_provider' => $result->provider,
-					'source_payload'  => wp_json_encode( $result->raw ),
+					'source_payload'  => wp_json_encode( EnrichmentResult::safe_raw( $result->raw ) ),
 					'confidence'      => $result->confidence,
 					'last_seen'       => $now,
 					'updated_at'      => $now,
@@ -160,7 +166,7 @@ final class CompanyRepository {
 				'type'            => $result->company_type,
 				'country_code'    => $result->country_code,
 				'source_provider' => $result->provider,
-				'source_payload'  => wp_json_encode( $result->raw ),
+				'source_payload'  => wp_json_encode( EnrichmentResult::safe_raw( $result->raw ) ),
 				'confidence'      => $result->confidence,
 				'first_seen'      => $now,
 				'last_seen'       => $now,
@@ -244,7 +250,7 @@ final class CompanyRepository {
 			ARRAY_A
 		);
 
-		return is_array( $row ) ? $row : null;
+		return is_array( $row ) ? $this->safe_row( $row ) : null;
 	}
 
 	/**
@@ -268,7 +274,16 @@ final class CompanyRepository {
 			ARRAY_A
 		);
 
-		return is_array( $rows ) ? $rows : array();
+		return is_array( $rows ) ? array_map( array( $this, 'safe_row' ), $rows ) : array();
+	}
+
+	/** Remove old provider payloads from repository read responses. */
+	private function safe_row( array $row ): array {
+		$raw = json_decode( (string) ( $row['source_payload'] ?? '' ), true );
+		if ( in_array( (string) ( $row['source_provider'] ?? '' ), array( 'ipregistry', 'ipinfo', 'keyless' ), true ) || ( is_array( $raw ) && EnrichmentResult::looks_like_provider_raw( $raw ) ) ) {
+			$row['source_payload'] = wp_json_encode( EnrichmentResult::safe_raw( is_array( $raw ) ? $raw : array() ) );
+		}
+		return $row;
 	}
 
 	/**

@@ -95,27 +95,12 @@ final class Privacy {
 	 * @return string
 	 */
 	public function get_client_ip(): string {
-		$keys = array(
-			'HTTP_CF_CONNECTING_IP',
-			'HTTP_X_FORWARDED_FOR',
-			'REMOTE_ADDR',
-		);
-
-		foreach ( $keys as $key ) {
-			$value = isset( $_SERVER[ $key ] ) ? wp_unslash( $_SERVER[ $key ] ) : '';
-
-			if ( ! is_string( $value ) || '' === $value ) {
-				continue;
-			}
-
-			$ip = trim( explode( ',', $value )[0] );
-
-			if ( filter_var( $ip, FILTER_VALIDATE_IP ) ) {
-				return $ip;
-			}
-		}
-
-		return '';
+		$remote = isset( $_SERVER['REMOTE_ADDR'] ) && is_string( $_SERVER['REMOTE_ADDR'] ) ? trim( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		$remote = filter_var( $remote, FILTER_VALIDATE_IP ) ? $remote : '';
+		// Resolve trusted proxy headers at the web server. Hosts with a separate
+		// trusted proxy resolver can override this value explicitly.
+		$filtered = apply_filters( 'ace_client_ip', $remote );
+		return is_string( $filtered ) && filter_var( $filtered, FILTER_VALIDATE_IP ) ? $filtered : '';
 	}
 
 	/**
