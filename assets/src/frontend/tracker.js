@@ -138,6 +138,10 @@ async function fetchJson(url, options = {}, fallbackMessage = '') {
 }
 
 async function sendTrackingEvent(payload) {
+	if (!config.enabled) {
+		return;
+	}
+
 	const endpoint = `${config.root}${config.namespace}/track`;
 	const body = JSON.stringify(payload);
 
@@ -444,6 +448,7 @@ function bindInteractionTracking(sessionUuid, visitorUuid, pageContext) {
 
 function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const chatConfig = config.aiChat || {};
+	const betaChatOnly = !!chatConfig.betaPreview;
 	const addChatAccessHeaders = (headers) => {
 		if (chatConfig.restNonce) {
 			headers['X-WP-Nonce'] = chatConfig.restNonce;
@@ -560,7 +565,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		voiceSpeaking: false,
 		unread: 0,
 		// Spoken replies are opt-in per visitor — off by default even when the admin enabled the capability.
-		voiceSpeakerOn: voiceRepliesEnabled && (() => {
+		voiceSpeakerOn: !betaChatOnly && voiceRepliesEnabled && (() => {
 			try {
 				return window.localStorage.getItem(`ace_ai_voice_speaker:${visitorUuid || 'guest'}`) === '1';
 			} catch (error) {
@@ -853,6 +858,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 	const messageKey = (message) => (Number(message?.id || 0) > 0 ? `id:${message.id}` : `key:${message?.client_key || ''}`);
 	const persistChatState = () => {
+		if (betaChatOnly) {
+			return;
+		}
 		try {
 			window.localStorage?.setItem(chatStateKey, JSON.stringify({
 				open: !!state.open,
@@ -911,6 +919,9 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	};
 
 	const restoreChatState = () => {
+		if (betaChatOnly) {
+			return;
+		}
 		try {
 			const raw = window.localStorage?.getItem(chatStateKey);
 
@@ -2880,7 +2891,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	// Contextual hello off the launcher: each page context (this product, that category, the
 	// basket…) gets its own hello, repeated at most every half hour per tab, with a short gap so
 	// quick clicks between pages do not stack bubbles.
-	if (!state.open && chatConfig.teaser) {
+	if (!betaChatOnly && !state.open && chatConfig.teaser) {
 		const teaserKey = `ace_ai_chat_teaser:${String(chatConfig.greetingKey || 'page')}`;
 		let shouldTease = true;
 		try {
@@ -2972,10 +2983,12 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 		voiceToggle.addEventListener('click', () => {
 			state.voiceSpeakerOn = !state.voiceSpeakerOn;
 
-			try {
-				window.localStorage.setItem(`ace_ai_voice_speaker:${visitorUuid || 'guest'}`, state.voiceSpeakerOn ? '1' : '0');
-			} catch (error) {
-				// Ignore storage failures.
+			if (!betaChatOnly) {
+				try {
+					window.localStorage.setItem(`ace_ai_voice_speaker:${visitorUuid || 'guest'}`, state.voiceSpeakerOn ? '1' : '0');
+				} catch (error) {
+					// Ignore storage failures.
+				}
 			}
 
 			if (!state.voiceSpeakerOn) {
@@ -2992,6 +3005,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 function init() {
 	const trackingEnabled = !!config.enabled;
 	const shouldEmbedChat = !!config.aiChat?.enabled;
+	const betaChatOnly = !!config.aiChat?.betaPreview;
 
 	if (!trackingEnabled && !shouldEmbedChat) {
 		return;
@@ -3006,9 +3020,9 @@ function init() {
 		return;
 	}
 
-	const sessionUuid = ensureUuid(config.tracking.cookie_name || 'ace_sid', Number(config.tracking.session_lifetime_minutes || 30));
-	const visitorUuid = ensureUuid(config.tracking.visitor_cookie_name || 'ace_vid', Number(config.tracking.visitor_lifetime_days || 90), true);
-	const pageContext = buildWooCommerceContext();
+	const sessionUuid = betaChatOnly ? generateUuid() : ensureUuid(config.tracking.cookie_name || 'ace_sid', Number(config.tracking.session_lifetime_minutes || 30));
+	const visitorUuid = betaChatOnly ? generateUuid() : ensureUuid(config.tracking.visitor_cookie_name || 'ace_vid', Number(config.tracking.visitor_lifetime_days || 90), true);
+	const pageContext = betaChatOnly ? {} : buildWooCommerceContext();
 
 	if (shouldTrackPageviews) {
 		sendTrackingEvent(buildEventPayload(sessionUuid, visitorUuid, {

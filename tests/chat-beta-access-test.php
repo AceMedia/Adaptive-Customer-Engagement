@@ -8,7 +8,13 @@ $blog_id  = 1;
 $admin    = false;
 $front    = true;
 $home     = 'https://iegemea.test';
+$chat_key = 'shared-subscription';
 $checks   = 0;
+
+class FakeChatClientFactory {
+	public static function resolve( array $settings ) { global $chat_key; return array( 'api_key' => $chat_key ); }
+}
+class_alias( FakeChatClientFactory::class, 'ACE\\AdaptiveCustomerEngagement\\AI\\ChatClientFactory' );
 
 function is_multisite() { return true; }
 function is_main_site() { global $blog_id; return 1 === $blog_id; }
@@ -45,6 +51,13 @@ $settings = array( 'frontend_chat_admin_only' => true, 'frontend_chat_beta_enabl
 $_SERVER['REQUEST_URI'] = '/?beta';
 $_GET = array( 'beta' => '' );
 check( ChatAccess::is_beta_preview_page( $settings ), 'Bare beta homepage qualifies' );
+check( ! ChatAccess::beta_widget_ready( $settings ), 'Beta script stays gated until AI and chat are enabled' );
+$settings['enabled'] = true;
+$settings['frontend_chat_enabled'] = true;
+check( ChatAccess::beta_widget_ready( $settings ), 'Ready beta permits the chat-only script' );
+$chat_key = '';
+check( ! ChatAccess::beta_widget_ready( $settings ), 'A missing AI connection keeps the script gated' );
+$chat_key = 'shared-subscription';
 check( ! ChatAccess::can_use_chat( $settings, new WP_REST_Request() ), 'Plain guest REST request denied' );
 $grant = ChatAccess::issue_grant();
 check( ChatAccess::valid_grant( $grant ), 'Fresh grant verifies' );
@@ -65,6 +78,7 @@ $home = 'https://iegemea.test';
 $blog_id = 7;
 check( ! ChatAccess::valid_grant( $grant ), 'Grant cannot cross blog boundaries' );
 check( ! ChatAccess::beta_enabled( $settings ), 'Beta cannot be enabled on a subsite' );
+check( ! ChatAccess::beta_widget_ready( $settings ), 'Subsite beta script stays gated' );
 $blog_id = 1;
 $admin = true;
 check( ChatAccess::can_use_chat( $settings, new WP_REST_Request() ), 'Admin access stays available without a grant' );

@@ -710,6 +710,7 @@ final class Plugin {
 		$settings    = Settings::get();
 		$woo_context = new WooCommerceContext();
 		$ai_chat     = $this->get_frontend_ai_chat_config( $settings, new ChatMessageRepository() );
+		$beta_chat_only = ! empty( $ai_chat['betaPreview'] );
 
 		if ( empty( $settings['enabled'] ) && empty( $ai_chat['enabled'] ) ) {
 			return;
@@ -740,7 +741,7 @@ final class Plugin {
 				array(
 					'root'      => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url() ) ),
 					'namespace' => 'adaptive-customer-engagement/v1',
-					'enabled'   => (bool) $settings['enabled'],
+					'enabled'   => ! $beta_chat_only && (bool) $settings['enabled'],
 					'tracking'  => $settings['tracking'],
 					'page'      => $woo_context->get_frontend_context(),
 					'aiChat'    => $ai_chat,
@@ -869,7 +870,7 @@ final class Plugin {
 	private function get_frontend_ai_chat_config( array $settings, ChatMessageRepository $chat_messages ): array {
 		$ai_agent   = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$admin_only = ! empty( $ai_agent['frontend_chat_admin_only'] );
-		$beta_page  = ChatAccess::is_beta_preview_page( $ai_agent );
+		$beta_page  = ChatAccess::beta_widget_ready( $ai_agent );
 		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE ) || $beta_page;
 		$bot_name   = sanitize_text_field( (string) ( $ai_agent['frontend_chat_bot_name'] ?? $ai_agent['frontend_chat_title'] ?? '' ) );
 		$bot_name   = '' !== $bot_name ? $bot_name : __( 'Site assistant', 'adaptive-customer-engagement' );
@@ -894,6 +895,7 @@ final class Plugin {
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
+		'betaPreview'       => $enabled && $beta_page,
 			'betaGrant'         => $enabled && $beta_page && ! current_user_can( Capabilities::MANAGE ) ? ChatAccess::issue_grant() : '',
 			'endpoint'          => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ) ),
 			'syncEndpoint'      => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ) ),

@@ -7,6 +7,7 @@
 
 namespace ACE\AdaptiveCustomerEngagement\Security;
 
+use ACE\AdaptiveCustomerEngagement\AI\ChatClientFactory;
 use WP_REST_Request;
 
 defined( 'ABSPATH' ) || exit;
@@ -52,6 +53,14 @@ final class ChatAccess {
 
 	public static function is_beta_preview_page( array $ai_agent ): bool {
 		return self::beta_enabled( $ai_agent ) && self::is_beta_query_request() && is_front_page();
+	}
+
+	/** The theme may load the chat bundle before consent only for an active chat-only preview. */
+	public static function beta_widget_ready( array $ai_agent ): bool {
+		return self::is_beta_preview_page( $ai_agent )
+			&& ! empty( $ai_agent['enabled'] )
+			&& ! empty( $ai_agent['frontend_chat_enabled'] )
+			&& '' !== trim( (string) ChatClientFactory::resolve( $ai_agent )['api_key'] );
 	}
 
 	/**
