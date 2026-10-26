@@ -208,7 +208,7 @@ final class CompanyRepository {
 
 		$wpdb->query(
 			$wpdb->prepare(
-				'UPDATE ' . Schema::table_name( 'companies' ) . ' SET total_sessions = GREATEST(0, total_sessions - 1), total_events = GREATEST(0, total_events - %d), updated_at = %s WHERE id = %d',
+				'UPDATE ' . Schema::table_name( 'companies' ) . ' SET total_sessions = total_sessions - LEAST(total_sessions, 1), total_events = total_events - LEAST(total_events, %d), updated_at = %s WHERE id = %d',
 				max( 0, $event_count ),
 				current_time( 'mysql', true ),
 				$company_id

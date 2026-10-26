@@ -165,6 +165,6 @@ ace_check( 0 === count( $wpdb->queries ) && $ace_update_count + 1 === count( $wp
 $wpdb->session['company_id'] = 7;
 $wpdb->session['company_confidence'] = 'weak';
 ace_check( 42 === $ace_service->reenrich_session( 5, '8.8.8.8' )['company_id'], 'Recent memory can replace a weak provider match' );
-ace_check( 2 === count( $wpdb->queries ) && false !== strpos( $wpdb->queries[0], 'GREATEST' ) && false !== strpos( $wpdb->queries[1], 'total_sessions + 1' ), 'Company switch balances old and new totals' );
+ace_check( 2 === count( $wpdb->queries ) && false !== strpos( $wpdb->queries[0], 'total_sessions - LEAST(total_sessions, 1)' ) && false !== strpos( $wpdb->queries[0], 'total_events - LEAST(total_events, %d)' ) && false !== strpos( $wpdb->queries[1], 'total_sessions + 1' ), 'Company switch balances unsigned totals safely' );
 $wpdb = $ace_original_db;
 echo "Enrichment provider, payload, IP trust and memory checks passed\n";
