@@ -5525,7 +5525,6 @@ function SettingsView({ section = 'settings', active }) {
 	const openAiConfigured = hasOpenAiConfig(settings.ai_agent || {});
 	const connectLiveReady = connectConfigured && !contactFlowData?.error;
 	const openAiTokenActive = !!openAiModelsData?.active && openAiModelsKey === currentOpenAiKey;
-	const aiProviderReady = aiEnabled && openAiTokenActive && !!settings.ai_agent?.[aiModelField];
 	const openAiModelOptions = [{ label: __('Choose a model', 'adaptive-customer-engagement'), value: '' }].concat(
 		(openAiModelsData?.models || []).map((item) => ({
 			label: item.label || item.id,
@@ -6163,16 +6162,17 @@ function SettingsView({ section = 'settings', active }) {
 				})
 				: null
 			),
-			openAiTokenActive
+			aiEnabled
 				? createElement(Fragment, null,
 					createElement(SettingsPanel, {
 						title: __('Frontend website chat', 'adaptive-customer-engagement'),
-						description: __('Control the launcher, visibility, and grounding behaviour for the plugin-managed frontend AI chat.', 'adaptive-customer-engagement'),
+						description: __('Control the launcher, visibility, and grounding behaviour for the plugin-managed frontend AI chat. A configured site or network AI connection is still required.', 'adaptive-customer-engagement'),
 						tone: 'soft',
 					},
 					createElement(SettingsToggleList, null,
 						createElement(ToggleControl, { label: __('Enable frontend AI chat', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_enabled, onChange: (next) => setAiAgent({ frontend_chat_enabled: next }) }),
 						createElement(ToggleControl, { label: __('Restrict frontend AI chat to logged-in admins', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_admin_only, onChange: (next) => setAiAgent({ frontend_chat_admin_only: next }) }),
+						createElement(ToggleControl, { label: __('Allow a guest preview on the main homepage at /?beta', 'adaptive-customer-engagement'), help: __('Requires the admin-only setting. Ordinary guest pages stay hidden, and the preview is not cached or indexed.', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.frontend_chat_beta_enabled, onChange: (next) => setAiAgent({ frontend_chat_beta_enabled: next }) }),
 						createElement(ToggleControl, { label: __('Use live site context in replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.use_live_site_context, onChange: (next) => setAiAgent({ use_live_site_context: next }) }),
 						createElement(ToggleControl, { label: __('Show source links beneath replies', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.show_source_links, onChange: (next) => setAiAgent({ show_source_links: next }) }),
 						createElement(ToggleControl, { label: __('Keep recent conversation history', 'adaptive-customer-engagement'), checked: !!settings.ai_agent.keep_history, onChange: (next) => setAiAgent({ keep_history: next }) }),
@@ -6276,9 +6276,9 @@ function SettingsView({ section = 'settings', active }) {
 						value: settings.ai_agent.frontend_chat_greeting || '',
 						onChange: (next) => setAiAgent({ frontend_chat_greeting: next }),
 					}),
-					createElement(Notice, { status: aiProviderReady && settings.ai_agent.frontend_chat_enabled ? 'success' : 'info', isDismissible: false }, aiProviderReady && settings.ai_agent.frontend_chat_enabled
-						? sprintf(__('Frontend chat messages will post to %s once these settings are saved.', 'adaptive-customer-engagement'), frontendChatEndpoint)
-						: sprintf(__('Save the %s key and enable the frontend chat to activate the website assistant.', 'adaptive-customer-engagement'), aiProviderTitle))
+					createElement(Notice, { status: 'info', isDismissible: false }, settings.ai_agent.frontend_chat_enabled
+						? sprintf(__('When an AI connection is ready, frontend chat messages use %s.', 'adaptive-customer-engagement'), frontendChatEndpoint)
+						: __('Enable frontend chat and check the site or network AI connection before opening a guest preview.', 'adaptive-customer-engagement'))
 					),
 					createElement(SettingsPanel, {
 						title: __('Prompts and context', 'adaptive-customer-engagement'),

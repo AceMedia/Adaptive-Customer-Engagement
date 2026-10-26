@@ -221,6 +221,8 @@ The WooCommerce screen surfaces **repeat product and category interest**, plus t
 
 The frontend assistant is now positioned around **the company, products, and services** rather than generic website help.
 
+The optional homepage beta keeps the normal admin-only setting in place. When the assistant and frontend chat are enabled, a guest can open the main site's `/?beta` page to see the widget. That uncached, noindex page supplies a short-lived signed grant for the chat requests; ordinary guest pages and direct REST calls stay closed. The beta toggle defaults to off, and the public agent/MCP surface is suppressed for guests while this private trial is active. The main site's separate `agent_surface_enabled` setting should also be switched off for a trial so disabling beta cannot reopen that surface.
+
 It currently supports:
 
 - a configurable chatbot name, opening message, and input placeholder

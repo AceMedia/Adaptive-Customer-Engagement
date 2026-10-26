@@ -10,6 +10,8 @@
 namespace ACE\AdaptiveCustomerEngagement\AI;
 
 use ACE\AdaptiveCustomerEngagement\Settings;
+use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
+use ACE\AdaptiveCustomerEngagement\Security\ChatAccess;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -53,6 +55,11 @@ final class AgentSurface {
 	/** The surface follows the public chat: on when the assistant and its widget are on for this site. */
 	public function enabled(): bool {
 		$ai_agent = is_array( Settings::get()['ai_agent'] ?? null ) ? Settings::get()['ai_agent'] : array();
+		// A site trial must not leave the independently configured public MCP/ask
+		// surface available to guests outside the explicit preview page.
+		if ( ChatAccess::beta_enabled( $ai_agent ) && ! current_user_can( Capabilities::MANAGE ) ) {
+			return false;
+		}
 		$chat_on  = ! empty( $ai_agent['enabled'] ) && ! empty( $ai_agent['frontend_chat_enabled'] ) && empty( $ai_agent['frontend_chat_admin_only'] );
 		// Agents can be served without the visitor-facing widget: set ai_agent.agent_surface_enabled.
 		$enabled = $chat_on || ! empty( $ai_agent['agent_surface_enabled'] );

@@ -13,6 +13,7 @@ use ACE\AdaptiveCustomerEngagement\AI\TextToSpeechService;
 use ACE\AdaptiveCustomerEngagement\AI\SpeechToTextService;
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentService;
 use ACE\AdaptiveCustomerEngagement\Security\Capabilities;
+use ACE\AdaptiveCustomerEngagement\Security\ChatAccess;
 use ACE\AdaptiveCustomerEngagement\Security\RateLimiter;
 use ACE\AdaptiveCustomerEngagement\Settings;
 use ACE\AdaptiveCustomerEngagement\Tracking\BotDetector;
@@ -334,7 +335,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -373,7 +374,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_tts_disabled', __( 'Spoken replies are not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_tts_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -471,7 +472,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_cart_disabled', __( 'Adding to the basket from chat is disabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_cart_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -678,7 +679,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_stt_disabled', __( 'Voice input is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_stt_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -722,7 +723,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -772,7 +773,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -811,7 +812,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -845,7 +846,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
@@ -872,7 +873,7 @@ final class TrackingController {
 			return new WP_Error( 'ace_ai_chat_disabled', __( 'The frontend assistant is not enabled.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 
-		if ( ! empty( $ai_agent['frontend_chat_admin_only'] ) && ! current_user_can( Capabilities::MANAGE ) ) {
+		if ( ! ChatAccess::can_use_chat( $ai_agent, $request ) ) {
 			return new WP_Error( 'ace_ai_chat_admin_only', __( 'The frontend assistant is currently restricted to site administrators.', 'adaptive-customer-engagement' ), array( 'status' => 403 ) );
 		}
 

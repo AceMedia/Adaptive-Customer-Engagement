@@ -45,6 +45,7 @@ use ACE\AdaptiveCustomerEngagement\Tracking\FormCaptureService;
 use ACE\AdaptiveCustomerEngagement\Tracking\SessionManager;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooCommerceContext;
 use ACE\AdaptiveCustomerEngagement\Tracking\WooOrderCaptureService;
+use ACE\AdaptiveCustomerEngagement\Security\ChatAccess;
 use ACE\AdaptiveCustomerEngagement\Tracking\BasketRecoveryService;
 use ACE\AdaptiveCustomerEngagement\Tracking\BasketRecoveryCli;
 use ACE\AdaptiveCustomerEngagement\Database\Repositories\BasketRecoveryRepository;
@@ -78,6 +79,12 @@ final class Plugin {
 	 * @return void
 	 */
 	public function init(): void {
+		if ( ChatAccess::is_beta_query_request() && ! defined( 'DONOTCACHEPAGE' ) ) {
+			define( 'DONOTCACHEPAGE', true );
+		}
+		add_action( 'send_headers', array( ChatAccess::class, 'protect_preview_response' ) );
+		add_filter( 'wp_robots', array( ChatAccess::class, 'noindex_preview' ) );
+
 		if ( get_option( Schema::SCHEMA_VERSION_OPTION ) !== Schema::SCHEMA_VERSION ) {
 			Schema::install();
 		}
@@ -862,7 +869,8 @@ final class Plugin {
 	private function get_frontend_ai_chat_config( array $settings, ChatMessageRepository $chat_messages ): array {
 		$ai_agent   = isset( $settings['ai_agent'] ) && is_array( $settings['ai_agent'] ) ? $settings['ai_agent'] : array();
 		$admin_only = ! empty( $ai_agent['frontend_chat_admin_only'] );
-		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE );
+		$beta_page  = ChatAccess::is_beta_preview_page( $ai_agent );
+		$can_view   = ! $admin_only || current_user_can( Capabilities::MANAGE ) || $beta_page;
 		$bot_name   = sanitize_text_field( (string) ( $ai_agent['frontend_chat_bot_name'] ?? $ai_agent['frontend_chat_title'] ?? '' ) );
 		$bot_name   = '' !== $bot_name ? $bot_name : __( 'Site assistant', 'adaptive-customer-engagement' );
 		$greeting   = sanitize_textarea_field( (string) ( $ai_agent['frontend_chat_greeting'] ?? '' ) );
@@ -886,6 +894,7 @@ final class Plugin {
 		return array(
 			'enabled'           => $enabled,
 			'adminOnly'         => $admin_only,
+			'betaGrant'         => $enabled && $beta_page && ! current_user_can( Capabilities::MANAGE ) ? ChatAccess::issue_grant() : '',
 			'endpoint'          => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/respond' ) ) ),
 			'syncEndpoint'      => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/conversation' ) ) ),
 			'typingEndpoint'    => esc_url_raw( ace_adaptive_customer_engagement_make_local_url( rest_url( 'adaptive-customer-engagement/v1/ai/chat/typing' ) ) ),

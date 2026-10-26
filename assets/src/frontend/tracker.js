@@ -444,6 +444,14 @@ function bindInteractionTracking(sessionUuid, visitorUuid, pageContext) {
 
 function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const chatConfig = config.aiChat || {};
+	const addChatAccessHeaders = (headers) => {
+		if (chatConfig.restNonce) {
+			headers['X-WP-Nonce'] = chatConfig.restNonce;
+		}
+		if (chatConfig.betaGrant) {
+			headers['X-ACE-Chat-Beta'] = chatConfig.betaGrant;
+		}
+	};
 
 	if (!chatConfig.enabled || window.__aceAiChatConfigured || !document.body) {
 		return;
@@ -1178,9 +1186,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 	const fetchAvailability = async () => {
 		const headers = {};
 
-		if (chatConfig.restNonce) {
-			headers['X-WP-Nonce'] = chatConfig.restNonce;
-		}
+		addChatAccessHeaders(headers);
 
 		const data = await fetchJson(chatConfig.availabilityEndpoint || `${config.root}${config.namespace}/ai/chat/availability`, {
 			method: 'GET',
@@ -1512,9 +1518,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			const endpoint = chatConfig.cartAddEndpoint || `${config.root}${config.namespace}/ai/cart/add`;
 			const headers = { 'Content-Type': 'application/json' };
 
-			if (chatConfig.restNonce) {
-				headers['X-WP-Nonce'] = chatConfig.restNonce;
-			}
+			addChatAccessHeaders(headers);
 
 			const response = await fetch(endpoint, {
 				method: 'POST',
@@ -1982,9 +1986,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 			const headers = { 'Content-Type': 'application/json' };
 
-			if (chatConfig.restNonce) {
-				headers['X-WP-Nonce'] = chatConfig.restNonce;
-			}
+			addChatAccessHeaders(headers);
 
 			const response = await fetch(chatConfig.voiceTtsEndpoint, {
 				method: 'POST',
@@ -2183,9 +2185,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 					const audio = await blobToBase64(blob);
 					const headers = { 'Content-Type': 'application/json' };
 
-					if (chatConfig.restNonce) {
-						headers['X-WP-Nonce'] = chatConfig.restNonce;
-					}
+					addChatAccessHeaders(headers);
 
 					const data = await fetchJson(chatConfig.voiceTranscribeEndpoint, {
 						method: 'POST',
@@ -2470,9 +2470,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 
 		const headers = {};
 
-		if (chatConfig.restNonce) {
-			headers['X-WP-Nonce'] = chatConfig.restNonce;
-		}
+		addChatAccessHeaders(headers);
 
 		const params = new URLSearchParams({
 			conversation_uuid: state.conversationUuid,
@@ -2535,9 +2533,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 			'Content-Type': 'application/json',
 		};
 
-		if (chatConfig.restNonce) {
-			headers['X-WP-Nonce'] = chatConfig.restNonce;
-		}
+		addChatAccessHeaders(headers);
 
 		const data = await fetchJson(chatConfig.typingEndpoint || `${config.root}${config.namespace}/ai/chat/typing`, {
 			method: 'POST',
@@ -2631,9 +2627,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				'Content-Type': 'application/json',
 			};
 
-			if (chatConfig.restNonce) {
-				headers['X-WP-Nonce'] = chatConfig.restNonce;
-			}
+			addChatAccessHeaders(headers);
 
 			await fetch(chatConfig.endEndpoint || `${config.root}${config.namespace}/ai/chat/end`, {
 				method: 'POST',
@@ -2749,9 +2743,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				'Content-Type': 'application/json',
 			};
 
-			if (chatConfig.restNonce) {
-				headers['X-WP-Nonce'] = chatConfig.restNonce;
-			}
+			addChatAccessHeaders(headers);
 
 			const data = await fetchJson(chatConfig.endpoint || `${config.root}${config.namespace}/ai/chat/respond`, {
 				method: 'POST',
@@ -2819,9 +2811,7 @@ function embedAiChatWidget(sessionUuid, visitorUuid, pageContext) {
 				'Content-Type': 'application/json',
 			};
 
-			if (chatConfig.restNonce) {
-				headers['X-WP-Nonce'] = chatConfig.restNonce;
-			}
+			addChatAccessHeaders(headers);
 
 			const data = await fetchJson(chatConfig.contactEndpoint || `${config.root}${config.namespace}/ai/chat/contact`, {
 				method: 'POST',
