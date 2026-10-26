@@ -202,6 +202,20 @@ final class CompanyRepository {
 		);
 	}
 
+	/** Remove a session's contribution when its company assignment changes. */
+	public function decrement_session_totals( int $company_id, int $event_count ): void {
+		global $wpdb;
+
+		$wpdb->query(
+			$wpdb->prepare(
+				'UPDATE ' . Schema::table_name( 'companies' ) . ' SET total_sessions = GREATEST(0, total_sessions - 1), total_events = GREATEST(0, total_events - %d), updated_at = %s WHERE id = %d',
+				max( 0, $event_count ),
+				current_time( 'mysql', true ),
+				$company_id
+			)
+		);
+	}
+
 	/**
 	 * Recalculate total matched calls for a company.
 	 *

@@ -151,7 +151,7 @@ final class EnrichmentService {
 		}
 
 		$is_bot = ! empty( $session['is_bot'] );
-		$recalled = $this->recall_from_memory( $session_id, $ip, $is_bot, array_merge( $session, array( 'company_id' => null ) ) );
+		$recalled = $this->recall_from_memory( $session_id, $ip, $is_bot, $session, true );
 
 		if ( null !== $recalled ) {
 			return $recalled;
@@ -194,8 +194,13 @@ final class EnrichmentService {
 			)
 		);
 
-		if ( $company_id > 0 && $company_id !== $previous ) {
-			$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+		if ( $company_id !== $previous ) {
+			if ( $previous > 0 ) {
+				$this->companies->decrement_session_totals( $previous, (int) ( $session['event_count'] ?? 0 ) );
+			}
+			if ( $company_id > 0 ) {
+				$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+			}
 		}
 
 		return $this->format_result( $result, $company_id );
@@ -221,10 +226,11 @@ final class EnrichmentService {
 	 * @param string               $ip         IP address.
 	 * @param bool                 $is_bot     Bot flag.
 	 * @param array<string, mixed> $session    Session row.
+	 * @param bool                 $replace_existing Allow re-enrichment to replace an earlier weak match.
 	 * @return array<string, mixed>|null Assignment summary, or null when no memory applies.
 	 */
-	private function recall_from_memory( int $session_id, string $ip, bool $is_bot, array $session ): ?array {
-		if ( null === $this->ip_memory || $is_bot || $this->privacy->is_private_ip( $ip ) || ! empty( $session['company_id'] ) ) {
+	private function recall_from_memory( int $session_id, string $ip, bool $is_bot, array $session, bool $replace_existing = false ): ?array {
+		if ( null === $this->ip_memory || $is_bot || $this->privacy->is_private_ip( $ip ) || ( ! $replace_existing && ! empty( $session['company_id'] ) ) ) {
 			return null;
 		}
 
@@ -254,8 +260,16 @@ final class EnrichmentService {
 
 		$confidence = 'likely';
 
-		$this->sessions->assign_company( $session_id, $company_id, $confidence );
-		$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+		$previous = (int) ( $session['company_id'] ?? 0 );
+		if ( $company_id !== $previous || $confidence !== (string) ( $session['company_confidence'] ?? '' ) ) {
+			$this->sessions->assign_company( $session_id, $company_id, $confidence );
+		}
+		if ( $company_id !== $previous ) {
+			if ( $previous > 0 ) {
+				$this->companies->decrement_session_totals( $previous, (int) ( $session['event_count'] ?? 0 ) );
+			}
+			$this->companies->increment_session_totals( $company_id, (int) ( $session['event_count'] ?? 0 ) );
+		}
 
 		return array(
 			'provider'       => 'ip_memory',

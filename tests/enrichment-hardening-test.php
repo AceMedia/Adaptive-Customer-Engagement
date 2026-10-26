@@ -6,7 +6,7 @@ use ACE\AdaptiveCustomerEngagement\Enrichment\IpinfoProvider;
 use ACE\AdaptiveCustomerEngagement\Tracking\Privacy;
 
 $ace_root = dirname( __DIR__ );
-foreach ( array( 'Settings.php', 'Enrichment/EnrichmentResult.php', 'Enrichment/ProviderInterface.php', 'Enrichment/IpregistryProvider.php', 'Enrichment/IpinfoProvider.php', 'Tracking/Privacy.php', 'Database/Schema.php', 'Database/Repositories/EnrichmentCacheRepository.php', 'Database/Repositories/CompanyRepository.php', 'Database/Repositories/SessionRepository.php', 'Database/Repositories/IpCompanyMemoryRepository.php', 'Enrichment/ProviderRegistry.php', 'Enrichment/EnrichmentService.php' ) as $ace_file ) {
+foreach ( array( 'Settings.php', 'Enrichment/DnsIntel.php', 'Enrichment/EnrichmentResult.php', 'Enrichment/ProviderInterface.php', 'Enrichment/IpregistryProvider.php', 'Enrichment/IpinfoProvider.php', 'Tracking/Privacy.php', 'Database/Schema.php', 'Database/Repositories/EnrichmentCacheRepository.php', 'Database/Repositories/CompanyRepository.php', 'Database/Repositories/SessionRepository.php', 'Database/Repositories/IpCompanyMemoryRepository.php', 'Enrichment/ProviderRegistry.php', 'Enrichment/EnrichmentService.php' ) as $ace_file ) {
 	require_once $ace_root . '/includes/' . $ace_file;
 }
 
@@ -80,6 +80,7 @@ class AceFixtureDb {
 	public $session = null;
 	public $replacements = array();
 	public $updates = array();
+	public $queries = array();
 	public function prepare( $sql, ...$args ) { return $sql; }
 	public function get_row( $sql, $format = null ) {
 		if ( false !== strpos( $sql, 'enrichment_cache' ) ) { return $this->cache_row; }
@@ -88,7 +89,7 @@ class AceFixtureDb {
 	}
 	public function update( $table, $data, $where ) { $this->updates[] = array( $table, $data, $where ); return 1; }
 	public function replace( $table, $data ) { $this->replacements[] = array( $table, $data ); return 1; }
-	public function query( $sql ) { return 1; }
+	public function query( $sql ) { $this->queries[] = $sql; return 1; }
 }
 global $wpdb;
 $ace_original_db = $wpdb;
@@ -141,6 +142,8 @@ ace_check( $ace_cache->find_valid( 'ipregistry', 'hash' )->is_error(), 'Recent l
 $wpdb->cache_row = array( 'response' => '{"company_domain":"example.test","confidence":"likely","raw":{"ptr":"mail.example.test","ip":"8.8.8.8"}}', 'created_at' => gmdate( 'Y-m-d H:i:s' ) );
 $ace_cached = $ace_cache->find_valid( 'ipregistry', 'hash' );
 ace_check( ! empty( $ace_cached->raw['ptr_checked'] ) && ! isset( $ace_cached->raw['ptr'] ), 'Legacy success avoids another PTR lookup' );
+$ace_hosting_cache = EnrichmentResult::from_array( array( 'raw' => array( 'ptr' => 'vm.amazonaws.com' ), 'is_hosting' => false ) );
+ace_check( ! empty( $ace_hosting_cache->raw['ptr_checked'] ) && ! empty( $ace_hosting_cache->raw['ptr_hosting'] ), 'Legacy hosting PTR becomes a safe cached flag' );
 $wpdb->cache_row = null;
 $wpdb->session = $ace_session = array( 'id' => 5, 'company_id' => null, 'company_confidence' => 'unknown', 'event_count' => 0 );
 $wpdb->memory = null;
@@ -150,5 +153,18 @@ ace_check( null === $ace_service->enrich_session( 5, '8.8.8.8' ), 'Provider erro
 ace_check( $ace_update_count === count( $wpdb->updates ) && 1 === count( $wpdb->replacements ), 'Error only writes the short cache entry' );
 $ace_expiry = strtotime( $wpdb->replacements[0][1]['expires_at'] . ' UTC' ) - time();
 ace_check( $ace_expiry >= 1195 && $ace_expiry <= 1200, 'Retry-After sets bounded error cache lifetime' );
+$wpdb->memory = array( 'company_id' => 42, 'company_name' => 'Example Ltd', 'confidence' => 'confirmed', 'last_seen' => gmdate( 'Y-m-d H:i:s' ) );
+$wpdb->session = array( 'id' => 5, 'company_id' => 42, 'company_confidence' => 'likely', 'event_count' => 3, 'is_bot' => 0 );
+$wpdb->queries = array();
+$ace_update_count = count( $wpdb->updates );
+ace_check( 42 === $ace_service->reenrich_session( 5, '8.8.8.8' )['company_id'], 'Same memory company still resolves' );
+ace_check( 0 === count( $wpdb->queries ) && $ace_update_count === count( $wpdb->updates ), 'Repeated same-company recall does not inflate totals' );
+$wpdb->session['company_confidence'] = 'weak';
+ace_check( 42 === $ace_service->reenrich_session( 5, '8.8.8.8' )['company_id'], 'Same memory company can improve weak confidence' );
+ace_check( 0 === count( $wpdb->queries ) && $ace_update_count + 1 === count( $wpdb->updates ), 'Confidence improvement leaves company totals alone' );
+$wpdb->session['company_id'] = 7;
+$wpdb->session['company_confidence'] = 'weak';
+ace_check( 42 === $ace_service->reenrich_session( 5, '8.8.8.8' )['company_id'], 'Recent memory can replace a weak provider match' );
+ace_check( 2 === count( $wpdb->queries ) && false !== strpos( $wpdb->queries[0], 'GREATEST' ) && false !== strpos( $wpdb->queries[1], 'total_sessions + 1' ), 'Company switch balances old and new totals' );
 $wpdb = $ace_original_db;
 echo "Enrichment provider, payload, IP trust and memory checks passed\n";

@@ -154,8 +154,12 @@ final class EnrichmentResult {
 		$raw = isset( $data['raw'] ) && is_array( $data['raw'] ) ? $data['raw'] : array();
 		$result->raw            = self::safe_raw( $raw );
 		if ( array_key_exists( 'ptr', $raw ) ) {
+			$ptr = is_string( $raw['ptr'] ) ? $raw['ptr'] : null;
 			$result->raw['ptr_checked'] = true;
-			$result->raw['ptr_hosting'] = true === $result->is_hosting;
+			$result->raw['ptr_hosting'] = true === $result->is_hosting || DnsIntel::is_hosting_host( $ptr );
+			if ( $ptr && $result->company_domain && 'keyless' !== $result->provider ) {
+				$result->raw['ptr_domain_match'] = strtolower( $result->company_domain ) === DnsIntel::registrable_domain( $ptr );
+			}
 		}
 		$result->error_code     = ! empty( $data['error_code'] ) ? self::safe_error_code( (string) $data['error_code'] ) : ( isset( $result->raw['error'] ) ? $result->raw['error']['code'] : null );
 		$result->retry_after    = max( 0, (int) ( $data['retry_after'] ?? 0 ) );

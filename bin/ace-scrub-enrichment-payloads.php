@@ -4,6 +4,7 @@ if ( ! defined( 'WP_CLI' ) || ! WP_CLI ) {
 	return;
 }
 require_once dirname( __DIR__ ) . '/includes/Enrichment/EnrichmentResult.php';
+require_once dirname( __DIR__ ) . '/includes/Enrichment/DnsIntel.php';
 use ACE\AdaptiveCustomerEngagement\Enrichment\EnrichmentResult;
 
 $ace_options = array( 'blog' => 0, 'limit' => 500, 'cache-after-id' => 0, 'company-after-id' => 0, 'apply' => false, 'backup-confirmed' => false );
@@ -42,31 +43,40 @@ foreach ( array( 'enrichment_cache' => array( 'response', 'provider' ), 'compani
 			$ace_params
 		), ARRAY_A
 	);
+	if ( ! is_array( $ace_rows ) || '' !== (string) $wpdb->last_error ) {
+		WP_CLI::error( 'Could not read the ' . $ace_suffix . ' batch. No cursor was advanced.' );
+	}
 	$ace_changed = 0;
 	foreach ( (array) $ace_rows as $ace_row ) {
 		$ace_data = json_decode( (string) $ace_row['payload'], true );
 		if ( ! is_array( $ace_data ) ) {
-			continue;
+			WP_CLI::error( 'Invalid provider JSON in ' . $ace_suffix . ' row ' . (int) $ace_row['id'] . '. No cursor was advanced.' );
 		}
 		if ( 'companies' === $ace_suffix && ! in_array( (string) $ace_row['source'], array( 'ipregistry', 'ipinfo', 'keyless' ), true ) && ! EnrichmentResult::looks_like_provider_raw( $ace_data ) ) {
 			continue;
 		}
 		if ( 'response' === $ace_columns[0] ) {
 			if ( ! isset( $ace_data['raw'] ) || ! is_array( $ace_data['raw'] ) ) {
-				continue;
+				WP_CLI::error( 'Unrecognised cache JSON in row ' . (int) $ace_row['id'] . '. No cursor was advanced.' );
 			}
-			$ace_data['raw'] = EnrichmentResult::safe_raw( $ace_data['raw'] );
+			$ace_data['raw'] = EnrichmentResult::from_array( $ace_data )->to_array()['raw'];
 		} else {
 			$ace_data = EnrichmentResult::safe_raw( $ace_data );
 		}
 		$ace_json = wp_json_encode( $ace_data );
+		if ( ! is_string( $ace_json ) ) {
+			WP_CLI::error( 'Could not encode ' . $ace_suffix . ' row ' . (int) $ace_row['id'] . '. No cursor was advanced.' );
+		}
 		if ( $ace_json === $ace_row['payload'] ) {
 			continue;
 		}
-		++$ace_changed;
 		if ( $ace_options['apply'] ) {
-			$wpdb->update( $ace_table, array( $ace_columns[0] => $ace_json ), array( 'id' => (int) $ace_row['id'] ) );
+			$ace_updated = $wpdb->update( $ace_table, array( $ace_columns[0] => $ace_json ), array( 'id' => (int) $ace_row['id'] ) );
+			if ( 1 !== $ace_updated ) {
+				WP_CLI::error( 'Could not update ' . $ace_suffix . ' row ' . (int) $ace_row['id'] . '. No cursor was advanced.' );
+			}
 		}
+		++$ace_changed;
 	}
 	$ace_counts[ $ace_suffix ] = array( 'scanned' => count( (array) $ace_rows ), 'changed' => $ace_changed, 'last_id' => $ace_rows ? (int) end( $ace_rows )['id'] : $ace_after_id );
 }
