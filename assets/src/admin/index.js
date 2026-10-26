@@ -3253,7 +3253,7 @@ function BusinessAddressPanel({ company }) {
 			address.public_premises == 1 && placesSettings?.enabled && placesSettings?.has_key && !placesSettings?.staging_blocked && createElement(Button, { variant: 'secondary', disabled: busy, onClick: async () => { const result = await act(`${base}/${address.id}/lookup`); if (result) { setCandidates({ ...candidates, [address.id]: result.candidates || [] }); setEmptyLookup({ ...emptyLookup, [address.id]: !(result.candidates || []).length }); } } }, __('Search Google Places', 'adaptive-customer-engagement')),
 			emptyLookup[address.id] && createElement('p', null, __('No matching places found. Review the first-party address and try again only if appropriate.', 'adaptive-customer-engagement')),
 			(candidates[address.id] || []).length > 0 && createElement('div', null,
-				createElement('p', { translate: 'no', style: { fontFamily: 'Arial, sans-serif', fontSize: 14, fontWeight: 400 } }, 'Google Maps'),
+				createElement('p', { translate: 'no', style: { fontFamily: 'Arial, sans-serif', fontSize: 14, fontWeight: 400, color: '#5e5e5e', whiteSpace: 'nowrap', fontStyle: 'normal', letterSpacing: 'normal' } }, 'Google Maps'),
 				candidates[address.id].map((candidate) => createElement('div', { key: candidate.id, style: { marginBottom: 12 } },
 					createElement('strong', null, candidate.name), createElement('p', null, candidate.address),
 					createElement('p', null, `${candidate.business_status || ''} · ${__('Our assessment', 'adaptive-customer-engagement')}: ${candidate.assessment}`),
