@@ -30,6 +30,8 @@ sudo -H -u ace-ai /usr/local/bin/ace-codex-bridge login-status network-1
 
 Scopes are `network-<id>` for the network connection and `site-<blog_id>` for a site's own connection, each in its own Codex home. A site that inherits the network connection asks through the network home.
 
+The bridge sends requests to `codex exec` through stdin and reads the structured JSON events. A failed turn returns a short, safe category such as `rate_limited`, `sign_in_required` or `transport_error`; raw Codex stderr, prompts and provider messages are never shown to visitors. A successful `login-status` confirms the connection is signed in, but it does not prove every model request will succeed. If a chat fails, check the bridge version and run one bounded test under the configured service account before asking for another sign-in. Keep the bridge copies in Adaptive Customer Engagement and Ace Crawl Enhancer identical when upgrading either plugin.
+
 ## Connect a ChatGPT subscription with the browser-side helper (alternative)
 
 This is the open-source self-hosted route documented by OpenAI for servers without the Codex bridge. It is not a direct WordPress OAuth callback, and no account is connected automatically.

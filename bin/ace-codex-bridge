@@ -189,25 +189,53 @@ PY
     MODEL="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get("model") or "")' "$REQ")"; [ -n "$MODEL" ] || MODEL="$DEFAULT_MODEL"
     EFFORT="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get("effort") or "low")' "$REQ")"
     LAST="$(mktemp "$CODEX_HOME/last.XXXXXX")"; EVENTS="$(mktemp "$CODEX_HOME/events.XXXXXX")"
-    timeout "$TIMEOUT" "$CODEX_BIN" exec --skip-git-repo-check --ephemeral -s read-only -C "$WORK" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"" --json -o "$LAST" "$PROMPT" </dev/null >"$EVENTS" 2>"$EVENTS.err"; rc=$?
+    # Pass the prompt through stdin explicitly. It stays out of the process list and
+    # Codex does not have to infer whether more input is coming from a closed pipe.
+    printf '%s\n' "$PROMPT" | timeout "$TIMEOUT" "$CODEX_BIN" exec --skip-git-repo-check --ephemeral -s read-only -C "$WORK" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"" --json -o "$LAST" - >"$EVENTS" 2>"$EVENTS.err"; rc=$?
     python3 - "$LAST" "$EVENTS" "$EVENTS.err" "$rc" "$MODEL" <<'PY'
 import json,sys
 last,events,err,rc,model=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4]),sys.argv[5]
 try: msg=open(last).read().strip()
 except Exception: msg=""
-usage={}
+usage={}; failure=""; terminal_failed=False
 try:
     for line in open(events):
         try: e=json.loads(line)
         except Exception: continue
+        if not isinstance(e,dict): continue
+        if e.get("type")=="turn.completed":
+            terminal_failed=False; failure=""
+        if e.get("type") in ("error","turn.failed"):
+            terminal_failed=True
+            detail=e.get("error")
+            if not isinstance(detail,dict): detail={"message":detail}
+            code=detail.get("code") or e.get("code")
+            message=detail.get("message") or e.get("message")
+            # Provider messages can include request content. Only return fixed,
+            # non-sensitive categories to WordPress and the public chat widget.
+            signal=" ".join(x for x in (code,message) if isinstance(x,str)).lower()
+            if "rate_limit" in signal or "rate limit" in signal or "429" in signal: failure="rate_limited"
+            elif "unauthor" in signal or "auth" in signal or "login" in signal or "401" in signal: failure="sign_in_required"
+            elif "model" in signal and ("unavailable" in signal or "not found" in signal): failure="model_unavailable"
+            elif "context" in signal or "too long" in signal: failure="context_limit"
+            else: failure="provider_error"
         u=e.get("usage") or (e.get("turn") or {}).get("usage") or {}
         if u: usage={"input_tokens":u.get("input_tokens",0),"output_tokens":u.get("output_tokens",0),"cached_input_tokens":u.get("cached_input_tokens",0)}
 except Exception: pass
-if rc!=0 or not msg:
-    tail=""
-    try: tail=open(err).read().strip().splitlines()[-1][:300]
-    except Exception: pass
-    print(json.dumps({"error":("Codex timed out." if rc==124 else "Codex did not return an answer.")+((" "+tail) if tail else "")})); sys.exit(1)
+if rc!=0 or not msg or terminal_failed:
+    if rc==124: failure="timed_out"
+    elif not failure: failure="empty_answer" if rc==0 else "transport_error"
+    descriptions={
+        "timed_out":"The assistant timed out while preparing an answer. Please try again.",
+        "rate_limited":"The assistant is busy at the moment. Please try again shortly.",
+        "sign_in_required":"The AI connection needs attention. Please try again later.",
+        "model_unavailable":"The selected AI model is temporarily unavailable. Please try again later.",
+        "context_limit":"That conversation is too long for the assistant. Please start a new chat.",
+        "provider_error":"The assistant could not complete that answer. Please try again.",
+        "empty_answer":"The assistant did not return an answer. Please try again.",
+        "transport_error":"The assistant could not reach its answer service. Please try again.",
+    }
+    print(json.dumps({"error":descriptions[failure],"error_code":failure})); sys.exit(1)
 print(json.dumps({"message":msg,"usage":usage,"model":model}))
 PY
     rc=$?; rm -f "$LAST" "$EVENTS" "$EVENTS.err"; exit $rc ;;

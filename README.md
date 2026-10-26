@@ -287,3 +287,5 @@ Built by Shane Rounce of [AceMedia.ninja](https://acemedia.ninja/).
 ## Shared Ace AI connection
 
 The local integration supports one explicitly billed OpenAI API-key connection per site or multisite network, with per-site inheritance, overrides and disabling. The self-hosted ChatGPT subscription route now includes a local sign-in helper, protected import, account model selection, Responses text transport and token refresh; real account consent and live inference still require acceptance. See [connection behaviour and verification limits](docs/SHARED-AI-CONNECTION.md).
+
+The optional Codex CLI bridge keeps its sign-in in a separate service account. It passes chat prompts through stdin and returns only safe error categories when a model request fails, so provider diagnostics and visitor text are not exposed in the chat response. A successful sign-in check does not rule out a later request failure.
