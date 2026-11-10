@@ -113,7 +113,7 @@ final class SpeechToTextService {
 		}
 
 
-		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		$shared = function_exists( 'acemedia_ai_connection_service' ) ? acemedia_ai_connection_service() : null;
 		if ( $shared ) {
 			$api_key = $shared->api_key( 'audio', $api_key );
 			if ( is_wp_error( $api_key ) ) { return $api_key; }

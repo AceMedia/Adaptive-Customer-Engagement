@@ -4,7 +4,7 @@ Tags: lead tracking, analytics, attribution, phone tracking, b2b
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.4
+Stable tag: 0.1.5
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,9 @@ Yes. The frontend website assistant is now plugin-managed and uses the saved Ope
 Yes. It tracks product and category interest and surfaces repeat-interest reporting across products, categories, sessions, and companies.
 
 == Changelog ==
+
+= 0.1.5 =
+* Bundle the shared Ace AI connection library 1.4.0 under its new acemedia_ai_ names, matching Ace Crawl Enhancer 1.0.98, and call it by those names. A stored connection moves across with `wp acecrawl convert-names`.
 
 = 0.1.4 =
 * Add an optional abandoned-basket quote email for WooCommerce sites. Off by default and switched on per site under Privacy. One email per basket, 14-day quote, restore and sign-up links, opt-out and a retention purge.

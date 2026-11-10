@@ -41,7 +41,7 @@ final class ChatClientFactory {
 	 */
 	public static function effective_voice_provider( array $ai_agent ): string {
 		$provider = sanitize_key( (string) ( $ai_agent['frontend_voice_provider'] ?? 'auto' ) );
-		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		$shared = function_exists( 'acemedia_ai_connection_service' ) ? acemedia_ai_connection_service() : null;
 		if ( $shared && 'unmanaged' !== $shared->status()['status'] ) {
 			$key = $shared->api_key( 'audio' );
 			return is_wp_error( $key ) || '' === $key ? 'browser' : 'openai';
@@ -68,7 +68,7 @@ final class ChatClientFactory {
 	 */
 	public static function resolve( array $ai_agent ): array {
 		$provider = sanitize_key( (string) ( $ai_agent['provider'] ?? 'openai' ) );
-		$shared = function_exists( 'ace_ai_connection_service' ) ? ace_ai_connection_service() : null;
+		$shared = function_exists( 'acemedia_ai_connection_service' ) ? acemedia_ai_connection_service() : null;
 		if ( $shared && $shared->subscription_selected() ) {
 			return array( 'provider' => 'chatgpt', 'client' => new ChatGPTClient(), 'api_key' => 'shared-subscription', 'model' => 'account-selected' );
 		}

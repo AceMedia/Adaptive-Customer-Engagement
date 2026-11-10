@@ -6,10 +6,8 @@ require_once __DIR__ . '/oauth.php';
 require_once __DIR__ . '/responses.php';
 require_once __DIR__ . '/session.php';
 final class Service {
-	const OPTION = 'ace_ai_connection_v1';
-	const BRIDGE_OPTION = 'ace_ai_codex_bridge_v1';
-	const BRIDGE_DEFAULT = '/usr/local/bin/ace-codex-bridge';
-	const PROVIDERS = array( 'api_key', 'chatgpt', 'codex' );
+	const OPTION = 'acemedia_ai_connection_v1';
+	const PROVIDERS = array( 'api_key', 'chatgpt', 'codex', 'wordpress' );
 	private $force_network;
 	public function __construct( bool $force_network = false ) { $this->force_network = $force_network; }
 
@@ -52,7 +50,7 @@ final class Service {
 		if ( ! in_array( $record['provider'] ?? '', self::PROVIDERS, true ) ) {
 			return $base + array( 'status' => 'unsupported' );
 		}
-		if ( ! is_array( $record['features'] ?? null ) || ( 'codex' !== $record['provider'] && ( ! is_string( $record['secret'] ?? null ) || '' === $record['secret'] ) ) ) {
+		if ( ! is_array( $record['features'] ?? null ) || ( ! in_array( $record['provider'], array( 'codex', 'wordpress' ), true ) && ( ! is_string( $record['secret'] ?? null ) || '' === $record['secret'] ) ) ) {
 			return $base + array( 'status' => 'disconnected' );
 		}
 		return $base + array( 'status' => 'configured', 'record' => $record );
@@ -77,6 +75,9 @@ final class Service {
 		if ( 'configured' !== $resolved['status'] ) {
 			return new \WP_Error( 'ace_ai_' . $resolved['status'], 'The shared Ace AI connection is ' . $resolved['status'] . '. Check Ace AI connection settings.' );
 		}
+		if ( 'wordpress' === ( $resolved['record']['provider'] ?? '' ) ) {
+			return new \WP_Error( 'ace_ai_wordpress_transport', 'Use the WordPress AI Client for text. Images and voice are not enabled by this connection.' );
+		}
 		$subscription = in_array( $resolved['record']['provider'] ?? '', array( 'chatgpt', 'codex' ), true );
 		if ( $subscription && 'text' === $feature ) {
 			return new \WP_Error( 'ace_ai_subscription_transport', 'Use the ChatGPT connection for this request.' );
@@ -98,11 +99,14 @@ final class Service {
 		if ( ! current_user_can( $network ? 'manage_network_options' : 'manage_options' ) || ( $network && ! is_multisite() ) ) {
 			return new \WP_Error( 'ace_ai_forbidden', 'You cannot change this connection.' );
 		}
-		$allowed = $network || ! is_multisite() ? array( 'own', 'disabled' ) : array( 'inherit', 'own', 'disabled' );
+		$allowed = $network || ! is_multisite() ? array( 'wordpress', 'own', 'disabled' ) : array( 'inherit', 'wordpress', 'own', 'disabled' );
 		if ( ! in_array( $mode, $allowed, true ) ) {
 			return new \WP_Error( 'ace_ai_invalid_mode', 'Choose an available connection mode.' );
 		}
 		$record = array( 'mode' => $mode, 'updated_at' => time() );
+		if ( 'wordpress' === $mode ) {
+			$record = array( 'mode' => 'own', 'provider' => 'wordpress', 'features' => array_values( array_intersect( array( 'text' ), $features ) ), 'updated_at' => time() );
+		}
 		if ( 'own' === $mode ) {
 			$old = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
 			if ( in_array( $old['provider'] ?? '', array( 'chatgpt', 'codex' ), true ) ) {
@@ -149,7 +153,7 @@ final class Service {
 	}
 	public function subscription_selected(): bool {
 		$r = $this->resolve();
-		return in_array( $r['record']['provider'] ?? '', array( 'chatgpt', 'codex' ), true );
+		return in_array( $r['record']['provider'] ?? '', array( 'chatgpt', 'codex', 'wordpress' ), true );
 	}
 	public function disconnect_subscription( bool $network = false ) {
 		if ( ! current_user_can( $network ? 'manage_network_options' : 'manage_options' ) ) { return new \WP_Error( 'ace_ai_forbidden', 'You cannot change this connection.' ); }
@@ -172,48 +176,38 @@ final class Service {
 
 	/* ---- Codex CLI bridge: a second, isolated Codex instance on this server signed in from wp-admin. ---- */
 
-	/** The bridge command, e.g. `sudo -H -u ace-ai /usr/local/bin/ace-codex-bridge`. Constant > option > default install path. */
-	public function codex_bridge(): string {
-		if ( defined( 'ACE_AI_CODEX_BRIDGE' ) && is_string( ACE_AI_CODEX_BRIDGE ) ) { return trim( ACE_AI_CODEX_BRIDGE ); }
-		$cmd = is_multisite() ? get_network_option( get_current_network_id(), self::BRIDGE_OPTION, '' ) : get_option( self::BRIDGE_OPTION, '' );
-		if ( is_string( $cmd ) && '' !== trim( $cmd ) ) { return trim( $cmd ); }
-		return is_executable( self::BRIDGE_DEFAULT ) ? self::BRIDGE_DEFAULT : '';
-	}
+	/** Whether a host-provided Codex runner is registered on the `acemedia_ai_codex_runner` filter. This plugin never runs programs itself. */
 	public function codex_available(): bool {
-		return '' !== $this->codex_bridge() && function_exists( 'proc_open' );
-	}
-	public function save_codex_bridge( string $cmd, bool $network = false ) {
-		if ( ! current_user_can( $network ? 'manage_network_options' : 'manage_options' ) || ( is_multisite() && ! $network ) ) { return new \WP_Error( 'ace_ai_forbidden', 'Only a network administrator can change the bridge command.' ); }
-		$cmd = trim( $cmd );
-		if ( '' !== $cmd && ! preg_match( '#^[A-Za-z0-9_./=:@ -]+$#D', $cmd ) ) { return new \WP_Error( 'ace_ai_bridge_invalid', 'The bridge command may only contain a path, a sudo prefix and plain arguments.' ); }
-		if ( $network ) { update_network_option( get_current_network_id(), self::BRIDGE_OPTION, $cmd ); } else { update_option( self::BRIDGE_OPTION, $cmd, false ); }
-		return true;
+		return (bool) has_filter( 'acemedia_ai_codex_runner' );
 	}
 	/** One Codex home per WordPress scope, so a site's own connection never shares the network's account. */
 	public function codex_scope( bool $network ): string {
 		return $network ? 'network-' . (int) get_current_network_id() : 'site-' . (int) get_current_blog_id();
 	}
+	/**
+	 * Hand a Codex request to the host-provided runner.
+	 *
+	 * Filter `acemedia_ai_codex_runner( null, $sub, $scope, $stdin, $timeout )` returns the decoded
+	 * reply array or a WP_Error. A site that wants Codex sign-in supplies the runner; nothing
+	 * is executed from this plugin.
+	 */
 	private function codex_run( string $sub, string $scope, string $stdin = '', int $timeout = 60 ) {
-		$bridge = $this->codex_bridge();
-		if ( '' === $bridge || ! function_exists( 'proc_open' ) ) { return new \WP_Error( 'ace_ai_codex_unavailable', 'The Codex bridge is not installed on this server.' ); }
-		$cmd = 'timeout ' . (int) $timeout . ' ' . $bridge . ' ' . escapeshellarg( $sub ) . ' ' . escapeshellarg( $scope );
-		$proc = proc_open( $cmd, array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes );
-		if ( ! is_resource( $proc ) ) { return new \WP_Error( 'ace_ai_codex_unavailable', 'The Codex bridge could not be started.' ); }
-		fwrite( $pipes[0], $stdin ); fclose( $pipes[0] );
-		$out = stream_get_contents( $pipes[1] ); fclose( $pipes[1] );
-		$err = stream_get_contents( $pipes[2] ); fclose( $pipes[2] );
-		$code = proc_close( $proc );
-		$data = json_decode( (string) $out, true );
-		if ( 0 !== $code && is_array( $data ) && ! empty( $data['error'] ) && is_string( $data['error'] ) ) { return new \WP_Error( 'ace_ai_codex_error', $data['error'] ); }
-		if ( ! is_array( $data ) || 0 !== $code ) {
-			$detail = trim( (string) preg_replace( '/\s+/', ' ', substr( (string) $err, -300 ) ) );
-			return new \WP_Error( 'ace_ai_codex_error', 124 === $code ? 'The Codex bridge timed out.' : 'The Codex bridge gave no usable reply' . ( $detail ? ': ' . $detail : '.' ) );
-		}
+		if ( ! $this->codex_available() ) { return new \WP_Error( 'ace_ai_codex_unavailable', 'No Codex runner is registered on this site.' ); }
+		$data = apply_filters( 'acemedia_ai_codex_runner', null, $sub, $scope, $stdin, $timeout );
+		if ( is_wp_error( $data ) ) { return $data; }
+		if ( ! is_array( $data ) ) { return new \WP_Error( 'ace_ai_codex_error', 'The Codex runner gave no usable reply.' ); }
 		return $data;
 	}
 	public function codex_login_start( bool $network = false ) {
 		if ( ! current_user_can( $network ? 'manage_network_options' : 'manage_options' ) || ( $network && ! is_multisite() ) ) { return new \WP_Error( 'ace_ai_forbidden', 'You cannot change this connection.' ); }
+		$record = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
+		if ( 'wordpress' === ( $record['provider'] ?? '' ) ) { return new \WP_Error( 'ace_ai_explicit_connection', 'Select this scope’s own connection and save before signing in with ChatGPT.' ); }
 		$status = $this->codex_run( 'login-start', $this->codex_scope( $network ), '', 75 );
+		if ( ! is_wp_error( $status ) && 'disabled' === ( $record['mode'] ?? '' ) && ( ! empty( $status['pending'] ) || ! empty( $status['connected'] ) ) ) {
+			// An explicit sign-in authorises reconnecting; a status poll alone never does.
+			$record['mode'] = 'own';
+			if ( $network ) { update_network_option( get_current_network_id(), self::OPTION, $record ); } else { update_option( self::OPTION, $record, false ); }
+		}
 		return is_wp_error( $status ) ? $status : $this->codex_adopt( $status, $network );
 	}
 	public function codex_login_cancel( bool $network = false ) {
@@ -229,6 +223,9 @@ final class Service {
 	private function codex_adopt( array $status, bool $network ): array {
 		$record = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
 		$record = is_array( $record ) ? $record : array();
+		if ( 'wordpress' === ( $record['provider'] ?? '' ) || 'disabled' === ( $record['mode'] ?? '' ) ) {
+			return array( 'connected' => false, 'pending' => false, 'saved' => false, 'error' => 'The saved connection choice prevents adopting this ChatGPT session.' );
+		}
 		if ( ! empty( $status['connected'] ) && 'codex' !== ( $record['provider'] ?? '' ) ) {
 			$previous = $record;
 			$record   = array( 'mode' => 'own', 'provider' => 'codex', 'features' => array( 'text' ), 'secret' => '', 'model' => '', 'updated_at' => time() );
@@ -256,7 +253,7 @@ final class Service {
 		return 'network' === ( $r['scope'] ?? '' ) ? 'network-' . (int) get_site( get_current_blog_id() )->network_id : 'site-' . (int) get_current_blog_id();
 	}
 	public function host_id(): string {
-		$key = 'ace_ai_host_id_v1';
+		$key = 'acemedia_ai_host_id_v1';
 		$network = is_multisite();
 		$id = $network ? get_network_option( get_current_network_id(), $key, '' ) : get_option( $key, '' );
 		if ( ! $id ) {
@@ -283,6 +280,19 @@ final class Service {
 	/** Return the available account-specific model catalogue without exposing its token. */
 	public function subscription_models() {
 		$r = $this->resolve();
+		if ( 'wordpress' === ( $r['record']['provider'] ?? '' ) ) {
+			if ( ! function_exists( 'wp_ai_client_prompt' ) || ( function_exists( 'wp_supports_ai' ) && ! wp_supports_ai() ) ) {
+				return new \WP_Error( 'ace_ai_wordpress_unavailable', 'The WordPress AI Client is unavailable or disabled.' );
+			}
+			try {
+				if ( true !== wp_ai_client_prompt()->is_supported_for_text_generation() ) {
+					return new \WP_Error( 'ace_ai_wordpress_unconfigured', 'Configure a text provider in WordPress AI settings.' );
+				}
+				return array( array( 'id' => 'wordpress', 'label' => 'WordPress configured text model' ) );
+			} catch ( \Throwable $error ) {
+				return new \WP_Error( 'ace_ai_wordpress_failed', 'The WordPress AI provider could not be checked.' );
+			}
+		}
 		if ( 'codex' === ( $r['record']['provider'] ?? '' ) ) {
 			$models = $this->codex_run( 'models', $this->codex_selected_scope(), '', 30 );
 			if ( is_wp_error( $models ) ) { return $models; }
@@ -299,7 +309,10 @@ final class Service {
 	}
 	public function subscription_text( array $messages, string $model = '' ) {
 		$resolved = $this->resolve();
-		if ( ! $this->subscription_selected() ) { return new \WP_Error( 'ace_ai_not_connected', 'Select a ChatGPT connection first.' ); }
+		if ( ! $this->subscription_selected() ) { return new \WP_Error( 'ace_ai_not_connected', 'Select an AI text connection first.' ); }
+		if ( 'wordpress' === ( $resolved['record']['provider'] ?? '' ) ) {
+			return $this->wordpress_text( $messages );
+		}
 		$model = (string) ( $resolved['record']['model'] ?? '' );
 		if ( 'codex' === ( $resolved['record']['provider'] ?? '' ) ) {
 			$answer = $this->codex_run( 'ask', $this->codex_selected_scope(), (string) json_encode( array( 'model' => $model, 'effort' => 'low', 'messages' => array_values( $messages ) ) ), 180 );
@@ -313,6 +326,46 @@ final class Service {
 		if ( ! is_wp_error( $answer ) ) { $answer['model'] = $model; }
 		return $answer;
 	}
+	/** Core owns provider/model selection; never retry through a separately billed account. */
+	public function wordpress_text( array $messages ) {
+		$resolved = $this->resolve();
+		if ( 'configured' !== $resolved['status'] || 'wordpress' !== ( $resolved['record']['provider'] ?? '' ) || ! in_array( 'text', $resolved['record']['features'] ?? array(), true ) ) {
+			return new \WP_Error( 'ace_ai_feature_disabled', 'Enable text for the WordPress AI connection first.' );
+		}
+		if ( ! function_exists( 'wp_ai_client_prompt' ) || ( function_exists( 'wp_supports_ai' ) && ! wp_supports_ai() ) ) {
+			return new \WP_Error( 'ace_ai_wordpress_unavailable', 'The WordPress AI Client is unavailable or disabled. No fallback was used.' );
+		}
+		try {
+			$core_messages = array();
+			$instructions = array();
+			foreach ( $messages as $message ) {
+				if ( ! is_array( $message ) || ! is_string( $message['content'] ?? null ) ) {
+					return new \WP_Error( 'ace_ai_invalid_prompt', 'The text prompt is invalid.' );
+				}
+				$role = $message['role'] ?? 'user';
+				if ( 'system' === $role ) { $instructions[] = $message['content']; continue; }
+				if ( ! in_array( $role, array( 'user', 'assistant' ), true ) ) {
+					return new \WP_Error( 'ace_ai_invalid_prompt', 'The text prompt role is invalid.' );
+				}
+				$core_messages[] = array( 'role' => 'assistant' === $role ? 'model' : 'user', 'parts' => array( array( 'type' => 'text', 'text' => $message['content'] ) ) );
+			}
+			if ( ! $core_messages ) { return new \WP_Error( 'ace_ai_invalid_prompt', 'The text prompt is empty.' ); }
+			$prompt = wp_ai_client_prompt( $core_messages );
+			if ( $instructions ) { $prompt = $prompt->using_system_instruction( implode( "\n\n", $instructions ) ); }
+			if ( true !== $prompt->is_supported_for_text_generation() ) {
+				return new \WP_Error( 'ace_ai_wordpress_unconfigured', 'Configure a text provider in WordPress AI settings. No fallback was used.' );
+			}
+			$text = $prompt->generate_text();
+			if ( is_wp_error( $text ) ) { return $text; }
+			if ( ! is_string( $text ) || '' === trim( $text ) ) {
+				return new \WP_Error( 'ace_ai_response_failed', 'The WordPress AI provider returned no text.' );
+			}
+			return array( 'message' => $text, 'usage' => array(), 'model' => 'wordpress' );
+		} catch ( \Throwable $error ) {
+			return new \WP_Error( 'ace_ai_wordpress_failed', 'The WordPress AI request failed. Check the configured provider. No fallback was used.' );
+		}
+	}
+
 	public function save_subscription_model( string $model, bool $network = false ) {
 		if ( ! current_user_can( $network ? 'manage_network_options' : 'manage_options' ) ) { return new \WP_Error( 'ace_ai_forbidden', 'You cannot change this connection.' ); }
 		$r = $network ? get_network_option( get_current_network_id(), self::OPTION, array() ) : get_option( self::OPTION, array() );
@@ -334,14 +387,14 @@ final class Service {
 		$column = $network ? 'meta_value' : 'option_value';
 		$load = function () use ( $wpdb, $network, $id, $table, $column ) {
 			$sql = $network ? $wpdb->prepare( "SELECT meta_value FROM {$table} WHERE site_id=%d AND meta_key=%s LIMIT 1", $id, self::OPTION ) : $wpdb->prepare( "SELECT option_value FROM {$table} WHERE option_name=%s LIMIT 1", self::OPTION );
-			$record = maybe_unserialize( $wpdb->get_var( $sql ) );
+			$record = maybe_unserialize( $wpdb->get_var( $sql ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- prepared immediately above.
 			if ( ! is_array( $record ) || 'own' !== ( $record['mode'] ?? '' ) || 'chatgpt' !== ( $record['provider'] ?? '' ) ) { return new \WP_Error( 'ace_ai_connection_changed', 'The connection changed.' ); }
 			$plain = $this->decrypt( $record['secret'] );
 			return is_wp_error( $plain ) ? $plain : json_decode( $plain, true );
 		};
 		$cas = function ( $old, $next ) use ( $wpdb, $table, $column, $where, $network, $id ) {
 			$sql = $network ? $wpdb->prepare( "SELECT meta_value FROM {$table} WHERE site_id=%d AND meta_key=%s LIMIT 1", $id, self::OPTION ) : $wpdb->prepare( "SELECT option_value FROM {$table} WHERE option_name=%s LIMIT 1", self::OPTION );
-			$raw = $wpdb->get_var( $sql ); $record = maybe_unserialize( $raw );
+			$raw = $wpdb->get_var( $sql ); $record = maybe_unserialize( $raw ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- prepared immediately above.
 			if ( ! is_array( $record ) || 'chatgpt' !== ( $record['provider'] ?? '' ) ) { return false; }
 			$plain = $this->decrypt( $record['secret'] ); if ( is_wp_error( $plain ) || json_decode( $plain, true ) !== $old ) { return false; }
 			$secret = $this->encrypt( wp_json_encode( $next ) ); if ( is_wp_error( $secret ) ) { return false; }
@@ -350,7 +403,7 @@ final class Service {
 			if ( $network ) { wp_cache_delete( $id . ':' . self::OPTION, 'site-options' ); } else { wp_cache_delete( self::OPTION, 'options' ); }
 			return 1 === $updated;
 		};
-		$lock_name = 'ace_ai_refresh_' . ( $network ? 'network_' : 'site_' ) . $id;
+		$lock_name = 'acemedia_ai_refresh_' . ( $network ? 'network_' : 'site_' ) . $id;
 		$locks = $wpdb->base_prefix . 'options';
 		$lock = static function () use ( $wpdb, $locks, $lock_name ) {
 			$owner = ( time() + 120 ) . ':' . bin2hex( random_bytes( 16 ) );

@@ -1,5 +1,5 @@
 <?php
-/** Standalone tests for the Codex bridge provider: php tests/shared-ai-codex-test.php (fake bridge, no Codex, no network). */
+/** Standalone tests for the Codex runner provider: php tests/shared-ai-codex-test.php (fake bridge, no Codex, no network). */
 $fake = sys_get_temp_dir() . '/ace-fake-bridge-' . getmypid();
 $state = sys_get_temp_dir() . '/ace-fake-bridge-state-' . getmypid();
 file_put_contents( $fake, <<<SH
@@ -19,8 +19,21 @@ esac
 SH
 );
 chmod( $fake, 0755 );
-define( 'ACE_AI_CODEX_BRIDGE', $fake );
+// The plugin only exposes the `acemedia_ai_codex_runner` filter; this test registers a runner that drives the fake bridge.
+$GLOBALS['ace_filters'] = array();
+if ( ! function_exists( 'add_filter' ) ) { function add_filter( $tag, $cb, $priority = 10, $args = 1 ) { $GLOBALS['ace_filters'][ $tag ][] = $cb; return true; } }
+if ( ! function_exists( 'has_filter' ) ) { function has_filter( $tag ) { return ! empty( $GLOBALS['ace_filters'][ $tag ] ); } }
+if ( ! function_exists( 'apply_filters' ) ) { function apply_filters( $tag, $value, ...$args ) { foreach ( $GLOBALS['ace_filters'][ $tag ] ?? array() as $cb ) { $value = $cb( $value, ...$args ); } return $value; } }
 require __DIR__ . '/shared-ai-connection-test.php';
+add_filter( 'acemedia_ai_codex_runner', function ( $reply, $sub, $scope, $stdin = '', $timeout = 60 ) use ( $fake ) {
+	$proc = proc_open( array( $fake, $sub, $scope ), array( 0 => array( 'pipe', 'r' ), 1 => array( 'pipe', 'w' ), 2 => array( 'pipe', 'w' ) ), $pipes );
+	fwrite( $pipes[0], (string) $stdin ); fclose( $pipes[0] );
+	$out = stream_get_contents( $pipes[1] ); fclose( $pipes[1] ); $err = stream_get_contents( $pipes[2] ); fclose( $pipes[2] );
+	$code = proc_close( $proc );
+	$data = json_decode( (string) $out, true );
+	if ( 0 !== $code && is_array( $data ) && ! empty( $data['error'] ) ) { return new WP_Error( 'ace_ai_codex_error', $data['error'] ); }
+	return is_array( $data ) && 0 === $code ? $data : new WP_Error( 'ace_ai_codex_error', 'No usable reply.' );
+}, 10, 5 );
 use AceMedia\SharedAI\V1\Service;
 $start = $count;
 if ( ! function_exists( 'is_executable' ) ) { throw new RuntimeException( 'php' ); }
@@ -29,7 +42,7 @@ $GLOBALS['caps'] = array( 'manage_options' => true, 'manage_network_options' => 
 @unlink( $state ); @unlink( "$state.calls" ); @unlink( "$state.ask" );
 
 $site = new Service(); $net = new Service( true );
-check( $site->codex_available(), 'Bridge constant makes Codex sign-in available' );
+check( $site->codex_available(), 'A registered runner makes Codex sign-in available' );
 check( 'network-1' === $net->codex_scope( true ) && 'site-7' === $site->codex_scope( false ), 'Scopes map to isolated Codex homes' );
 
 $r = $net->codex_login_start( true );
@@ -73,11 +86,8 @@ check( is_wp_error( $site->subscription_text( array( array( 'role' => 'user', 'c
 
 $GLOBALS['caps'] = array( 'manage_options' => true, 'manage_network_options' => false );
 check( is_wp_error( $net->codex_login_start( true ) ), 'Site admin cannot start a network sign-in' );
-check( is_wp_error( $site->save_codex_bridge( '/x', false ) ), 'Site admin cannot change the bridge on multisite' );
 $GLOBALS['caps']['manage_network_options'] = true;
-check( is_wp_error( $net->save_codex_bridge( 'rm -rf / ; echo', true ) ), 'Shell metacharacters rejected in bridge command' );
-check( true === $net->save_codex_bridge( 'sudo -H -u ace-ai /usr/local/bin/ace-codex-bridge', true ), 'Plain sudo bridge command accepted' );
-check( $fake === $net->codex_bridge(), 'Constant wins over the saved option' );
+check( ! $net->codex_available() === false && ! has_filter( 'acemedia_ai_codex_runner' ) === false, 'Runner stays registered' );
 
 // Hybrid: a signed-in scope keeps text on the subscription and can hold an API key for images and voice.
 $GLOBALS['caps'] = array( 'manage_options' => true, 'manage_network_options' => true );
@@ -98,7 +108,9 @@ check( is_wp_error( $net->save( 'own', 'not-a-key', array( 'images' ), true ) ),
 check( 'codex' === $GLOBALS['network_records'][1][ Service::OPTION ]['provider'], 'Sign-in survives a bad key' );
 check( true !== $net->disconnect_subscription( true ) || true, 'Sign-out' );
 check( 'disabled' === $GLOBALS['network_records'][1][ Service::OPTION ]['mode'] && ! empty( $GLOBALS['network_records'][1][ Service::OPTION ]['api_secret'] ), 'Sign-out keeps the API key for the next account' );
-file_put_contents( $state, 'connected' ); // the next account signs in
+file_put_contents( $state, 'connected' ); // The runner still has a session, but polling must not reconnect it.
+check( empty( $net->codex_login_status( true )['saved'] ) && 'disabled' === $site->status()['status'], 'Status polling honours an explicit disconnect' );
+$net->codex_login_start( true ); // An explicit sign-in authorises the next account.
 check( ! empty( $net->codex_login_status( true )['saved'] ) && 'sk-hybrid' === $site->api_key( 'images' ), 'Next sign-in carries the key and features over' );
 // Signing in on a scope that already had an API-key connection keeps that key for images and voice.
 $GLOBALS['network_records'] = array();
