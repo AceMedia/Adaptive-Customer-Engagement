@@ -4,13 +4,15 @@ Tags: lead tracking, analytics, attribution, phone tracking, b2b
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.5
+Stable tag: 0.1.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
 Adaptive Customer Engagement provides a privacy-conscious, first-party way to track lead signals, session journeys, and phone number routing inside WordPress.
 
 == Description ==
+
+On PHP 8.6 with a capable ZIP extension, small Lambda template packages are built in memory. Inputs above one mebibyte and older runtimes retain the disk path. This only changes local packaging in the optional setup workflow, not tracking or AWS configuration.
 
 This first release includes:
 

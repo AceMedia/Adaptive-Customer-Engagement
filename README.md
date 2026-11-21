@@ -2,6 +2,12 @@
 
 Adaptive Customer Engagement is a native WordPress plugin for tracking first-party lead signals, routing phone numbers by source and page context, and giving WordPress teams a practical operational view of how visits turn into conversations.
 
+## PHP 8.6 Lambda package creation
+
+I use PHP 8.6's in-memory ZIP methods when the extension supports them and the bundled template plus encoded site-context snapshot total no more than one mebibyte. This avoids temporary archive files for small Lambda packages. Larger inputs and older runtimes retain the existing disk path, so the optimisation has a fixed input limit rather than growing memory use with the export size. The archive still contains `lambda_function.py` and `site_context_snapshot.json`, and the caller receives the same base64 format. Invalid JSON fails before creating a temporary archive.
+
+This only changes local packaging during the optional setup workflow. It does not enable Amazon Connect, deploy a Lambda, send site context or change visitor tracking. I check it offline with `php tests/php86-memory-zip-test.php`.
+
 ## What is in this first release
 
 ### Tracking and data foundation

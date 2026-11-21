@@ -3062,16 +3062,38 @@ final class Client {
 			return new WP_Error( 'ace_connect_lambda_template_empty', __( 'The bundled Lex runtime Lambda template could not be read.', 'adaptive-customer-engagement' ) );
 		}
 
-		$zip_path = wp_tempnam( 'ace-lex-runtime.zip' );
-
-		if ( ! is_string( $zip_path ) || '' === $zip_path ) {
-			return new WP_Error( 'ace_connect_lambda_zip_temp_missing', __( 'A temporary file for the Lex runtime Lambda package could not be created.', 'adaptive-customer-engagement' ) );
-		}
-
 		$snapshot_body = wp_json_encode( $site_context_snapshot );
 
 		if ( ! is_string( $snapshot_body ) || '' === $snapshot_body ) {
 			return new WP_Error( 'ace_connect_lambda_snapshot_empty', __( 'The Lex runtime site-context snapshot could not be generated.', 'adaptive-customer-engagement' ) );
+		}
+
+		// PHP 8.6 can package small, already-resident strings without temporary files.
+		// Keep larger payloads on the existing disk path to bound extra memory use.
+		if ( class_exists( '\\ZipArchive' )
+			&& method_exists( '\\ZipArchive', 'openString' )
+			&& method_exists( '\\ZipArchive', 'closeString' )
+			&& strlen( $template_body ) + strlen( $snapshot_body ) <= 1024 * 1024 ) {
+			$zip = new \ZipArchive();
+			if ( true !== $zip->openString( '', \ZipArchive::CREATE ) ) {
+				return new WP_Error( 'ace_connect_lambda_zip_open_failed', __( 'The Lex runtime Lambda zip package could not be opened for writing.', 'adaptive-customer-engagement' ) );
+			}
+			if ( ! $zip->addFromString( 'lambda_function.py', $template_body )
+				|| ! $zip->addFromString( 'site_context_snapshot.json', $snapshot_body ) ) {
+				$zip->close();
+				return new WP_Error( 'ace_connect_lambda_template_write_failed', __( 'The Lex runtime Lambda template could not be prepared for packaging.', 'adaptive-customer-engagement' ) );
+			}
+			$zip_body = $zip->closeString();
+			if ( ! is_string( $zip_body ) || '' === $zip_body ) {
+				return new WP_Error( 'ace_connect_lambda_zip_read_failed', __( 'The Lex runtime Lambda zip package could not be read after creation.', 'adaptive-customer-engagement' ) );
+			}
+			return base64_encode( $zip_body );
+		}
+
+		$zip_path = wp_tempnam( 'ace-lex-runtime.zip' );
+
+		if ( ! is_string( $zip_path ) || '' === $zip_path ) {
+			return new WP_Error( 'ace_connect_lambda_zip_temp_missing', __( 'A temporary file for the Lex runtime Lambda package could not be created.', 'adaptive-customer-engagement' ) );
 		}
 
 		if ( class_exists( '\ZipArchive' ) ) {
